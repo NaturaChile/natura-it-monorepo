@@ -1,0 +1,52 @@
+name: 🏭 RUN - Data Pipeline (Cartoning EWM)
+
+on:
+  workflow_dispatch: # Botón manual en GitHub
+  schedule:
+    - cron: '*/30 * * * *' # Ejecutar cada 30 minutos (ajusta según necesidad)
+
+jobs:
+  run-pipeline:
+    runs-on: self-hosted-windows
+    
+    #  CRÍTICO: Debe coincidir EXACTO con el nombre en tu imagen
+    environment: Base de datos 10.156.16.48 2019
+
+    env:
+      # RUTAS (Desde Variables Globales o hardcodeadas si prefieres)
+      DEPLOY_PATH: "E:\\natura-it-monorepo\\dev"
+      PYTHON_EXE: "C:\\ProgramData\\anaconda3\\python.exe" 
+      
+      # Mapeamos las Variables del Environment (Tu imagen image_e7ccaa.png)
+      EWM_SFTP_HOST: "10.212.6.90" # OJO: No vi esta variable en tu imagen, agrégala o ponla aquí directo
+      EWM_REMOTE_PATH: "/EWM/ewm_to_gera/cartoning/02_Old" # Lo mismo para esta
+      
+      SQL_HOST: ${{ vars.SQL_HOST }}
+      SQL_DB_NAME: ${{ vars.SQL_DB_NAME }}
+      
+      # Mapeamos los Secretos (Tu imagen image_e7ccaa.png)
+      EWM_SFTP_USER: ${{ secrets.EWM_SFTP_USER }}
+      EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
+      
+      # Nota: Tu código actual usa "Trusted_Connection=yes". 
+      # Si quisieras usar usuario/pass de SQL, inyectaríamos estos también:
+      # SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
+      # SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
+
+    steps:
+      - name: 🚀 Iniciar Ingesta
+        shell: powershell
+        run: |
+          # 1. Definir ruta del bot
+          $botPath = "$env:DEPLOY_PATH\data_pipelines_linux\ops_ped_ingest_cartoning_sftp"
+          
+          Write-Host "📍 Ubicando pipeline en: $botPath"
+          
+          # 2. Configurar PYTHONPATH para que encuentre 'core_shared'
+          $env:PYTHONPATH = "$env:DEPLOY_PATH"
+          
+          # 3. Entrar a la carpeta y ejecutar
+          Set-Location $botPath
+          
+          Write-Host "▶️ Ejecutando main.py..."
+          & "$env:PYTHON_EXE" main.py
