@@ -1,0 +1,13 @@
+# Configuración global del monorepo
+# Aquí se definen las configuraciones compartidas entre todos los proyectos
+
+environment: development
+
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+paths:
+  data: ./data
+  logs: ./logs
+  temp: ./temp
