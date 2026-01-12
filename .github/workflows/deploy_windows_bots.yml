@@ -1,0 +1,76 @@
+name: CD - Deploy Windows Bots (Dev)
+
+on:
+  push:
+    branches: [ "dev" ]
+    paths:
+      - 'rpa_desktop_win/**'
+      - 'core_shared/**'
+      - 'config/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy_windows_bots.yml'
+
+jobs:
+  deploy:
+    runs-on: self-hosted-windows
+    
+    # 🔴 CRÍTICO: Esto conecta el pipeline con el Environment que creaste en GitHub
+    # Si no pones esto, no podrá leer las variables WIN_DEPLOY_PATH ni WIN_PYTHON_EXE
+    environment: 10.156.16.48_WINDOWS
+
+    env:
+      # GitHub lee estas variables automáticamente del Environment definido arriba
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+
+    steps:
+      - name: 📥 Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name: 🚀 Desplegar Archivos en Servidor
+        shell: powershell
+        run: |
+          # PowerShell leerá el valor que GitHub inyectó en la variable de entorno
+          $dest = "$env:DEPLOY_PATH"
+          Write-Host "Iniciando despliegue en: $dest"
+          
+          # 1. Crear directorio si no existe
+          if (!(Test-Path -Path $dest)) { 
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Write-Host "📂 Directorio base creado."
+          }
+          
+          # 2. Copiar carpetas clave (Sobrescribiendo)
+          Write-Host "Copiando RPA Desktop..."
+          Copy-Item -Path ".\rpa_desktop_win" -Destination $dest -Recurse -Force
+          
+          Write-Host "Copiando Core Shared..."
+          Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
+          
+          Write-Host "Copiando Configuración..."
+          Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
+          
+          Write-Host "Copiando Requirements..."
+          Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
+          
+          Write-Host "✅ Archivos copiados exitosamente."
+
+      - name: 🐍 Instalar/Actualizar Librerías Python
+        shell: powershell
+        run: |
+          Write-Host "Verificando dependencias..."
+          
+          # Nos movemos a la ruta de despliegue
+          Set-Location "$env:DEPLOY_PATH"
+          
+          # Verificamos si Python existe en la ruta indicada por la variable
+          if (Test-Path "$env:PYTHON_EXE") {
+              Write-Host "Python detectado en: $env:PYTHON_EXE"
+              & "$env:PYTHON_EXE" -m pip install --upgrade pip
+              & "$env:PYTHON_EXE" -m pip install -r requirements.txt
+              Write-Host "✅ Dependencias instaladas."
+          } else {
+              Write-Error "⛔ ERROR FATAL: No se encontró Python en la ruta: $env:PYTHON_EXE"
+              Write-Error "Por favor verifica la variable 'WIN_PYTHON_EXE' en GitHub Settings -> Environments."
+              exit 1
+          }
