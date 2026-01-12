@@ -28,7 +28,7 @@ class SftpClient:
             # Filtramos solo archivos, no carpetas
             return [f for f in files if not str(f).startswith('d')]
         except Exception as e:
-            print(f"🔌 Error SFTP Listing: {e}")
+            print(f" Error SFTP Listing: {e}")
             return []
         finally:
             if sftp: sftp.close()
@@ -43,7 +43,7 @@ class SftpClient:
             sftp.get(remote, local)
             return True
         except Exception as e:
-            print(f"❌ Error descargando {filename}: {e}")
+            print(f" Error descargando {filename}: {e}")
             return False
         finally:
             if sftp: sftp.close()
