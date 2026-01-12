@@ -18,7 +18,7 @@ try:
     from core_shared.security.vault import Vault
     print("✅ Core Shared importado correctamente.")
 
-    # 2. Probar Acceso a Secretos (Simulado)
+    # 2. Probar Acceso a Secretos 
     # Intenta leer una variable de entorno común, ej: PATH
     path_val = os.getenv("PATH")
     if path_val:
