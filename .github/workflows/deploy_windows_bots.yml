@@ -24,23 +24,23 @@ jobs:
       PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
 
     steps:
-      - name:  Detener Bots Activos (Liberar archivos)
+      - name: Detener Bots Activos (Liberar archivos)
         shell: powershell
         run: |
-          Write-Host "Intentando detener procesos Python antiguos..."
+          Write-Host "[INFO] Intentando detener procesos Python antiguos..."
           try {
             # Esto es vital para el modo streaming: Si no los matas, el archivo estará bloqueado
             Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
-            Write-Host "Procesos Python detenidos."
+            Write-Host "[OK] Procesos Python detenidos."
           } catch {
-            Write-Host "No había procesos corriendo."
+            Write-Host "[INFO] No había procesos corriendo."
           }
           Start-Sleep -Seconds 2
 
-      - name:  Descargar Código del Repositorio
+      - name: Descargar Código del Repositorio
         uses: actions/checkout@v4
 
-      - name:  Desplegar Archivos en Servidor
+      - name: Desplegar Archivos en Servidor
         shell: powershell
         run: |
           $dest = "$env:DEPLOY_PATH"
@@ -77,7 +77,35 @@ jobs:
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente."
 
-      - name:  Instalar/Actualizar Librerías Python
+      # --- NUEVO PASO AGREGADO: VERIFICAR/INSTALAR DRIVER SQL ---
+      - name: Verificar e Instalar ODBC Driver 17
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando ODBC Driver 17 for SQL Server..."
+          $driverName = "ODBC Driver 17 for SQL Server"
+          $installed = Get-OdbcDriver | Where-Object { $_.Name -eq $driverName }
+
+          if ($installed) {
+            Write-Host "[OK] El driver ya esta instalado."
+          } else {
+            Write-Host "[WARN] Driver no encontrado. Iniciando instalacion automatica..."
+            
+            # 1. Descargar el instalador oficial de Microsoft
+            $url = "https://go.microsoft.com/fwlink/?linkid=2137251" # Link directo a ODBC 17.10 (x64)
+            $out = "$env:TEMP\msodbcsql.msi"
+            
+            Write-Host "[INFO] Descargando MSI desde Microsoft..."
+            Invoke-WebRequest -Uri $url -OutFile $out
+            
+            # 2. Instalar silenciosamente (Sin ventanas)
+            Write-Host "[INFO] Instalando..."
+            Start-Process msiexec.exe -ArgumentList "/i $out /quiet /norestart IACCEPTMSODBCSQLLICENSETERMS=YES" -Wait
+            
+            Write-Host "[OK] Instalacion completada."
+          }
+      # ----------------------------------------------------------
+
+      - name: Instalar/Actualizar Librerías Python
         shell: powershell
         run: |
           Write-Host "[INFO] Verificando dependencias..."
