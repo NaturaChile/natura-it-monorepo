@@ -4,10 +4,13 @@ import glob
 import concurrent.futures
 import pandas as pd
 from datetime import datetime
-from ..adapters.sftp_client import SftpClient
-from ..adapters.state_manager import StateManager
-from ..adapters.sql_repository import SqlRepository
-from ..domain.file_parser import FileParser
+# --- CAMBIO IMPORTANTE: RUTAS ABSOLUTAS ---
+# En lugar de '..adapters', usamos 'src.adapters'
+from src.adapters.sftp_client import SftpClient
+from src.adapters.state_manager import StateManager
+from src.adapters.sql_repository import SqlRepository
+from src.domain.file_parser import FileParser
+# ------------------------------------------
 
 class IngestPipeline:
     def __init__(self, sftp: SftpClient, state: StateManager, sql: SqlRepository, config: dict):
