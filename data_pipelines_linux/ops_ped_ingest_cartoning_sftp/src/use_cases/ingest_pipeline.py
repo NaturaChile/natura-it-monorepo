@@ -38,10 +38,10 @@ class IngestPipeline:
                 self.cycle_count += 1
                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                print(f"\n{'─'*70}")
+                print(f"\n{'-'*70}")
                 print(f"CICLO #{self.cycle_count} | {now}")
-                print(f"Sesión: {self.total_downloaded} descargados, {self.total_errors} errores acumulados")
-                print(f"{'─'*70}")
+                print(f"Sesion: {self.total_downloaded} descargados, {self.total_errors} errores acumulados")
+                print(f"{'-'*70}")
                 
                 # --- CICLO DE TRABAJO ---
                 hay_nuevos = self._step_download_deltas()
