@@ -1,0 +1,104 @@
+name: CD - Deploy Windows Bots (Dev)
+
+on:
+  push:
+    branches: [ "dev" ]
+    paths:
+      # AHORA VIGILAMOS TAMBIÉN LA CARPETA NUEVA
+      - 'rpa_desktop_win/**'
+      - 'data_pipelines_linux/**' 
+      - 'core_shared/**'
+      - 'config/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy_windows_bots.yml'
+
+jobs:
+  deploy:
+    runs-on: self-hosted-windows
+    
+    # Usamos este entorno porque necesitamos las rutas de despliegue (PATH)
+    environment: 10.156.16.48_WINDOWS
+
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+
+    steps:
+      - name:  Detener Bots Activos (Liberar archivos)
+        shell: powershell
+        run: |
+          Write-Host "Intentando detener procesos Python antiguos..."
+          try {
+            # Esto es vital para el modo streaming: Si no los matas, el archivo estará bloqueado
+            Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
+            Write-Host "✅ Procesos Python detenidos."
+          } catch {
+            Write-Host "No había procesos corriendo."
+          }
+          Start-Sleep -Seconds 2
+
+      - name:  Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name:  Desplegar Archivos en Servidor
+        shell: powershell
+        run: |
+          $dest = "$env:DEPLOY_PATH"
+          Write-Host "[INFO] Iniciando despliegue en: $dest"
+          
+          # 1. Crear directorio base si no existe
+          if (!(Test-Path -Path $dest)) { 
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Write-Host "[OK] Directorio base creado."
+          }
+          
+          # 2. Copiar carpetas (Sobrescribiendo)
+          
+          Write-Host "[INFO] Copiando RPA Desktop..."
+          Copy-Item -Path ".\rpa_desktop_win" -Destination $dest -Recurse -Force
+          
+          # --- NUEVO: Copiando Data Pipelines ---
+          Write-Host "[INFO] Copiando Data Pipelines (Linux/Python)..."
+          if (Test-Path ".\data_pipelines_linux") {
+              Copy-Item -Path ".\data_pipelines_linux" -Destination $dest -Recurse -Force
+          }
+          # --------------------------------------
+
+          Write-Host "[INFO] Copiando Core Shared..."
+          Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
+          
+          Write-Host "[INFO] Copiando Configuracion..."
+          if (Test-Path ".\config") {
+            Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
+          }
+          
+          Write-Host "[INFO] Copiando Requirements..."
+          Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
+          
+          Write-Host "[SUCCESS] Archivos copiados exitosamente."
+
+      - name:  Instalar/Actualizar Librerías Python
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando dependencias..."
+          Set-Location "$env:DEPLOY_PATH"
+          
+          if (Test-Path "$env:PYTHON_EXE") {
+              Write-Host "[INFO] Python detectado en: $env:PYTHON_EXE"
+              & "$env:PYTHON_EXE" -m pip install --upgrade pip
+              
+              # 1. Instala librerías generales (raíz)
+              & "$env:PYTHON_EXE" -m pip install -r requirements.txt
+              
+              # 2. Instala librerías específicas del bot nuevo de Ingesta
+              $reqBot = ".\data_pipelines_linux\ops_ped_ingest_cartoning_sftp\requirements.txt"
+              if (Test-Path $reqBot) {
+                  Write-Host "[INFO] Instalando dependencias específicas del Bot EWM..."
+                  & "$env:PYTHON_EXE" -m pip install -r $reqBot
+              }
+
+              Write-Host "[SUCCESS] Dependencias instaladas."
+          } else {
+              Write-Error "[ERROR] No se encontro Python en la ruta: $env:PYTHON_EXE"
+              exit 1
+          }
