@@ -1,23 +1,25 @@
-name: 🏭 RUN - Data Pipeline (Cartoning EWM)
+name: RUN - STREAMING SERVICE (Cartoning EWM)
 
 on:
-  workflow_dispatch: # Botón manual en GitHub
-  schedule:
-    - cron: '*/30 * * * *' # Ejecutar cada 30 minutos (ajusta según necesidad)
+  workflow_dispatch: # Solo inicio manual (se hace una vez y queda corriendo)
 
 jobs:
-  run-pipeline:
+  run-streaming-service:
     runs-on: self-hosted-windows
     
-    #  CRÍTICO: Debe coincidir EXACTO con el nombre en tu imagen
+    # Entorno correcto con las credenciales
     environment: Base de datos 10.156.16.48 2019
+    
+    #  CRÍTICO: 0 significa "sin tiempo límite". 
+    # Sin esto, GitHub mata el proceso a las 6 horas.
+    timeout-minutes: 0 
 
     env:
-      # RUTAS (Desde Variables Globales o hardcodeadas si prefieres)
+      # RUTAS
       DEPLOY_PATH: "E:\\natura-it-monorepo\\dev"
       PYTHON_EXE: "C:\\ProgramData\\anaconda3\\python.exe" 
       
-      # SQL SERVER (Desde Variables Globales)
+      # SQL SERVER
       SQL_HOST: ${{ vars.SQL_HOST }}
       SQL_DB_NAME: ${{ vars.SQL_DB_NAME }}
       
@@ -27,25 +29,27 @@ jobs:
       EWM_SFTP_USER: ${{ secrets.EWM_SFTP_USER }}
       EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
       
-      # SQL SERVER AUTH (Descomentamos y mapeamos)
-      # Usamos los nombres exactos que tienes en tu imagen
+      # SQL SERVER AUTH
       SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
 
     steps:
-      - name: Iniciar Ingesta
+      - name: Iniciar Servicio Continuo
         shell: powershell
         run: |
           # 1. Definir ruta del bot
           $botPath = "$env:DEPLOY_PATH\data_pipelines_linux\ops_ped_ingest_cartoning_sftp"
           
-          Write-Host "Ubicando pipeline en: $botPath"
+          # Usamos [INFO] en lugar de emojis para evitar el error Unicode
+          Write-Host "[INFO] Ubicando pipeline en: $botPath"
           
           # 2. Configurar PYTHONPATH para que encuentre 'core_shared'
           $env:PYTHONPATH = "$env:DEPLOY_PATH"
           
-          # 3. Entrar a la carpeta y ejecutar
+          # 3. Entrar a la carpeta
           Set-Location $botPath
           
-          Write-Host "Ejecutando main.py..."
-          & "$env:PYTHON_EXE" main.py
+          Write-Host "[INFO] Ejecutando main.py en Modo Streaming..."
+          
+          # 4. Ejecutar (Sin comillas en la variable para máxima compatibilidad)
+          & $env:PYTHON_EXE main.py
