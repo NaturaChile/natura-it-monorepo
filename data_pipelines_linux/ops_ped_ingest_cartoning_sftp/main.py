@@ -12,7 +12,7 @@ from src.adapters.state_manager import StateManager
 from src.use_cases.ingest_pipeline import IngestPipeline
 
 def main():
-    print("🤖 Inicializando Bot de Ingesta EWM (Streaming Mode)...")
+    print("Inicializando Bot de Ingesta EWM (Streaming Mode)...")
 
     # 2. Configuración (Infrastructure Layer)
     config = {
