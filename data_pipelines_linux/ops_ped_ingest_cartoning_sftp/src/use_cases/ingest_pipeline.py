@@ -128,6 +128,22 @@ class IngestPipeline:
         processed_count = 0
         
         for i in range(0, len(pending), batch_size):
+            batch = pending[i:i+batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (total_pending + batch_size - 1) // batch_size
+            
+            print(f"  Lote {batch_num}/{total_batches}: Procesando {len(batch)} archivos...")
+            success = self._process_batch(batch)
+            
+            if success:
+                processed_count += len(batch)
+                print(f"  Lote {batch_num}/{total_batches}: COMPLETADO ({processed_count}/{total_pending} procesados)")
+            else:
+                print(f"  Lote {batch_num}/{total_batches}: ERROR - Se reintentará después")
+        
+        print(f"=== PROCESAMIENTO SQL COMPLETADO: {processed_count}/{total_pending} archivos ===\n")
+
+    def _process_batch(self, file_paths):
         """Procesa un lote de archivos hacia SQL"""
         dfs = []
         valid_files = []
@@ -153,19 +169,3 @@ class IngestPipeline:
         else:
             print(f"    ERROR: Fallo al insertar lote en SQL")
             return False
-            df = FileParser.parse_to_dataframe(fp)
-            if df is not None:
-                dfs.append(df)
-                valid_files.append(fp)
-
-        if not dfs: return
-
-        full_df = pd.concat(dfs, ignore_index=True)
-        if self.sql.bulk_insert(full_df, "Staging_EWM_Cartoning"):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-                fs = {ex.submit(self.sql.execute_sp, "sp_Procesar_Cartoning_EWM", {"ArchivoActual": os.path.basename(f)}): f for f in valid_files}
-                concurrent.futures.wait(fs)
-
-            for f in valid_files:
-                self.state.mark_as_processed_in_sql(os.path.basename(f))
-            print(f"       Lote guardado.")
