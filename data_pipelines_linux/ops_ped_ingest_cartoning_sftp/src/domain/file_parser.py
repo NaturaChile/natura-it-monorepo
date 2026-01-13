@@ -4,10 +4,11 @@ import pandas as pd
 from io import StringIO
 
 class FileParser:
-    """Responsable de transformar un archivo crudo en datos estructurados."""
+    """Responsable de transformar archivos crudos en datos estructurados."""
     
     @staticmethod
-    def parse_to_dataframe(file_path: str) -> pd.DataFrame:
+    def parse_cartoning_to_dataframe(file_path: str) -> pd.DataFrame:
+        """Parser para archivos de Cartoning"""
         try:
             # 1. Leer y corregir formato (Regla de negocio de limpieza)
             with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
@@ -34,5 +35,40 @@ class FileParser:
             return df[[c for c in df.columns if c in expected_cols]]
             
         except Exception as e:
-            print(f"Error parseando {os.path.basename(file_path)}: {e}")
+            print(f"Error parseando Cartoning {os.path.basename(file_path)}: {e}")
             return None
+    
+    @staticmethod
+    def parse_waveconfirm_to_dataframe(file_path: str) -> pd.DataFrame:
+        """Parser para archivos de WaveConfirm"""
+        try:
+            # Leer archivo con separador ;
+            df = pd.read_csv(
+                file_path, 
+                sep=';', 
+                header=None, 
+                on_bad_lines='skip',
+                dtype=str,
+                encoding='latin-1',
+                names=['WaveID', 'PedidoID', 'columna0', 'CajaID', 'columna_extra']
+            )
+            
+            # Limpiar columnas vacías al final
+            df = df.dropna(axis=1, how='all')
+            
+            # Null safety para SQL
+            df = df.where(pd.notnull(df), None)
+            
+            # Enriquecer con nombre de archivo
+            df['NombreArchivo'] = os.path.basename(file_path)
+            
+            return df
+            
+        except Exception as e:
+            print(f"Error parseando WaveConfirm {os.path.basename(file_path)}: {e}")
+            return None
+    
+    @staticmethod
+    def parse_to_dataframe(file_path: str) -> pd.DataFrame:
+        """Parser genérico - mantiene compatibilidad con código legacy"""
+        return FileParser.parse_cartoning_to_dataframe(file_path)
