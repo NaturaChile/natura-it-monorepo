@@ -33,13 +33,13 @@ jobs:
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
 
     steps:
-      - name: 🚀 Iniciar Ingesta
+      - name: Iniciar Ingesta
         shell: powershell
         run: |
           # 1. Definir ruta del bot
           $botPath = "$env:DEPLOY_PATH\data_pipelines_linux\ops_ped_ingest_cartoning_sftp"
           
-          Write-Host "📍 Ubicando pipeline en: $botPath"
+          Write-Host "Ubicando pipeline en: $botPath"
           
           # 2. Configurar PYTHONPATH para que encuentre 'core_shared'
           $env:PYTHONPATH = "$env:DEPLOY_PATH"
@@ -47,5 +47,5 @@ jobs:
           # 3. Entrar a la carpeta y ejecutar
           Set-Location $botPath
           
-          Write-Host "▶️ Ejecutando main.py..."
+          Write-Host "Ejecutando main.py..."
           & "$env:PYTHON_EXE" main.py
