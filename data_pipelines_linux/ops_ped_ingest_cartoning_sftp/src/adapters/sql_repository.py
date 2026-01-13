@@ -11,7 +11,7 @@ class SqlRepository:
         # Lógica inteligente: ¿SQL Auth o Windows Auth?
         if user and password:
             # Opción A: Tenemos usuario y contraseña (SQL Authentication)
-            print(f"🔌 Conectando a SQL Server ({host}) con usuario: {user}")
+            print(f"Conectando a SQL Server ({host}) con usuario: {user}")
             connection_string = (
                 f"DRIVER={{{driver}}};"
                 f"SERVER={host};"
@@ -22,7 +22,7 @@ class SqlRepository:
             )
         else:
             # Opción B: No hay credenciales, usamos la cuenta de servicio de Windows
-            print(f"🔌 Conectando a SQL Server ({host}) vía Windows Auth...")
+            print(f"Conectando a SQL Server ({host}) vía Windows Auth...")
             connection_string = (
                 f"DRIVER={{{driver}}};"
                 f"SERVER={host};"

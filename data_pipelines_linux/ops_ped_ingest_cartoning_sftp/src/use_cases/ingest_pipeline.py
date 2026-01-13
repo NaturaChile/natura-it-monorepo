@@ -23,7 +23,7 @@ class IngestPipeline:
     def run_streaming(self):
         """Modo Servicio Continuo: Nunca termina"""
         print(f" [STREAMING STARTED] Iniciando vigilancia continua SFTP...")
-        print(f"⏱  Intervalo de polling: {self.cfg['poll_interval']} segundos")
+        print(f"Intervalo de polling: {self.cfg['poll_interval']} segundos")
 
         # 1. SETUP INICIAL (Solo una vez al inicio)
         self.sql.init_schema(self.cfg['sql_script_path'])
@@ -41,14 +41,14 @@ class IngestPipeline:
                     self._step_process_pending()
                 else:
                     # Mensaje heartbeat opcional para saber que sigue vivo (comentar para menos ruido)
-                    # print(f"💤 [{now}] Sin novedades. Esperando...")
+                    # print(f" [{now}] Sin novedades. Esperando...")
                     pass
 
                 # --- DORMIR ---
                 time.sleep(self.cfg['poll_interval'])
 
         except KeyboardInterrupt:
-            print("\n [STOP] Deteniendo servicio ordenadamente...")
+            print("\n  Deteniendo servicio ordenadamente...")
 
     def _check_pending_local(self):
         """Verifica rápido si hay algo pendiente en disco"""
