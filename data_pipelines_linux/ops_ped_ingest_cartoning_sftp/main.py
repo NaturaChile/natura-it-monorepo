@@ -42,7 +42,10 @@ def main():
     # C. SQL Repository
     sql_adapter = SqlRepository(
         host=Vault.get_secret("SQL_HOST"),
-        db=Vault.get_secret("SQL_DB_NAME")
+        db=Vault.get_secret("SQL_DB_NAME"),
+        # Pasamos las credenciales nuevas
+        user=Vault.get_secret("SQL_USER"),     
+        password=Vault.get_secret("SQL_PASS")
     )
 
     # 4. Inyectar dependencias en el Caso de Uso
