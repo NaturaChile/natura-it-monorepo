@@ -70,7 +70,7 @@ class IngestPipeline:
                     to_download.append(f)
 
             if to_download:
-                print(f"⬇️  Bajando {len(to_download)} archivos nuevos...")
+                print(f"Bajando {len(to_download)} archivos nuevos...")
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg['threads']) as ex:
                     futures = {ex.submit(self.sftp.download_file, f.filename, self.cfg['landing_path']): f for f in to_download}
                     for fut in concurrent.futures.as_completed(futures):

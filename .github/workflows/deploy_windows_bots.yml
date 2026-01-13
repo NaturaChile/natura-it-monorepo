@@ -31,7 +31,7 @@ jobs:
           try {
             # Esto es vital para el modo streaming: Si no los matas, el archivo estará bloqueado
             Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
-            Write-Host "✅ Procesos Python detenidos."
+            Write-Host "Procesos Python detenidos."
           } catch {
             Write-Host "No había procesos corriendo."
           }
