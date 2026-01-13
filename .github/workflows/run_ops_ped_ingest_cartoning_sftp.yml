@@ -28,7 +28,7 @@ jobs:
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
       
       # MODO EXPLORACION (descomentar para analizar Wave Confirm)
-      EXPLORE_WAVECONFIRM: "true"
+      EXPLORE_WAVECONFIRM: "false"
 
     steps:
       # --- PASO CRÍTICO: LIMPIEZA PREVIA ---
