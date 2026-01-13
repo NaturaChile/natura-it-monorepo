@@ -24,7 +24,7 @@ def main():
 
     # 2. Configuracion Global
     config = {
-        'threads': 5,  # Threads compartidos entre todas las fuentes
+        'threads': 1,  # REDUCIDO: Threads compartidos (evita saturar servidor SFTP)
         'poll_interval': 30,
         'sql_script_path': os.path.join(current_dir, "sql/setup_database.sql")
     }

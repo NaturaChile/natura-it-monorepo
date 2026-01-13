@@ -1,4 +1,5 @@
 import os
+import time
 import paramiko
 from dataclasses import dataclass
 
@@ -13,11 +14,27 @@ class SftpClient:
     def __init__(self, config: SftpConfig):
         self.cfg = config
 
-    def _connect(self):
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(self.cfg.host, username=self.cfg.user, password=self.cfg.password, timeout=15)
-        return ssh, ssh.open_sftp()
+    def _connect(self, retries=3, delay=2):
+        """Conecta con reintentos automáticos"""
+        for attempt in range(retries):
+            try:
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                ssh.connect(
+                    self.cfg.host, 
+                    username=self.cfg.user, 
+                    password=self.cfg.password, 
+                    timeout=30,  # Aumentado timeout
+                    banner_timeout=30  # Timeout específico para banner SSH
+                )
+                return ssh, ssh.open_sftp()
+            except Exception as e:
+                if attempt < retries - 1:
+                    print(f"    Reintento conexion SFTP ({attempt+1}/{retries}): {str(e)[:60]}")
+                    time.sleep(delay)
+                else:
+                    raise
+        return None, None
 
     def list_files(self):
         """Retorna lista de archivos con sus atributos (nombre, tamaño, fecha)."""
