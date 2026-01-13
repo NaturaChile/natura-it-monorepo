@@ -19,19 +19,29 @@ class IngestPipeline:
         self.sql = sql
         self.cfg = config
         self.is_running = True # Bandera de control
+        self.cycle_count = 0  # Contador de ciclos
+        self.total_downloaded = 0  # Total descargados en sesión
+        self.total_errors = 0  # Total errores en sesión
 
     def run_streaming(self):
         """Modo Servicio Continuo: Nunca termina"""
-        print(f" [STREAMING STARTED] Iniciando vigilancia continua SFTP...")
-        print(f"Intervalo de polling: {self.cfg['poll_interval']} segundos")
+        print(f"\n{'='*70}")
+        print(f" STREAMING SERVICE INICIADO")
+        print(f" Intervalo de polling: {self.cfg['poll_interval']} segundos")
+        print(f"{'='*70}\n")
 
         # 1. SETUP INICIAL (Solo una vez al inicio)
         self.sql.init_schema(self.cfg['sql_script_path'])
 
         try:
             while self.is_running:
-                # Marcamos hora para logs
-                now = datetime.now().strftime("%H:%M:%S")
+                self.cycle_count += 1
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                print(f"\n{'─'*70}")
+                print(f"CICLO #{self.cycle_count} | {now}")
+                print(f"Sesión: {self.total_downloaded} descargados, {self.total_errors} errores acumulados")
+                print(f"{'─'*70}")
                 
                 # --- CICLO DE TRABAJO ---
                 hay_nuevos = self._step_download_deltas()
@@ -40,15 +50,14 @@ class IngestPipeline:
                 if hay_nuevos or self._check_pending_local():
                     self._step_process_pending()
                 else:
-                    # Mensaje heartbeat opcional para saber que sigue vivo (comentar para menos ruido)
-                    # print(f" [{now}] Sin novedades. Esperando...")
-                    pass
+                    print(f"Sin archivos nuevos ni pendientes. Esperando {self.cfg['poll_interval']}s...")
 
                 # --- DORMIR ---
                 time.sleep(self.cfg['poll_interval'])
 
         except KeyboardInterrupt:
             print("\n  Deteniendo servicio ordenadamente...")
+            print(f"  Resumen final: {self.total_downloaded} archivos descargados, {self.total_errors} errores")
 
     def _check_pending_local(self):
         """Verifica rápido si hay algo pendiente en disco"""
@@ -59,9 +68,9 @@ class IngestPipeline:
         return False
 
     def _step_download_deltas(self):
-        # ... (Mantener lógica de descarga igual, solo quitar prints excesivos si deseas) ...
-        # Retorna True si descargó algo, False si no.
+        """Descarga archivos nuevos/modificados con logging detallado"""
         downloaded_count = 0
+        error_count = 0
         try:
             files = self.sftp.list_files()
             to_download = []
@@ -70,37 +79,80 @@ class IngestPipeline:
                     to_download.append(f)
 
             if to_download:
-                print(f"Bajando {len(to_download)} archivos nuevos...")
+                total = len(to_download)
+                print(f"\n=== DESCARGA INICIADA: {total} archivos detectados ===")
+                
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg['threads']) as ex:
                     futures = {ex.submit(self.sftp.download_file, f.filename, self.cfg['landing_path']): f for f in to_download}
+                    
                     for fut in concurrent.futures.as_completed(futures):
                         f_attr = futures[fut]
-                        if fut.result():
-                            self.state.register_download(f_attr.filename, f_attr.st_mtime, f_attr.st_size)
-                            downloaded_count += 1
+                        try:
+                            if fut.result():
+                                self.state.register_download(f_attr.filename, f_attr.st_mtime, f_attr.st_size)
+                                downloaded_count += 1
+                                print(f"  Progreso: {downloaded_count}/{total} OK | Errores: {error_count} | Archivo: {f_attr.filename[:50]}")
+                            else:
+                                error_count += 1
+                                print(f"  Progreso: {downloaded_count}/{total} OK | Errores: {error_count} | FALLO: {f_attr.filename[:50]}")
+                        except Exception as e:
+                            error_count += 1
+                            print(f"  Progreso: {downloaded_count}/{total} OK | Errores: {error_count} | ERROR: {str(e)[:50]}")
+                
+                print(f"=== DESCARGA COMPLETADA: {downloaded_count} exitosos, {error_count} fallidos de {total} ===\n")
+                
+                # Actualizar contadores globales
+                self.total_downloaded += downloaded_count
+                self.total_errors += error_count
+                
+                if error_count > 0:
+                    print(f"NOTA: Los {error_count} archivos fallidos NO se marcaron como descargados.")
+                    print(f"      Se reintentarán automáticamente en el próximo ciclo.\n")
+                    
         except Exception as e:
-            print(f" Error conexión SFTP (Reintentando en {self.cfg['poll_interval']}s): {e}")
+            print(f"ERROR conexión SFTP (Reintentando en {self.cfg['poll_interval']}s): {e}")
         
         return downloaded_count > 0
 
     def _step_process_pending(self):
-        # ... (Mantener lógica de procesamiento igual) ...
+        """Procesa archivos descargados hacia SQL con logging detallado"""
         all_files = glob.glob(os.path.join(self.cfg['landing_path'], "*"))
         pending = [f for f in all_files if self.state.is_pending_sql(os.path.basename(f))]
 
         if not pending: return
 
-        print(f" Procesando {len(pending)} archivos hacia SQL...")
+        total_pending = len(pending)
+        print(f"\n=== PROCESANDO A SQL: {total_pending} archivos pendientes ===")
+        
         batch_size = 20
+        processed_count = 0
+        
         for i in range(0, len(pending), batch_size):
-            batch = pending[i:i+batch_size]
-            self._process_batch(batch)
-
-    def _process_batch(self, file_paths):
-        # ... (Mantener igual) ...
+        """Procesa un lote de archivos hacia SQL"""
         dfs = []
         valid_files = []
         for fp in file_paths:
+            df = FileParser.parse_to_dataframe(fp)
+            if df is not None:
+                dfs.append(df)
+                valid_files.append(fp)
+
+        if not dfs: 
+            print(f"    AVISO: No hay datos válidos para procesar en este lote")
+            return False
+
+        full_df = pd.concat(dfs, ignore_index=True)
+        if self.sql.bulk_insert(full_df, "Staging_EWM_Cartoning"):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
+                fs = {ex.submit(self.sql.execute_sp, "sp_Procesar_Cartoning_EWM", {"ArchivoActual": os.path.basename(f)}): f for f in valid_files}
+                concurrent.futures.wait(fs)
+
+            for f in valid_files:
+                self.state.mark_as_processed_in_sql(os.path.basename(f))
+            return True
+        else:
+            print(f"    ERROR: Fallo al insertar lote en SQL")
+            return False
             df = FileParser.parse_to_dataframe(fp)
             if df is not None:
                 dfs.append(df)
