@@ -26,6 +26,9 @@ jobs:
       EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
       SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
+      
+      # MODO EXPLORACION (descomentar para analizar Wave Confirm)
+       EXPLORE_WAVECONFIRM: "true"
 
     steps:
       # --- PASO CRÍTICO: LIMPIEZA PREVIA ---
