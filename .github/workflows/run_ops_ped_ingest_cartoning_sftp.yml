@@ -27,7 +27,7 @@ jobs:
       EWM_SFTP_USER: ${{ secrets.EWM_SFTP_USER }}
       EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
       
-      # ✅ SQL SERVER AUTH (Descomentamos y mapeamos)
+      # SQL SERVER AUTH (Descomentamos y mapeamos)
       # Usamos los nombres exactos que tienes en tu imagen
       SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}

@@ -34,5 +34,5 @@ class FileParser:
             return df[[c for c in df.columns if c in expected_cols]]
             
         except Exception as e:
-            print(f"⚠️ Error parseando {os.path.basename(file_path)}: {e}")
+            print(f"Error parseando {os.path.basename(file_path)}: {e}")
             return None

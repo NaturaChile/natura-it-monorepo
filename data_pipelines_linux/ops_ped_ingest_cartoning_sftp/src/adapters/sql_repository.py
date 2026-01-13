@@ -42,7 +42,7 @@ class SqlRepository:
     def init_schema(self, script_path: str):
         # ... (El resto del código sigue igual) ...
         if not os.path.exists(script_path): return
-        print("🛠️  Inicializando esquema de BD...")
+        print("Inicializando esquema de BD...")
         try:
             with open(script_path, 'r', encoding='utf-8') as f: sql = f.read()
             commands = re.split(r'\bGO\b', sql, flags=re.IGNORECASE)
@@ -52,17 +52,17 @@ class SqlRepository:
                         conn.execute(text(cmd))
                         conn.commit()
         except Exception as e:
-            print(f"⚠️ Error Schema Init (Info): {e}")
+            print(f"Error Schema Init (Info): {e}")
 
     def bulk_insert(self, df: pd.DataFrame, table_name: str) -> bool:
         try:
             t0 = time.time()
             # method=None para usar fast_executemany por defecto de pandas/sqlalchemy modernos
             df.to_sql(table_name, con=self.engine, if_exists='append', index=False, chunksize=20000)
-            print(f"      ⏱️  Insert SQL: {len(df)} filas en {time.time()-t0:.2f}s")
+            print(f"      Insert SQL: {len(df)} filas en {time.time()-t0:.2f}s")
             return True
         except Exception as e:
-            print(f"      ❌ Error Bulk Insert: {e}")
+            print(f"      Error Bulk Insert: {e}")
             return False
 
     def execute_sp(self, sp_name: str, params: dict):
@@ -73,5 +73,5 @@ class SqlRepository:
                 conn.execute(query, params)
             return True
         except Exception as e:
-            print(f"      ⚠️ Error SP {sp_name}: {e}")
+            print(f"      Error SP {sp_name}: {e}")
             return False
