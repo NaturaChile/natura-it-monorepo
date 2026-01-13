@@ -159,13 +159,23 @@ class IngestPipeline:
 
         full_df = pd.concat(dfs, ignore_index=True)
         if self.sql.bulk_insert(full_df, "Staging_EWM_Cartoning"):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-                fs = {ex.submit(self.sql.execute_sp, "sp_Procesar_Cartoning_EWM", {"ArchivoActual": os.path.basename(f)}): f for f in valid_files}
-                concurrent.futures.wait(fs)
-
+            # Procesar SPs SECUENCIALMENTE para evitar deadlocks
+            success_count = 0
+            error_count = 0
+            
             for f in valid_files:
-                self.state.mark_as_processed_in_sql(os.path.basename(f))
-            return True
+                archivo = os.path.basename(f)
+                if self.sql.execute_sp("sp_Procesar_Cartoning_EWM", {"ArchivoActual": archivo}):
+                    self.state.mark_as_processed_in_sql(archivo)
+                    success_count += 1
+                else:
+                    error_count += 1
+                    print(f"    PENDIENTE: {archivo} (se reintentara en proximo ciclo)")
+            
+            if error_count > 0:
+                print(f"    RESUMEN: {success_count} OK, {error_count} fallidos (se reintentaran)")
+            
+            return success_count > 0
         else:
             print(f"    ERROR: Fallo al insertar lote en SQL")
             return False
