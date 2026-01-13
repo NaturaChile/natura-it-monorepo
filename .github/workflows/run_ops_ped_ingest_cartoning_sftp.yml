@@ -1,55 +1,59 @@
 name: RUN - STREAMING SERVICE (Cartoning EWM)
 
 on:
-  workflow_dispatch: # Solo inicio manual (se hace una vez y queda corriendo)
+  workflow_dispatch: # Botón manual
+  schedule:
+    - cron: '0 */6 * * *' # Ejecutar cada 6 horas automáticamente (00:00, 06:00, 12:00, 18:00)
 
 jobs:
   run-streaming-service:
     runs-on: self-hosted-windows
-    
-    # Entorno correcto con las credenciales
     environment: Base de datos 10.156.16.48 2019
     
-    #  CRÍTICO: 0 significa "sin tiempo límite". 
-    # Sin esto, GitHub mata el proceso a las 6 horas.
-    timeout-minutes: 0 
+    # Le damos 355 minutos (5 horas 55 min) para que GitHub lo mate justo antes de que arranque el siguiente cron
+    timeout-minutes: 355
 
     env:
-      # RUTAS
       DEPLOY_PATH: "E:\\natura-it-monorepo\\dev"
       PYTHON_EXE: "C:\\ProgramData\\anaconda3\\python.exe" 
       
-      # SQL SERVER
+      # VARIABLES
       SQL_HOST: ${{ vars.SQL_HOST }}
       SQL_DB_NAME: ${{ vars.SQL_DB_NAME }}
-      
-      # SFTP
       EWM_SFTP_HOST: "10.212.6.90"
       EWM_REMOTE_PATH: "/EWM/ewm_to_gera/cartoning/02_Old"
       EWM_SFTP_USER: ${{ secrets.EWM_SFTP_USER }}
       EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
-      
-      # SQL SERVER AUTH
       SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
 
     steps:
+      # --- PASO CRÍTICO: LIMPIEZA PREVIA ---
+      # Antes de arrancar, nos aseguramos de que no haya un bot viejo corriendo
+      # para evitar conflictos de archivos o memoria.
+      - name: Limpiar Procesos Antiguos
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Buscando instancias antiguas de Python..."
+          try {
+             # Matamos python.exe. OJO: Esto asume que este servidor es SOLO para este bot o bots similares.
+             # Si corres otros scripts de Python críticos al mismo tiempo, habría que filtrar más.
+             Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
+             Write-Host "[OK] Limpieza completada."
+          } catch {
+             Write-Host "[INFO] El servidor estaba limpio."
+          }
+
       - name: Iniciar Servicio Continuo
         shell: powershell
         run: |
-          # 1. Definir ruta del bot
           $botPath = "$env:DEPLOY_PATH\data_pipelines_linux\ops_ped_ingest_cartoning_sftp"
           
-          # Usamos [INFO] en lugar de emojis para evitar el error Unicode
           Write-Host "[INFO] Ubicando pipeline en: $botPath"
-          
-          # 2. Configurar PYTHONPATH para que encuentre 'core_shared'
           $env:PYTHONPATH = "$env:DEPLOY_PATH"
-          
-          # 3. Entrar a la carpeta
           Set-Location $botPath
           
-          Write-Host "[INFO] Ejecutando main.py en Modo Streaming..."
+          Write-Host "[INFO] Ejecutando main.py (Ciclo de 6 horas)..."
           
-          # 4. Ejecutar (Sin comillas en la variable para máxima compatibilidad)
+          # Ejecutar
           & $env:PYTHON_EXE main.py
