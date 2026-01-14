@@ -21,7 +21,8 @@
 ```
 E:\Datalake\Archivos\EWM\ewm_to_gera\cartoning\02_Old\         → Cartoning
 E:\Datalake\Archivos\EWM\ewm_to_gera\waveconfirm\02_Old\       → WaveConfirm
-E:\Datalake\Archivos\EWM\gera_to_ewm_outbounddelivery\         → Outbound Delivery
+E:\Datalake\Archivos\EWM\gera_to_ewm\
+outbounddelivery\         → Outbound Delivery
 ```
 
 ## Rutas de Landing (Workspace)
