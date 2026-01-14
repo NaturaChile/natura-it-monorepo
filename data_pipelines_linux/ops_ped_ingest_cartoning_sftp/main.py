@@ -18,7 +18,7 @@ def main():
     # 2. Configuracion Global
     config = {
         'threads': 3,  # Threads compartidos para procesamiento paralelo
-        'sleep_seconds': 300  # 5 minutos entre ciclos
+        'poll_interval': 300  # 5 minutos entre ciclos
     }
 
     # 3. SQL Repository compartido
