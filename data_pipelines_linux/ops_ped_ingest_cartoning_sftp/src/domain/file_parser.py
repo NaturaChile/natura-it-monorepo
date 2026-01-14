@@ -69,6 +69,113 @@ class FileParser:
             return None
     
     @staticmethod
+    def parse_outbound_delivery_to_dataframes(file_path: str) -> tuple:
+        """
+        Parser para archivos IDoc SAP (SHP_OBDLV_SAVE_REPLICA).
+        Retorna (df_headers, df_items) - dos DataFrames separados.
+        """
+        try:
+            headers_data = []
+            items_data = []
+            
+            # Leer archivo línea por línea
+            with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
+                lines = [line.strip() for line in f.readlines()]
+            
+            current_delivery_id = None
+            current_header = {}
+            current_block_lines = []
+            
+            for line in lines:
+                if not line:
+                    continue
+                
+                cols = line.split(';')
+                segment_type = cols[0] if cols else ''
+                
+                # Detectar inicio de nuevo delivery
+                if segment_type == 'E1BPOBDLVHDR':
+                    # Procesar bloque anterior si existe
+                    if current_delivery_id and current_header:
+                        enriched_header = FileParser._enrich_header(current_header, current_block_lines)
+                        headers_data.append(enriched_header)
+                    
+                    # Iniciar nuevo delivery
+                    current_delivery_id = cols[1] if len(cols) > 1 else None
+                    current_header = {
+                        'Delivery_ID': current_delivery_id,
+                        'Peso_Bruto': cols[6] if len(cols) > 6 else None,
+                        'Volumen': cols[10] if len(cols) > 10 else None,
+                    }
+                    current_block_lines = [line]
+                
+                elif current_delivery_id:
+                    current_block_lines.append(line)
+                    
+                    # Extraer items
+                    if segment_type == 'E1BPOBDLVITEM':
+                        items_data.append({
+                            'Delivery_ID_FK': cols[1] if len(cols) > 1 else None,
+                            'Item_Number': cols[2] if len(cols) > 2 else None,
+                            'Material_SKU': cols[3] if len(cols) > 3 else None,
+                            'Descripcion': cols[5] if len(cols) > 5 else None,
+                            'Cantidad': cols[8] if len(cols) > 8 else None,
+                            'Unidad_Medida': cols[9] if len(cols) > 9 else None,
+                            'Peso_Neto_Item': cols[15] if len(cols) > 15 else None,
+                        })
+            
+            # Procesar último bloque
+            if current_delivery_id and current_header:
+                enriched_header = FileParser._enrich_header(current_header, current_block_lines)
+                headers_data.append(enriched_header)
+            
+            # Crear DataFrames
+            df_headers = pd.DataFrame(headers_data) if headers_data else pd.DataFrame()
+            df_items = pd.DataFrame(items_data) if items_data else pd.DataFrame()
+            
+            # Agregar nombre de archivo
+            filename = os.path.basename(file_path)
+            if not df_headers.empty:
+                df_headers['NombreArchivo'] = filename
+            if not df_items.empty:
+                df_items['NombreArchivo'] = filename
+            
+            return df_headers, df_items
+            
+        except Exception as e:
+            print(f"Error parseando Outbound Delivery {os.path.basename(file_path)}: {e}")
+            return None, None
+    
+    @staticmethod
+    def _enrich_header(header_dict: dict, block_lines: list) -> dict:
+        """Enriquecer cabecera con datos de E1BPADR1 y E1BPEXTC"""
+        enriched = header_dict.copy()
+        
+        for line in block_lines:
+            cols = line.split(';')
+            segment_type = cols[0] if cols else ''
+            
+            # Extraer dirección
+            if segment_type == 'E1BPADR1':
+                enriched['Destinatario'] = cols[3] if len(cols) > 3 else None
+                ciudad = cols[8] if len(cols) > 8 else ''
+                calle = cols[16] if len(cols) > 16 else ''
+                enriched['Direccion'] = f"{calle} {ciudad}".strip()
+                enriched['Region'] = cols[28] if len(cols) > 28 else None
+            
+            # Pivotar datos Z
+            elif segment_type == 'E1BPEXTC':
+                z_field = cols[1] if len(cols) > 1 else None
+                z_value = cols[2] if len(cols) > 2 else None
+                
+                if z_field == 'ZCARRIER_NAME':
+                    enriched['Transportista'] = z_value
+                elif z_field == 'ZDELV_DATE':
+                    enriched['Fecha_Entrega'] = z_value
+        
+        return enriched
+    
+    @staticmethod
     def parse_to_dataframe(file_path: str) -> pd.DataFrame:
         """Parser genérico - mantiene compatibilidad con código legacy"""
         return FileParser.parse_cartoning_to_dataframe(file_path)
