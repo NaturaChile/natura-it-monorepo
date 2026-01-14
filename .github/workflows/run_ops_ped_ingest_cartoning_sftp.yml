@@ -1,4 +1,4 @@
-name: RUN - STREAMING SERVICE (Cartoning EWM)
+name: RUN - STREAMING SERVICE (Multi-Fuente EWM - Local)
 
 on:
   workflow_dispatch: # Botón manual
@@ -17,18 +17,10 @@ jobs:
       DEPLOY_PATH: "E:\\natura-it-monorepo\\dev"
       PYTHON_EXE: "C:\\ProgramData\\anaconda3\\python.exe" 
       
-      # VARIABLES
       SQL_HOST: ${{ vars.SQL_HOST }}
       SQL_DB_NAME: ${{ vars.SQL_DB_NAME }}
-      EWM_SFTP_HOST: "10.212.6.90"
-      EWM_REMOTE_PATH: "/EWM/ewm_to_gera/cartoning/02_Old"
-      EWM_SFTP_USER: ${{ secrets.EWM_SFTP_USER }}
-      EWM_SFTP_PASS: ${{ secrets.EWM_SFTP_PASS }}
       SQL_USER: ${{ secrets.USERNAME_2019_SQL }}
       SQL_PASS: ${{ secrets.PASSWORD_2019_SQL }}
-      
-      # MODO EXPLORACION (descomentar para analizar Wave Confirm)
-      # EXPLORE_WAVECONFIRM: "true"
 
     steps:
       # --- PASO CRÍTICO: LIMPIEZA PREVIA ---
