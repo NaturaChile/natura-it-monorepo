@@ -58,8 +58,8 @@ def main():
         parser_func=FileParser.parse_waveconfirm_to_dataframe
     ))
     
-    # FUENTE 3: OUTBOUND DELIVERY - SAP IDoc
-    outbound_client = LocalFileClient(r"E:\Datalake\Archivos\EWM\gera_to_ewm\outbounddelivery")
+    # FUENTE 3: OUTBOUND DELIVERY - SAP IDoc (SHP_OBDLV_SAVE_REPLICA)
+    outbound_client = LocalFileClient(r"E:\Datalake\Archivos\EWM\gera_to_ewm\outbounddelivery\02_Old")
     
     sources.append(DataSource(
         name="OutboundDelivery",
@@ -68,6 +68,22 @@ def main():
         staging_table_items="Staging_EWM_OutboundDelivery_Items",
         sp_name="sp_Procesar_OutboundDelivery_EWM",
         parser_func=FileParser.parse_outbound_delivery_to_dataframes
+    ))
+    
+    # FUENTE 4: OUTBOUND DELIVERY CONFIRM - SAP IDoc (SHP_OBDLV_CONFIRM_DECENTRAL)
+    outbound_confirm_client = LocalFileClient(r"E:\Datalake\Archivos\EWM\ewm_to_gera\outbounddeliveryconfirm\02_Old")
+    
+    sources.append(DataSource(
+        name="OutboundDeliveryConfirm",
+        file_client=outbound_confirm_client,
+        staging_table="Staging_EWM_OBDConfirm_Cabecera",
+        staging_table_items="Staging_EWM_OBDConfirm_Posiciones",
+        staging_table_control="Staging_EWM_OBDConfirm_Control_Posiciones",
+        staging_table_unidades="Staging_EWM_OBDConfirm_Unidades_HDR",
+        staging_table_contenido="Staging_EWM_OBDConfirm_Contenido_Embalaje",
+        staging_table_extensiones="Staging_EWM_OBDConfirm_Extensiones",
+        sp_name="sp_Procesar_OutboundDeliveryConfirm_EWM",
+        parser_func=FileParser.parse_outbound_delivery_confirm_to_dataframes
     ))
     
     # 6. Crear e iniciar pipeline multi-fuente

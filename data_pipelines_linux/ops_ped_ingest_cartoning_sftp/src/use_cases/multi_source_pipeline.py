@@ -10,11 +10,18 @@ from src.domain.file_parser import FileParser
 
 class DataSource:
     """Configuración de una fuente de datos"""
-    def __init__(self, name, file_client, staging_table, sp_name, parser_func, staging_table_items=None):
+    def __init__(self, name, file_client, staging_table, sp_name, parser_func, 
+                 staging_table_items=None, staging_table_control=None, 
+                 staging_table_unidades=None, staging_table_contenido=None, 
+                 staging_table_extensiones=None):
         self.name = name
         self.file_client = file_client  # LocalFileClient
         self.staging_table = staging_table
         self.staging_table_items = staging_table_items  # Para OutboundDelivery (2 tablas)
+        self.staging_table_control = staging_table_control  # Para OBDConfirm (6 tablas)
+        self.staging_table_unidades = staging_table_unidades
+        self.staging_table_contenido = staging_table_contenido
+        self.staging_table_extensiones = staging_table_extensiones
         self.sp_name = sp_name
         self.parser_func = parser_func
 
@@ -144,8 +151,48 @@ class MultiSourcePipeline:
         """Procesa un lote de archivos hacia SQL (lectura directa desde origen)"""
         valid_files = []
         
+        # OutboundDeliveryConfirm retorna 6 DataFrames
+        if source.staging_table_extensiones:  # Detectar fuente con 6 tablas
+            all_cabecera = []
+            all_posiciones = []
+            all_control = []
+            all_unidades = []
+            all_contenido = []
+            all_extensiones = []
+            
+            for file_info in file_list:
+                result = source.parser_func(file_info.full_path)
+                if result and result[0] is not None:
+                    df_cab, df_pos, df_ctrl, df_uni, df_cont, df_ext = result
+                    all_cabecera.append(df_cab)
+                    all_posiciones.append(df_pos)
+                    all_control.append(df_ctrl)
+                    all_unidades.append(df_uni)
+                    all_contenido.append(df_cont)
+                    all_extensiones.append(df_ext)
+                    valid_files.append(file_info)
+            
+            if not all_cabecera:
+                return 0, len(file_list)
+            
+            # Insertar las 6 tablas
+            tables = [
+                (all_cabecera, source.staging_table),
+                (all_posiciones, source.staging_table_items),
+                (all_control, source.staging_table_control),
+                (all_unidades, source.staging_table_unidades),
+                (all_contenido, source.staging_table_contenido),
+                (all_extensiones, source.staging_table_extensiones)
+            ]
+            
+            for data_list, table_name in tables:
+                full_df = pd.concat(data_list, ignore_index=True)
+                if not self.sql.bulk_insert(full_df, table_name):
+                    print(f"      ERROR: Fallo bulk insert en {table_name}")
+                    return 0, len(file_list)
+        
         # OutboundDelivery retorna 2 DataFrames (headers, items)
-        if source.staging_table_items:
+        elif source.staging_table_items:
             all_headers = []
             all_items = []
             
