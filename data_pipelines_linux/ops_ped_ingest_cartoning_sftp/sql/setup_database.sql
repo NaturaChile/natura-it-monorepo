@@ -64,8 +64,51 @@ BEGIN
 END
 GO
 
+-- Staging para OutboundDelivery Header
+IF OBJECT_ID('dbo.Staging_EWM_OutboundDelivery_Header', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Staging_EWM_OutboundDelivery_Header (
+        ID INT IDENTITY(1,1) PRIMARY KEY,
+        Delivery_ID NVARCHAR(50) NOT NULL,
+        Peso_Bruto DECIMAL(18,3) NULL,
+        Volumen DECIMAL(18,3) NULL,
+        Destinatario NVARCHAR(255) NULL,
+        Direccion NVARCHAR(500) NULL,
+        Region NVARCHAR(100) NULL,
+        Transportista NVARCHAR(255) NULL,
+        Fecha_Entrega NVARCHAR(50) NULL,
+        NombreArchivo NVARCHAR(500) NULL,
+        FechaCreacion DATETIME DEFAULT GETDATE()
+    );
+    
+    CREATE NONCLUSTERED INDEX IX_Staging_OutboundDelivery_Header_DeliveryID 
+    ON dbo.Staging_EWM_OutboundDelivery_Header(Delivery_ID);
+END
+GO
+
+-- Staging para OutboundDelivery Items
+IF OBJECT_ID('dbo.Staging_EWM_OutboundDelivery_Items', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Staging_EWM_OutboundDelivery_Items (
+        ID INT IDENTITY(1,1) PRIMARY KEY,
+        Delivery_ID_FK NVARCHAR(50) NOT NULL,
+        Item_Number NVARCHAR(50) NULL,
+        Material_SKU NVARCHAR(100) NULL,
+        Descripcion NVARCHAR(500) NULL,
+        Cantidad DECIMAL(18,3) NULL,
+        Unidad_Medida NVARCHAR(10) NULL,
+        Peso_Neto_Item DECIMAL(18,3) NULL,
+        NombreArchivo NVARCHAR(500) NULL,
+        FechaCreacion DATETIME DEFAULT GETDATE()
+    );
+    
+    CREATE NONCLUSTERED INDEX IX_Staging_OutboundDelivery_Items_DeliveryID 
+    ON dbo.Staging_EWM_OutboundDelivery_Items(Delivery_ID_FK);
+END
+GO
+
 -- =============================================
--- 2. TABLAS DEL MODELO DE NEGOCIO (Inferidas de tus SPs)
+-- 2. TABLAS DEL MODELO DE NEGOCIO (Con versionado)
 -- =============================================
 
 -- Tabla de PEDIDOS (Con versionado)
@@ -87,26 +130,6 @@ BEGIN
     );
     -- Índice para búsquedas rápidas de versión
     CREATE INDEX IX_EWM_Pedidos_ID ON dbo.EWM_Pedidos(PedidoID);
-END
-GO
-
--- Tabla final de WaveConfirm (Con versionado)
-IF OBJECT_ID('dbo.EWM_WaveConfirm', 'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.EWM_WaveConfirm(
-        Id BIGINT IDENTITY(1,1) PRIMARY KEY,
-        WaveID VARCHAR(50),
-        PedidoID VARCHAR(50),
-        CajaID VARCHAR(100),
-        NombreArchivo VARCHAR(255),
-        NumeroVersion INT DEFAULT 1,
-        FechaProceso DATETIME DEFAULT GETDATE()
-    );
-    -- Índices para búsquedas rápidas de versión y consultas
-    CREATE INDEX IX_WaveConfirm_WaveID ON dbo.EWM_WaveConfirm(WaveID);
-    CREATE INDEX IX_WaveConfirm_PedidoID ON dbo.EWM_WaveConfirm(PedidoID);
-    CREATE INDEX IX_WaveConfirm_CajaID ON dbo.EWM_WaveConfirm(CajaID);
-    CREATE INDEX IX_WaveConfirm_Composite ON dbo.EWM_WaveConfirm(WaveID, PedidoID, CajaID);
 END
 GO
 
@@ -147,11 +170,84 @@ BEGIN
 END
 GO
 
+-- Tabla final de WaveConfirm (Con versionado)
+IF OBJECT_ID('dbo.EWM_WaveConfirm', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.EWM_WaveConfirm(
+        Id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        WaveID VARCHAR(50),
+        PedidoID VARCHAR(50),
+        CajaID VARCHAR(100),
+        NombreArchivo VARCHAR(255),
+        NumeroVersion INT DEFAULT 1,
+        FechaProceso DATETIME DEFAULT GETDATE()
+    );
+    -- Índices para búsquedas rápidas de versión y consultas
+    CREATE INDEX IX_WaveConfirm_WaveID ON dbo.EWM_WaveConfirm(WaveID);
+    CREATE INDEX IX_WaveConfirm_PedidoID ON dbo.EWM_WaveConfirm(PedidoID);
+    CREATE INDEX IX_WaveConfirm_CajaID ON dbo.EWM_WaveConfirm(CajaID);
+    CREATE INDEX IX_WaveConfirm_Composite ON dbo.EWM_WaveConfirm(WaveID, PedidoID, CajaID);
+END
+GO
+
+-- Tabla final OutboundDelivery Header (Con versionado)
+IF OBJECT_ID('dbo.EWM_OutboundDelivery_Header', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.EWM_OutboundDelivery_Header (
+        ID INT IDENTITY(1,1) PRIMARY KEY,
+        Delivery_ID NVARCHAR(50) NOT NULL,
+        Peso_Bruto DECIMAL(18,3) NULL,
+        Volumen DECIMAL(18,3) NULL,
+        Destinatario NVARCHAR(255) NULL,
+        Direccion NVARCHAR(500) NULL,
+        Region NVARCHAR(100) NULL,
+        Transportista NVARCHAR(255) NULL,
+        Fecha_Entrega DATE NULL,
+        NumeroVersion INT NOT NULL,
+        FechaProceso DATETIME DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(500) NULL
+    );
+    
+    CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Header_DeliveryID 
+    ON dbo.EWM_OutboundDelivery_Header(Delivery_ID);
+    
+    CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Header_Version 
+    ON dbo.EWM_OutboundDelivery_Header(NumeroVersion DESC);
+END
+GO
+
+-- Tabla final OutboundDelivery Items (Con versionado)
+IF OBJECT_ID('dbo.EWM_OutboundDelivery_Items', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.EWM_OutboundDelivery_Items (
+        ID INT IDENTITY(1,1) PRIMARY KEY,
+        Delivery_ID_FK NVARCHAR(50) NOT NULL,
+        Item_Number NVARCHAR(50) NULL,
+        Material_SKU NVARCHAR(100) NULL,
+        Descripcion NVARCHAR(500) NULL,
+        Cantidad DECIMAL(18,3) NULL,
+        Unidad_Medida NVARCHAR(10) NULL,
+        Peso_Neto_Item DECIMAL(18,3) NULL,
+        NumeroVersion INT NOT NULL,
+        FechaProceso DATETIME DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(500) NULL
+    );
+    
+    CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Items_DeliveryID 
+    ON dbo.EWM_OutboundDelivery_Items(Delivery_ID_FK);
+    
+    CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Items_Version 
+    ON dbo.EWM_OutboundDelivery_Items(NumeroVersion DESC);
+END
+GO
+
 -- =============================================
--- 3. STORED PROCEDURES (Tus versiones originales)
+-- 3. STORED PROCEDURES
 -- =============================================
 
--- SP AVANZADO (El que usaremos en el Bot)
+-- =====================================================
+-- SP PARA CARTONING (Con versionado)
+-- =====================================================
 CREATE OR ALTER PROCEDURE [dbo].[sp_Procesar_Cartoning_EWM]
     @ArchivoActual NVARCHAR(255)
 AS
@@ -243,7 +339,7 @@ END
 GO
 
 -- =====================================================
--- STORED PROCEDURE PARA PROCESAR WAVECONFIRM
+-- SP PARA WAVECONFIRM (Con versionado)
 -- =====================================================
 CREATE OR ALTER PROCEDURE sp_Procesar_WaveConfirm_EWM
     @ArchivoActual VARCHAR(255)
@@ -356,7 +452,7 @@ BEGIN
         -- =====================================================
         DROP TABLE IF EXISTS #TempWaveConfirm;
         
-        -- Borrar del staging (opcional, puedes comentar si quieres mantener histórico)
+        -- Borrar del staging
         DELETE FROM Staging_EWM_WaveConfirm WHERE NombreArchivo = @ArchivoActual;
         
         -- Registrar en bitácora
@@ -391,3 +487,130 @@ BEGIN
     END CATCH
 END
 GO
+
+-- =====================================================
+-- SP PARA OUTBOUND DELIVERY (Con versionado)
+-- =====================================================
+CREATE OR ALTER PROCEDURE sp_Procesar_OutboundDelivery_EWM
+    @NombreArchivo NVARCHAR(500)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    DECLARE @NumeroVersion INT;
+    DECLARE @RegistrosHeader INT = 0;
+    DECLARE @RegistrosItems INT = 0;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- 1. Determinar número de versión
+        SELECT @NumeroVersion = ISNULL(MAX(NumeroVersion), 0) + 1
+        FROM EWM_OutboundDelivery_Header;
+        
+        -- 2. Limpiar datos y transformar fecha
+        -- Insertar HEADERS
+        INSERT INTO EWM_OutboundDelivery_Header (
+            Delivery_ID, Peso_Bruto, Volumen, Destinatario, Direccion, 
+            Region, Transportista, Fecha_Entrega, NumeroVersion, NombreArchivo
+        )
+        SELECT 
+            LTRIM(RTRIM(Delivery_ID)),
+            NULLIF(Peso_Bruto, 0),
+            NULLIF(Volumen, 0),
+            LTRIM(RTRIM(Destinatario)),
+            LTRIM(RTRIM(Direccion)),
+            LTRIM(RTRIM(Region)),
+            LTRIM(RTRIM(Transportista)),
+            -- Convertir fecha de formato YYYYMMDD a DATE
+            TRY_CONVERT(DATE, Fecha_Entrega, 112),
+            @NumeroVersion,
+            @NombreArchivo
+        FROM Staging_EWM_OutboundDelivery_Header
+        WHERE NombreArchivo = @NombreArchivo
+          AND LTRIM(RTRIM(Delivery_ID)) <> '';
+        
+        SET @RegistrosHeader = @@ROWCOUNT;
+        
+        -- 3. Insertar ITEMS
+        INSERT INTO EWM_OutboundDelivery_Items (
+            Delivery_ID_FK, Item_Number, Material_SKU, Descripcion,
+            Cantidad, Unidad_Medida, Peso_Neto_Item, NumeroVersion, NombreArchivo
+        )
+        SELECT 
+            LTRIM(RTRIM(Delivery_ID_FK)),
+            LTRIM(RTRIM(Item_Number)),
+            LTRIM(RTRIM(Material_SKU)),
+            LTRIM(RTRIM(Descripcion)),
+            NULLIF(Cantidad, 0),
+            LTRIM(RTRIM(Unidad_Medida)),
+            NULLIF(Peso_Neto_Item, 0),
+            @NumeroVersion,
+            @NombreArchivo
+        FROM Staging_EWM_OutboundDelivery_Items
+        WHERE NombreArchivo = @NombreArchivo
+          AND LTRIM(RTRIM(Delivery_ID_FK)) <> '';
+        
+        SET @RegistrosItems = @@ROWCOUNT;
+        
+        -- 4. Registrar en bitácora
+        INSERT INTO BitacoraArchivos (NombreArchivo, Estado, Mensaje)
+        VALUES (
+            @NombreArchivo, 
+            'PROCESADO', 
+            'OutboundDelivery - Headers: ' + CAST(@RegistrosHeader AS NVARCHAR) + ' | Items: ' + CAST(@RegistrosItems AS NVARCHAR) + ' | Version: ' + CAST(@NumeroVersion AS NVARCHAR)
+        );
+        
+        -- 5. Limpiar staging
+        DELETE FROM Staging_EWM_OutboundDelivery_Header WHERE NombreArchivo = @NombreArchivo;
+        DELETE FROM Staging_EWM_OutboundDelivery_Items WHERE NombreArchivo = @NombreArchivo;
+        
+        COMMIT TRANSACTION;
+        
+        PRINT '--> [VERSIONADO] OutboundDelivery procesado: ' + @NombreArchivo;
+        PRINT '    Headers: ' + CAST(@RegistrosHeader AS NVARCHAR) + ' | Items: ' + CAST(@RegistrosItems AS NVARCHAR);
+        PRINT '    Version: ' + CAST(@NumeroVersion AS NVARCHAR);
+        
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMsg NVARCHAR(4000) = ERROR_MESSAGE();
+        
+        -- Registrar error en bitácora
+        INSERT INTO BitacoraArchivos (NombreArchivo, Estado, Mensaje)
+        VALUES (@NombreArchivo, 'ERROR', 'OutboundDelivery: ' + @ErrorMsg);
+        
+        PRINT 'ERROR CRITICO: ' + @ErrorMsg;
+        RAISERROR(@ErrorMsg, 16, 1);
+    END CATCH
+END;
+GO
+
+PRINT '=============================================';
+PRINT 'SCHEMA COMPLETO CREADO EXITOSAMENTE';
+PRINT '=============================================';
+PRINT '';
+PRINT 'TABLAS DE STAGING (5):';
+PRINT '  - BitacoraArchivos';
+PRINT '  - Staging_EWM_Cartoning';
+PRINT '  - Staging_EWM_WaveConfirm';
+PRINT '  - Staging_EWM_OutboundDelivery_Header';
+PRINT '  - Staging_EWM_OutboundDelivery_Items';
+PRINT '';
+PRINT 'TABLAS FINALES (7):';
+PRINT '  - EWM_Pedidos (Cartoning)';
+PRINT '  - EWM_Cajas (Cartoning)';
+PRINT '  - EWM_Items (Cartoning)';
+PRINT '  - EWM_WaveConfirm';
+PRINT '  - EWM_OutboundDelivery_Header';
+PRINT '  - EWM_OutboundDelivery_Items';
+PRINT '';
+PRINT 'STORED PROCEDURES (3):';
+PRINT '  - sp_Procesar_Cartoning_EWM';
+PRINT '  - sp_Procesar_WaveConfirm_EWM';
+PRINT '  - sp_Procesar_OutboundDelivery_EWM';
+PRINT '';
+PRINT 'Todas las tablas incluyen versionado automatico';
+PRINT '=============================================';
