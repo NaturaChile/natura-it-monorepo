@@ -18,7 +18,8 @@ def main():
     # 2. Configuracion Global
     config = {
         'threads': 3,  # Threads compartidos para procesamiento paralelo
-        'poll_interval': 300  # 5 minutos entre ciclos
+        'poll_interval': 300,  # 5 minutos entre ciclos
+        'sql_script_path': os.path.join(current_dir, "sql/setup_database.sql")
     }
 
     # 3. SQL Repository compartido
