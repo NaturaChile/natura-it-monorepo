@@ -4,18 +4,17 @@ import glob
 import concurrent.futures
 import pandas as pd
 from datetime import datetime
-from src.adapters.sftp_client import SftpClient
 from src.adapters.state_manager import StateManager
 from src.adapters.sql_repository import SqlRepository
 from src.domain.file_parser import FileParser
 
 class DataSource:
     """Configuración de una fuente de datos"""
-    def __init__(self, name, sftp_client, landing_path, staging_table, sp_name, parser_func):
+    def __init__(self, name, file_client, staging_table, sp_name, parser_func, staging_table_items=None):
         self.name = name
-        self.sftp_client = sftp_client
-        self.landing_path = landing_path
+        self.file_client = file_client  # LocalFileClient
         self.staging_table = staging_table
+        self.staging_table_items = staging_table_items  # Para OutboundDelivery (2 tablas)
         self.sp_name = sp_name
         self.parser_func = parser_func
 
@@ -78,149 +77,131 @@ class MultiSourcePipeline:
         """Procesa una fuente de datos completa"""
         print(f"\n>>> FUENTE: {source.name} <<<")
         
-        # 1. Descarga
-        hay_nuevos = self._step_download(source)
+        # 1. Detectar archivos nuevos/modificados
+        pending_files = self._detect_new_files(source)
         
-        # 2. Procesamiento SQL
-        if hay_nuevos or self._check_pending_local(source):
-            self._step_process_pending(source)
+        # 2. Procesamiento SQL directo
+        if pending_files:
+            self._process_files(source, pending_files)
             return True
         else:
             print(f"  Sin novedades en {source.name}")
             return False
 
-    def _step_download(self, source: DataSource):
-        """Descarga archivos de una fuente con logging detallado"""
-        downloaded_count = 0
-        error_count = 0
+    def _detect_new_files(self, source: DataSource):
+        """Detecta archivos nuevos o modificados usando state.json"""
+        print(f"  DETECTANDO archivos nuevos/modificados...")
         
         try:
-            files = source.sftp_client.list_files()
-            to_download = []
+            all_files = source.file_client.list_files()
+            pending = []
             
-            for f in files:
-                state_key = f"{source.name}:{f.filename}"
-                if self.state.is_new_or_modified(state_key, f.st_mtime, f.st_size):
-                    to_download.append(f)
-
-            if to_download:
-                total = len(to_download)
-                print(f"  DESCARGA: {total} archivos nuevos detectados")
+            for file_info in all_files:
+                state_key = f"{source.name}:{file_info.filename}"
                 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=self.cfg['threads']) as ex:
-                    futures = {
-                        ex.submit(source.sftp_client.download_file, f.filename, source.landing_path): f 
-                        for f in to_download
-                    }
-                    
-                    for fut in concurrent.futures.as_completed(futures):
-                        f_attr = futures[fut]
-                        state_key = f"{source.name}:{f_attr.filename}"
-                        
-                        try:
-                            if fut.result():
-                                self.state.register_download(state_key, f_attr.st_mtime, f_attr.st_size)
-                                downloaded_count += 1
-                                if downloaded_count % 10 == 0 or downloaded_count == total:
-                                    print(f"    Progreso: {downloaded_count}/{total} OK | Errores: {error_count}")
-                            else:
-                                error_count += 1
-                        except Exception as e:
-                            error_count += 1
-                            print(f"    ERROR: {str(e)[:80]}")
-                
-                print(f"  COMPLETADO: {downloaded_count} OK, {error_count} errores de {total}")
-                
-                self.stats[source.name]['downloaded'] += downloaded_count
-                self.stats[source.name]['errors'] += error_count
-                
-                if error_count > 0:
-                    print(f"  NOTA: Archivos fallidos se reintentaran en proximo ciclo")
-                    
+                # Verificar si es nuevo o modificado
+                if self.state.is_new_or_modified(state_key, file_info.mtime, file_info.size):
+                    pending.append(file_info)
+            
+            if pending:
+                print(f"  DETECTADOS: {len(pending)} archivos para procesar")
+            
+            return pending
+            
         except Exception as e:
-            print(f"  ERROR CONEXION SFTP: {e}")
-        
-        return downloaded_count > 0
-
-    def _check_pending_local(self, source: DataSource):
-        """Verifica si hay archivos pendientes de procesar"""
-        all_files = glob.glob(os.path.join(source.landing_path, "*"))
-        for f in all_files:
-            state_key = f"{source.name}:{os.path.basename(f)}"
-            if self.state.is_pending_sql(state_key):
-                return True
-        return False
-
-    def _step_process_pending(self, source: DataSource):
-        """Procesa archivos pendientes hacia SQL"""
-        all_files = glob.glob(os.path.join(source.landing_path, "*"))
-        pending = []
-        
-        for f in all_files:
-            state_key = f"{source.name}:{os.path.basename(f)}"
-            if self.state.is_pending_sql(state_key):
-                pending.append(f)
-
-        if not pending:
-            return
-
-        total_pending = len(pending)
-        print(f"  PROCESANDO SQL: {total_pending} archivos pendientes")
+            print(f"  ERROR LISTANDO ARCHIVOS: {e}")
+            return []
+    
+    def _process_files(self, source: DataSource, file_list):
+        """Procesa archivos directamente desde origen hacia SQL"""
+        total = len(file_list)
+        print(f"  PROCESANDO: {total} archivos en lotes...")
         
         batch_size = 20
         processed_count = 0
+        error_count = 0
         
-        for i in range(0, len(pending), batch_size):
-            batch = pending[i:i+batch_size]
+        for i in range(0, len(file_list), batch_size):
+            batch = file_list[i:i+batch_size]
             batch_num = (i // batch_size) + 1
-            total_batches = (total_pending + batch_size - 1) // batch_size
+            total_batches = (total + batch_size - 1) // batch_size
             
             print(f"    Lote {batch_num}/{total_batches}: {len(batch)} archivos...")
-            success = self._process_batch(source, batch)
+            success, errors = self._process_batch(source, batch)
             
-            if success:
-                processed_count += len(batch)
-                print(f"    Lote {batch_num}/{total_batches}: COMPLETADO")
+            processed_count += success
+            error_count += errors
+            
+            if success > 0:
+                print(f"    Lote {batch_num}/{total_batches}: {success} OK, {errors} errores")
         
         self.stats[source.name]['processed'] += processed_count
-        print(f"  SQL COMPLETADO: {processed_count}/{total_pending}")
+        self.stats[source.name]['errors'] += error_count
+        
+        print(f"  COMPLETADO: {processed_count}/{total} procesados, {error_count} errores")
 
-    def _process_batch(self, source: DataSource, file_paths):
-        """Procesa un lote de archivos hacia SQL"""
-        dfs = []
+    def _process_batch(self, source: DataSource, file_list):
+        """Procesa un lote de archivos hacia SQL (lectura directa desde origen)"""
         valid_files = []
         
-        for fp in file_paths:
-            df = source.parser_func(fp)
-            if df is not None and not df.empty:
-                dfs.append(df)
-                valid_files.append(fp)
-
-        if not dfs:
-            print(f"      AVISO: No hay datos validos en este lote")
-            return False
-
-        full_df = pd.concat(dfs, ignore_index=True)
+        # OutboundDelivery retorna 2 DataFrames (headers, items)
+        if source.staging_table_items:
+            all_headers = []
+            all_items = []
+            
+            for file_info in file_list:
+                df_headers, df_items = source.parser_func(file_info.full_path)
+                if df_headers is not None and not df_headers.empty:
+                    all_headers.append(df_headers)
+                    all_items.append(df_items)
+                    valid_files.append(file_info)
+            
+            if not all_headers:
+                return 0, len(file_list)
+            
+            full_headers = pd.concat(all_headers, ignore_index=True)
+            full_items = pd.concat(all_items, ignore_index=True)
+            
+            if not self.sql.bulk_insert(full_headers, source.staging_table):
+                print(f"      ERROR: Fallo bulk insert en headers")
+                return 0, len(file_list)
+            
+            if not self.sql.bulk_insert(full_items, source.staging_table_items):
+                print(f"      ERROR: Fallo bulk insert en items")
+                return 0, len(file_list)
         
-        if self.sql.bulk_insert(full_df, source.staging_table):
-            # Procesar SPs SECUENCIALMENTE para evitar deadlocks
-            success_count = 0
-            error_count = 0
-            
-            for f in valid_files:
-                archivo = os.path.basename(f)
-                state_key = f"{source.name}:{archivo}"
-                
-                if self.sql.execute_sp(source.sp_name, {"ArchivoActual": archivo}):
-                    self.state.mark_as_processed_in_sql(state_key)
-                    success_count += 1
-                else:
-                    error_count += 1
-            
-            if error_count > 0:
-                print(f"      RESUMEN: {success_count} OK, {error_count} fallidos (se reintentaran)")
-            
-            return success_count > 0
+        # Cartoning / WaveConfirm retornan 1 DataFrame
         else:
-            print(f"      ERROR: Fallo bulk insert")
-            return False
+            dfs = []
+            
+            for file_info in file_list:
+                df = source.parser_func(file_info.full_path)
+                if df is not None and not df.empty:
+                    dfs.append(df)
+                    valid_files.append(file_info)
+
+            if not dfs:
+                return 0, len(file_list)
+
+            full_df = pd.concat(dfs, ignore_index=True)
+            
+            if not self.sql.bulk_insert(full_df, source.staging_table):
+                print(f"      ERROR: Fallo bulk insert")
+                return 0, len(file_list)
+        
+        # Procesar SPs SECUENCIALMENTE (CRITICO: Evita deadlocks SQL)
+        success_count = 0
+        error_count = 0
+        
+        for file_info in valid_files:
+            state_key = f"{source.name}:{file_info.filename}"
+            
+            if self.sql.execute_sp(source.sp_name, {"ArchivoActual": file_info.filename}):
+                # Registrar en state.json que fue procesado exitosamente
+                self.state.register_download(state_key, file_info.mtime, file_info.size)
+                self.state.mark_as_processed_in_sql(state_key)
+                success_count += 1
+            else:
+                error_count += 1
+        
+        return success_count, error_count
