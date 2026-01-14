@@ -58,7 +58,7 @@ def main():
     ))
     
     # FUENTE 3: OUTBOUND DELIVERY - SAP IDoc
-    outbound_client = LocalFileClient(r"E:\Datalake\Archivos\EWM\gera_to_ewm_outbounddelivery")
+    outbound_client = LocalFileClient(r"E:\Datalake\Archivos\EWM\gera_to_ewm\outbounddelivery")
     
     sources.append(DataSource(
         name="OutboundDelivery",

@@ -102,7 +102,7 @@ python -c "from src.domain.file_parser import FileParser; print('OK')"
 # Verificar que rclone esté sincronizando
 Test-Path "E:\Datalake\Archivos\EWM\ewm_to_gera\cartoning\02_Old"
 Test-Path "E:\Datalake\Archivos\EWM\ewm_to_gera\waveconfirm\02_Old"
-Test-Path "E:\Datalake\Archivos\EWM\gera_to_ewm_outbounddelivery"
+Test-Path "E:\Datalake\Archivos\EWM\gera_to_ewm\outbounddelivery"
 ```
 
 ## 📊 Comparación Antes/Después
