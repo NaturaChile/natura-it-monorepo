@@ -1,0 +1,67 @@
+name: CD - Deploy RPA Desktop Win
+
+on:
+  push:
+    branches: [ "dev" ]
+    paths:
+      - 'rpa_desktop_win/**'
+      - 'core_shared/**'
+      - 'config/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy_rpa_desktop_win.yml'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, rpa-ui, Windows]
+    environment: 10.156.16.48_WINDOWS
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+    steps:
+      - name: Detener Bots Activos (Liberar archivos)
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Intentando detener procesos Python antiguos..."
+          try {
+            Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
+            Write-Host "[OK] Procesos Python detenidos."
+          } catch {
+            Write-Host "[INFO] No había procesos corriendo."
+          }
+          Start-Sleep -Seconds 2
+      - name: Descargar Código del Repositorio
+        uses: actions/checkout@v4
+      - name: Desplegar Archivos en Servidor
+        shell: powershell
+        run: |
+          $dest = "$env:DEPLOY_PATH"
+          Write-Host "[INFO] Iniciando despliegue en: $dest"
+          if (!(Test-Path -Path $dest)) { 
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Write-Host "[OK] Directorio base creado."
+          }
+          Write-Host "[INFO] Copiando RPA Desktop..."
+          Copy-Item -Path ".\rpa_desktop_win" -Destination $dest -Recurse -Force
+          Write-Host "[INFO] Copiando Core Shared..."
+          Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
+          Write-Host "[INFO] Copiando Configuracion..."
+          if (Test-Path ".\config") {
+            Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
+          }
+          Write-Host "[INFO] Copiando Requirements..."
+          Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
+          Write-Host "[SUCCESS] Archivos copiados exitosamente."
+      - name: Instalar/Actualizar Librerías Python
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando dependencias..."
+          Set-Location "$env:DEPLOY_PATH"
+          if (Test-Path "$env:PYTHON_EXE") {
+              Write-Host "[INFO] Python detectado en: $env:PYTHON_EXE"
+              & "$env:PYTHON_EXE" -m pip install --upgrade pip
+              & "$env:PYTHON_EXE" -m pip install -r requirements.txt
+              Write-Host "[SUCCESS] Dependencias instaladas."
+          } else {
+              Write-Error "[ERROR] No se encontro Python en la ruta: $env:PYTHON_EXE"
+              exit 1
+          }
