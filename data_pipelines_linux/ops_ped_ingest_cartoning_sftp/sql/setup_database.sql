@@ -845,8 +845,9 @@ BEGIN
         )
         SELECT 
             LTRIM(RTRIM(Numero_Entrega)),
-            TRY_CONVERT(DATE, Fecha_WSHDRLFDAT, 112),
-            TRY_CONVERT(DATE, Fecha_WSHDRWADTI, 112),
+            -- Convertir YYYYMMDDHHMMSS (14 chars) a DATE usando solo los primeros 8 chars
+            TRY_CONVERT(DATE, LEFT(LTRIM(RTRIM(Fecha_WSHDRLFDAT)), 8), 112),
+            TRY_CONVERT(DATE, LEFT(LTRIM(RTRIM(Fecha_WSHDRWADTI)), 8), 112),
             @NumeroVersion,
             @ArchivoActual
         FROM Staging_EWM_OBDConfirm_Cabecera
@@ -865,7 +866,7 @@ BEGIN
             LTRIM(RTRIM(Numero_Posicion)),
             LTRIM(RTRIM(Pedido_Ref)),
             LTRIM(RTRIM(Material_SKU)),
-            NULLIF(Cantidad, 0),
+            TRY_CAST(NULLIF(Cantidad, 0) AS DECIMAL(18,3)),
             LTRIM(RTRIM(Unidad)),
             @NumeroVersion,
             @ArchivoActual
@@ -903,7 +904,7 @@ BEGIN
             LTRIM(RTRIM(Tipo_Embalaje)),
             LTRIM(RTRIM(HU_Nivel)),
             LTRIM(RTRIM(Numero_Externo)),
-            NULLIF(Cantidad_HU, 0),
+            TRY_CAST(NULLIF(Cantidad_HU, 0) AS DECIMAL(18,3)),
             @NumeroVersion,
             @ArchivoActual
         FROM Staging_EWM_OBDConfirm_Unidades_HDR
@@ -923,7 +924,7 @@ BEGIN
             LTRIM(RTRIM(ID_Unidad_Manipulacion_Hijo)),
             LTRIM(RTRIM(Numero_Entrega)),
             LTRIM(RTRIM(Numero_Posicion)),
-            NULLIF(Cantidad_Empacada, 0),
+            TRY_CAST(NULLIF(Cantidad_Empacada, 0) AS DECIMAL(18,3)),
             LTRIM(RTRIM(Unidad)),
             LTRIM(RTRIM(Material_SKU)),
             LTRIM(RTRIM(Nivel_HU)),

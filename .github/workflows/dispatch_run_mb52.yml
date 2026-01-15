@@ -1,0 +1,50 @@
+name: Manual - Run MB52 Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_path:
+        description: 'Path to script relative to repository'
+        required: true
+        default: 'rpa_desktop_win/test_mb52/bot_mb52.py'
+      python_exe:
+        description: 'Optional: Python executable path on runner'
+        required: false
+
+jobs:
+  run_mb52:
+    # Target the self-hosted runner that represents the RPA machine named "rpa-ui"
+    runs-on: [self-hosted, rpa-ui, Windows]
+
+    environment: 10.156.16.48_WINDOWS
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Stop existing Python processes (clean)
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Deteniendo procesos Python existentes..."
+          try { Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue } catch {}
+
+      - name: Run MB52 bot script
+        shell: powershell
+        env:
+          REPO_SCRIPT: ${{ github.event.inputs.script_path }}
+          INPUT_PY: ${{ github.event.inputs.python_exe }}
+          DEFAULT_PY: ${{ vars.WIN_PYTHON_EXE }}
+        run: |
+          $script = "$env:REPO_SCRIPT"
+          $python = "$env:INPUT_PY"
+          if ([string]::IsNullOrEmpty($python)) { $python = "$env:DEFAULT_PY" }
+
+          Write-Host "[INFO] Ejecutando script: $script"
+          Write-Host "[INFO] Usando Python: $python"
+
+          if (!(Test-Path $script)) {
+            Write-Error "[ERROR] Script no encontrado: $script"
+            exit 1
+          }
+
+          & $python $script
