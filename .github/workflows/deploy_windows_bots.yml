@@ -5,11 +5,8 @@ on:
     branches: [ "dev" ]
     paths:
       # AHORA VIGILAMOS TAMBIÉN LA CARPETA NUEVA
-      - 'rpa_desktop_win/**'
+      
       - 'data_pipelines_linux/**' 
-      - 'core_shared/**'
-      - 'config/**'
-      - 'requirements.txt'
       - '.github/workflows/deploy_windows_bots.yml'
 
 jobs:

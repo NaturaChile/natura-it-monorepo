@@ -5,9 +5,6 @@ on:
     branches: [ "dev" ]
     paths:
       - 'rpa_desktop_win/**'
-      - 'core_shared/**'
-      - 'config/**'
-      - 'requirements.txt'
       - '.github/workflows/deploy_rpa_desktop_win.yml'
 
 jobs:
