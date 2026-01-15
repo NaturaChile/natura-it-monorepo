@@ -14,5 +14,5 @@ session.findById("wnd[0]/usr/txtRSYST-BNAME").text = "Robotch_fin"
 session.findById("wnd[0]/usr/pwdRSYST-BCODE").text  = "Clave.nueva.2026"
 session.findById("wnd[0]/usr/txtRSYST-LANGU").text = "ES"
 session.findById("wnd[0]").sendVKey(0)
-session.findById("wnd[0]/tbar[0]/okcd").text = "mb52"
+session.findById("wnd[0]/tbar[0]/okcd").text = "mb51"
 session.findById("wnd[0]").sendVKey (0)
