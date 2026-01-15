@@ -39,14 +39,7 @@ jobs:
           }
           Write-Host "[INFO] Copiando RPA Desktop..."
           Copy-Item -Path ".\rpa_desktop_win" -Destination $dest -Recurse -Force
-          Write-Host "[INFO] Copiando Core Shared..."
-          Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
-          Write-Host "[INFO] Copiando Configuracion..."
-          if (Test-Path ".\config") {
-            Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
-          }
-          Write-Host "[INFO] Copiando Requirements..."
-          Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
+          
           Write-Host "[SUCCESS] Archivos copiados exitosamente."
       - name: Instalar/Actualizar Librerías Python
         shell: powershell
@@ -55,9 +48,7 @@ jobs:
           Set-Location "$env:DEPLOY_PATH"
           if (Test-Path "$env:PYTHON_EXE") {
               Write-Host "[INFO] Python detectado en: $env:PYTHON_EXE"
-              & "$env:PYTHON_EXE" -m pip install --upgrade pip
-              & "$env:PYTHON_EXE" -m pip install -r requirements.txt
-              Write-Host "[SUCCESS] Dependencias instaladas."
+
           } else {
               Write-Error "[ERROR] No se encontro Python en la ruta: $env:PYTHON_EXE"
               exit 1
