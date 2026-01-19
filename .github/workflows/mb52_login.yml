@@ -1,0 +1,41 @@
+name: MB52 Login
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ui:
+    runs-on: [self-hosted, Windows, X64, rpa_ui_55]
+    environment: SAP_Jorge
+
+    env:
+      # Variables de rutas (deben estar en environment SAP_Jorge o a nivel repo)
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+      # Variables SAP desde environment SAP_Jorge
+      SYSTEM: ${{ vars.SYSTEM }}
+      CLIENT: ${{ vars.CLIENT }}
+      USER: ${{ vars.USER }}
+      PW: ${{ secrets.PW }}
+      LANG: ${{ vars.LANG }}
+      TRANSACTION: MB52
+
+    steps:
+      - name: Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Ejecutar SAP Bot con UI
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Ejecutando SAP Bot profesional..."
+          Set-Location "$env:DEPLOY_PATH"
+          
+          # Ejecutar el bot con variables de entorno
+          & "$env:PYTHON_EXE" ".\rpa_desktop_win\sap_bot\main.py"
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] Bot fallo con codigo de salida: $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+          
+          Write-Host "[SUCCESS] Bot ejecutado correctamente."
