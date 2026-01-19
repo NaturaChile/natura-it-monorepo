@@ -1,0 +1,28 @@
+name: Test RPA UI - Ejecución Manual
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-ui:
+    runs-on: [self-hosted, Windows, X64, rpa_ui_55]
+    environment: 10.156.16.55
+
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+
+    steps:
+      - name: Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Ejecutar Bot MB51 (Test UI)
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Ejecutando Bot MB51 para probar acceso UI..."
+          Set-Location "$env:DEPLOY_PATH"
+          
+          # Ejecutar el bot
+          & "$env:PYTHON_EXE" ".\rpa_desktop_win\test_mb52\Bot_mb51.py"
+          
+          Write-Host "[SUCCESS] Bot ejecutado."
