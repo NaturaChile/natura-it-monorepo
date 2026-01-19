@@ -3,6 +3,34 @@ import time
 import sys
 import psutil
 
+def obtener_conexiones_sap():
+    """Obtiene las conexiones/SID disponibles en SAP Logon"""
+    try:
+        print("[INFO] Conectando con SAP GUI scripting...")
+        import win32com.client
+        
+        SapGuiAuto = win32com.client.GetObject("SAPGUI")
+        application = SapGuiAuto.GetScriptingEngine
+        
+        # Obtener todas las conexiones disponibles
+        conexiones = []
+        for i in range(application.Children.Count):
+            connection = application.Children(i)
+            nombre_conexion = connection.Description
+            conexiones.append(nombre_conexion)
+            print(f"  [SID] {nombre_conexion}")
+        
+        if conexiones:
+            print(f"[SUCCESS] Se encontraron {len(conexiones)} conexion(es) disponible(s)")
+            return True
+        else:
+            print("[WARN] No se encontraron conexiones disponibles")
+            return False
+            
+    except Exception as e:
+        print(f"[WARN] No se pudo acceder a conexiones SAP: {str(e)}")
+        return False
+
 def verificar_ventana_sap(timeout=60):
     """Verifica que SAP GUI este abierto y con ventana visible"""
     inicio = time.time()
@@ -58,6 +86,12 @@ except Exception as e:
 print("[INFO] Esperando que SAP GUI se abra y este listo (maximo 60 segundos)...")
 if verificar_ventana_sap(timeout=60):
     print("[SUCCESS] SAP GUI abierto correctamente y ventana verificada.")
+    time.sleep(3)
+    
+    # Intentar obtener conexiones disponibles
+    print("[INFO] Obteniendo conexiones disponibles...")
+    obtener_conexiones_sap()
+    
     time.sleep(5)  # Mantener abierto 5 segundos adicionales
     sys.exit(0)
 else:
