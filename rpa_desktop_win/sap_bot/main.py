@@ -82,19 +82,50 @@ def main():
     
     # 3. Esperar y conectar
     controller = SapController()
-    print("[INFO] Esperando ventana principal de SAP...")
+    print("[INFO] Esperando que SAP inicie sesion (ventana 'SAP')...")
     
-    if not controller.wait_for_main_window(timeout=30):
-        print("[WARN] No se detecto ventana SAP Easy Access, intentando conectar...")
-        time.sleep(5)
+    # Esperar mas tiempo para que SAP se abra completamente y haga login
+    max_wait = 90  # 90 segundos (login puede tardar)
+    wait_interval = 5
+    
+    for i in range(0, max_wait, wait_interval):
+        if controller.wait_for_main_window(timeout=wait_interval):
+            print(f"[SUCCESS] Sesion SAP detectada (despues de {i + wait_interval}s)")
+            break
+        else:
+            print(f"[WAIT] Esperando login SAP... ({i + wait_interval}s / {max_wait}s)")
     else:
-        print("[SUCCESS] Ventana SAP Easy Access detectada")
+        print("[WARN] Timeout esperando sesion SAP, intentando conectar de todas formas...")
     
-    try:
-        controller.connect()
-        print("[SUCCESS] Conectado a SAP GUI Scripting")
-    except Exception as e:
-        print(f"[ERROR] No se pudo conectar a SAP Scripting: {str(e)}")
+    # Esperar adicional para que el login complete
+    print("[INFO] Esperando que el login complete...")
+    time.sleep(10)
+    
+    # Intentar conectar con reintentos
+    max_retries = 5
+    retry_delay = 5
+    connected = False
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[INFO] Intento de conexion {attempt}/{max_retries}...")
+            controller.connect()
+            print("[SUCCESS] Conectado a SAP GUI Scripting")
+            connected = True
+            break
+        except Exception as e:
+            print(f"[WARN] Intento {attempt} fallido: {str(e)}")
+            if attempt < max_retries:
+                print(f"[INFO] Esperando {retry_delay}s antes del siguiente intento...")
+                time.sleep(retry_delay)
+    
+    if not connected:
+        print("[ERROR] No se pudo conectar a SAP Scripting despues de todos los intentos")
+        print("[INFO] Verifica que:")
+        print("  1. SAP GUI este instalado")
+        print("  2. SAP Scripting este habilitado (RZ11 -> sapgui/user_scripting)")
+        print("  3. La sesion tenga permisos de UI (no session 0)")
+        print("  4. Las credenciales sean correctas")
         sys.exit(1)
     
     # 4. Escribir transaccion
