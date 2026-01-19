@@ -14,30 +14,25 @@ class SapController:
         self.session = None
 
     def wait_for_main_window(self, title: str = "SAP Easy Access", timeout: int = 10) -> bool:
-        if win32gui is None:
-            raise RuntimeError("pywin32.win32gui no disponible.")
-
+        """Espera a que SAP este listo verificando la conexion Scripting."""
         end = time.time() + timeout
-
-        def _exists():
-            found = []
-
-            def _enum(hwnd, _):
-                try:
-                    if win32gui.IsWindowVisible(hwnd) and win32gui.GetParent(hwnd) == 0:
-                        t = win32gui.GetWindowText(hwnd) or ""
-                        if t.strip().lower() == title.lower():
-                            found.append((hwnd, t))
-                except Exception:
-                    pass
-
-            win32gui.EnumWindows(_enum, None)
-            return len(found) > 0
-
+        
         while time.time() < end:
-            if _exists():
-                return True
+            try:
+                # Intentar conectar al scripting engine como test
+                test_gui = win32com.client.GetObject("SAPGUI")
+                test_app = test_gui.GetScriptingEngine
+                
+                # Si tiene al menos una conexion activa, SAP esta listo
+                if test_app.Children.Count > 0:
+                    return True
+                    
+            except Exception:
+                # SAP aun no esta listo
+                pass
+            
             time.sleep(0.5)
+        
         return False
 
     def connect(self):
