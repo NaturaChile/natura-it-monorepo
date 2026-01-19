@@ -1,18 +1,29 @@
-import win32com.client
 import subprocess
-import time 
+import time
+import sys
 
+def verificar_proceso_sap(timeout=60):
+    """Verifica que SAP GUI esté corriendo"""
+    inicio = time.time()
+    while time.time() - inicio < timeout:
+        result = subprocess.run(
+            ['tasklist', '/FI', 'IMAGENAME eq saplogon.exe'],
+            capture_output=True,
+            text=True
+        )
+        if 'saplogon.exe' in result.stdout:
+            return True
+        time.sleep(2)
+    return False
+
+print("[INFO] Iniciando SAP GUI...")
 subprocess.Popen(r"C:\Program Files (x86)\SAP\FrontEnd\SapGui\saplogon.exe")
-time.sleep(5)
-SapGuiAuto = win32com.client.GetObject("SAPGUI")
-application = SapGuiAuto.GetScriptingEngine
-time.sleep(5)
-connection = application.OpenConnection("1.02 - PRD - Produção/Producción", True)
-session = connection.Children(0)
-session.findById("wnd[0]/usr/txtRSYST-MANDT").text ="210"
-session.findById("wnd[0]/usr/txtRSYST-BNAME").text = "Robotch_fin"
-session.findById("wnd[0]/usr/pwdRSYST-BCODE").text  = "Clave.nueva.2026"
-session.findById("wnd[0]/usr/txtRSYST-LANGU").text = "ES"
-session.findById("wnd[0]").sendVKey(0)
-session.findById("wnd[0]/tbar[0]/okcd").text = "mb51"
-session.findById("wnd[0]").sendVKey (0)
+
+print("[INFO] Esperando que SAP GUI se abra (máximo 60 segundos)...")
+if verificar_proceso_sap(timeout=60):
+    print("[SUCCESS] ✓ SAP GUI abierto correctamente y verificado en procesos.")
+    time.sleep(5)  # Mantener abierto 5 segundos adicionales
+    sys.exit(0)
+else:
+    print("[ERROR] ✗ SAP GUI no se abrió en 60 segundos.")
+    sys.exit(1)
