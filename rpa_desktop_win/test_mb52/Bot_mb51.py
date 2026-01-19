@@ -19,11 +19,11 @@ def verificar_proceso_sap(timeout=60):
 print("[INFO] Iniciando SAP GUI...")
 subprocess.Popen(r"C:\Program Files (x86)\SAP\FrontEnd\SapGui\saplogon.exe")
 
-print("[INFO] Esperando que SAP GUI se abra (máximo 60 segundos)...")
+print("[INFO] Esperando que SAP GUI se abra (maximo 60 segundos)...")
 if verificar_proceso_sap(timeout=60):
-    print("[SUCCESS] ✓ SAP GUI abierto correctamente y verificado en procesos.")
+    print("[SUCCESS]  SAP GUI abierto correctamente y verificado en procesos.")
     time.sleep(5)  # Mantener abierto 5 segundos adicionales
     sys.exit(0)
 else:
-    print("[ERROR] ✗ SAP GUI no se abrió en 60 segundos.")
+    print("[ERROR]  SAP GUI no se abrio en 60 segundos.")
     sys.exit(1)
