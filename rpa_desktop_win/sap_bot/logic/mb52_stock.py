@@ -29,6 +29,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
     try:
         # 1. Limpiar pantalla inicial
         print("[MB52] Paso 1: Preparando pantalla...")
+        session.findById("wnd[0]/tbar[0]/okcd").text = "MB52"
         session.findById("wnd[0]").sendVKey(0)
         time.sleep(0.5)
         
@@ -76,7 +77,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         
         # 9. Esperar a que la descarga complete (buscar "code page 1160" en barra de estado)
         print("[MB52] Paso 9: Esperando confirmacion de descarga...")
-        max_wait_download = 120  # 2 minutos maximo para descargar
+        max_wait_download = 1000  # 2 minutos maximo para descargar
         wait_interval = 2
         descarga_completa = False
         
