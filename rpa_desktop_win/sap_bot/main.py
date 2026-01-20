@@ -44,6 +44,62 @@ def check_statusbar(controller: SapController) -> dict:
         }
 
 
+def verificar_error_login() -> str:
+    """Verifica si hay un error de login en SAP (contrasena incorrecta, usuario bloqueado, etc.)"""
+    try:
+        import win32com.client
+        sap_gui = win32com.client.GetObject("SAPGUI")
+        app = sap_gui.GetScriptingEngine
+        
+        # Verificar si hay conexiones
+        if app.Children.Count == 0:
+            return None  # No hay conexion aun, sigue esperando
+        
+        conn = app.Children(0)
+        
+        # Verificar si hay sesiones
+        if conn.Children.Count == 0:
+            return None  # No hay sesion aun
+        
+        session = conn.Children(0)
+        
+        # Intentar leer la barra de estado de la pantalla de login
+        try:
+            statusbar = session.findById("wnd[0]/sbar")
+            mensaje = statusbar.Text
+            tipo = statusbar.MessageType
+            
+            # Mensajes comunes de error de login
+            errores_login = [
+                "password",
+                "contrasena",
+                "clave",
+                "incorrecta",
+                "invalid",
+                "bloqueado",
+                "locked",
+                "expired",
+                "expirado",
+                "caducado",
+                "no autorizado",
+                "unauthorized",
+                "no existe",
+                "does not exist"
+            ]
+            
+            mensaje_lower = mensaje.lower()
+            if tipo in ["E", "A"] and any(err in mensaje_lower for err in errores_login):
+                return mensaje
+                
+        except Exception:
+            pass
+        
+        return None
+        
+    except Exception:
+        return None  # SAP no esta listo, sigue esperando
+
+
 def main():
     """Punto de entrada principal del bot."""
     print("[INFO] Iniciando SAP Bot...")
@@ -67,7 +123,22 @@ def main():
         print(f"[ERROR] {str(e)}")
         sys.exit(1)
     
-    # 2. Lanzar SAP
+    # 2. Verificar que no haya otra sesion SAP activa
+    print("[INFO] Verificando si hay otra sesion SAP activa...")
+    try:
+        import win32com.client
+        test_gui = win32com.client.GetObject("SAPGUI")
+        test_app = test_gui.GetScriptingEngine
+        
+        if test_app.Children.Count > 0:
+            print("[ERROR] Hay otro bot funcionando en SAP")
+            print("[ERROR] Cierre la sesion SAP existente antes de ejecutar este proceso")
+            sys.exit(1)
+    except Exception:
+        # No hay SAP abierto, podemos continuar
+        print("[OK] No hay sesiones SAP activas")
+    
+    # 3. Lanzar SAP
     try:
         print("[INFO] Lanzando SAP GUI...")
         launch_sap(
@@ -81,22 +152,37 @@ def main():
         print(f"[ERROR] No se pudo lanzar SAP: {str(e)}")
         sys.exit(1)
     
-    # 3. Esperar y conectar
+    # 4. Esperar y conectar
     controller = SapController()
     print("[INFO] Esperando que SAP inicie sesion (ventana 'SAP')...")
     
     # Esperar mas tiempo para que SAP se abra completamente y haga login
     max_wait = 90  # 90 segundos (login puede tardar)
     wait_interval = 5
+    login_detectado = False
     
     for i in range(0, max_wait, wait_interval):
         if controller.wait_for_main_window(timeout=wait_interval):
             print(f"[SUCCESS] Sesion SAP detectada (despues de {i + wait_interval}s)")
+            login_detectado = True
             break
         else:
+            # Verificar si hay error de login (contrasena incorrecta, usuario bloqueado, etc.)
+            error_login = verificar_error_login()
+            if error_login:
+                print(f"[ERROR] Error de autenticacion SAP: {error_login}")
+                print("[ERROR] Posibles causas:")
+                print("  - Contrasena incorrecta o expirada")
+                print("  - Usuario bloqueado")
+                print("  - Usuario sin permisos en este sistema/cliente")
+                sys.exit(1)
             print(f"[WAIT] Esperando login SAP... ({i + wait_interval}s / {max_wait}s)")
-    else:
-        print("[WARN] Timeout esperando sesion SAP, intentando conectar de todas formas...")
+    
+    if not login_detectado:
+        print("[ERROR] Timeout esperando sesion SAP")
+        print("[ERROR] El login no se completo en 90 segundos")
+        print("[ERROR] Verifica credenciales y conectividad al servidor SAP")
+        sys.exit(1)
     
     # Esperar adicional para que el login complete
     print("[INFO] Esperando que el login complete...")
@@ -174,6 +260,12 @@ def main():
             
         except Exception as e:
             print(f"[ERROR] Error en proceso MB52: {str(e)}")
+            # Leer barra de estado para mostrar mensaje de error de SAP
+            print("[INFO] Leyendo barra de estado de SAP...")
+            status = check_statusbar(controller)
+            if "exception" not in status:
+                print(f"[SAP STATUS] Tipo: {status['type']}")
+                print(f"[SAP STATUS] Mensaje: {status['text']}")
             sys.exit(1)
     else:
         print(f"[INFO] Transaccion {transaction} ejecutada (sin logica adicional)")
