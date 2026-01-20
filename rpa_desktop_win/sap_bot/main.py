@@ -126,17 +126,27 @@ def main():
     # 2. Verificar que no haya otra sesion SAP activa
     print("[INFO] Verificando si hay otra sesion SAP activa...")
     try:
-        import win32com.client
-        test_gui = win32com.client.GetObject("SAPGUI")
-        test_app = test_gui.GetScriptingEngine
+        import subprocess
+        # Buscar ventana con titulo "SAP Easy Access" usando PowerShell
+        result = subprocess.run(
+            ['powershell', '-Command', 
+             'Get-Process | Where-Object {$_.MainWindowTitle -like "*SAP Easy Access*"} | Select-Object -First 1 | Measure-Object | Select-Object -ExpandProperty Count'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        count = int(result.stdout.strip()) if result.stdout.strip() else 0
         
-        if test_app.Children.Count > 0:
+        if count > 0:
             print("[ERROR] Hay otro bot funcionando en SAP")
+            print("[ERROR] Se detecto una ventana 'SAP Easy Access' abierta")
             print("[ERROR] Cierre la sesion SAP existente antes de ejecutar este proceso")
             sys.exit(1)
-    except Exception:
-        # No hay SAP abierto, podemos continuar
-        print("[OK] No hay sesiones SAP activas")
+        else:
+            print("[OK] No hay sesiones SAP activas")
+    except Exception as e:
+        print(f"[WARN] No se pudo verificar sesiones SAP: {str(e)}")
+        print("[INFO] Continuando de todas formas...")
     
     # 3. Lanzar SAP
     try:
