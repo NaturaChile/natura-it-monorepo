@@ -73,7 +73,31 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # 8. Confirmar guardado
         print("[MB52] Paso 8: Guardando archivo...")
         session.findById("wnd[1]/tbar[0]/btn[0]").press()
-        time.sleep(2)  # Esperar a que se guarde
+        
+        # 9. Esperar a que la descarga complete (buscar "code page 1160" en barra de estado)
+        print("[MB52] Paso 9: Esperando confirmacion de descarga...")
+        max_wait_download = 120  # 2 minutos maximo para descargar
+        wait_interval = 2
+        descarga_completa = False
+        
+        for i in range(0, max_wait_download, wait_interval):
+            try:
+                statusbar_text = session.findById("wnd[0]/sbar/pane[0]").text
+                print(f"[MB52] [{i}s] Status: {statusbar_text}")
+                
+                if "code page 1160" in statusbar_text.lower() or "1160" in statusbar_text:
+                    print("[MB52] [SUCCESS] Descarga completada correctamente")
+                    descarga_completa = True
+                    break
+                    
+            except Exception as e:
+                print(f"[MB52] [{i}s] No se pudo leer barra de estado: {str(e)}")
+            
+            time.sleep(wait_interval)
+        
+        if not descarga_completa:
+            print("[MB52] [WARN] No se detecto confirmacion de descarga, verificar archivo manualmente")
+        
         
         ruta_completa = f"{ruta_destino}\\{nombre_archivo}"
         print(f"[MB52] [SUCCESS] Archivo exportado: {ruta_completa}")
