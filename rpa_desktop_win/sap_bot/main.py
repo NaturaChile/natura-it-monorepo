@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sap_bot.services.launcher import launch_sap
 from sap_bot.services.sap_controller import SapController
+from sap_bot.logic.mb52_stock import ejecutar_mb52
 
 
 def get_env_variable(name: str, required: bool = True) -> str:
@@ -138,8 +139,47 @@ def main():
         print(f"[ERROR] No se pudo ejecutar transaccion: {str(e)}")
         sys.exit(1)
     
-    # 5. Revisar barra de estado
+    # 5. Revisar barra de estado despues de entrar a la transaccion
     print("[INFO] Revisando barra de estado...")
+    status = check_statusbar(controller)
+    
+    if "exception" in status:
+        print(f"[WARN] No se pudo leer barra de estado: {status['exception']}")
+    else:
+        print(f"[STATUS] Tipo: {status['type']}")
+        print(f"[STATUS] Mensaje: {status['text']}")
+        
+        if status['is_error']:
+            print("[ERROR] Se detecto un error en SAP")
+            sys.exit(1)
+    
+    # 6. Ejecutar logica especifica de la transaccion
+    if transaction.upper() == "MB52":
+        try:
+            # Obtener parametros opcionales desde environment
+            centro = os.getenv("CENTRO", "4100")
+            almacen = os.getenv("ALMACEN", "4161")
+            variante = os.getenv("VARIANTE", "BOTMB52")
+            ruta_destino = os.getenv("RUTA_DESTINO", r"Y:\Publico\RPA\Retail\Stock - Base Tiendas")
+            
+            archivo_generado = ejecutar_mb52(
+                session=controller.session,
+                centro=centro,
+                almacen=almacen,
+                variante=variante,
+                ruta_destino=ruta_destino
+            )
+            
+            print(f"[SUCCESS] Proceso MB52 completado. Archivo: {archivo_generado}")
+            
+        except Exception as e:
+            print(f"[ERROR] Error en proceso MB52: {str(e)}")
+            sys.exit(1)
+    else:
+        print(f"[INFO] Transaccion {transaction} ejecutada (sin logica adicional)")
+    
+    # 7. Revisar barra de estado final
+    print("[INFO] Revisando barra de estado final...")
     status = check_statusbar(controller)
     
     if "exception" in status:

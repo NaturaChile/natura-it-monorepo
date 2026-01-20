@@ -19,15 +19,20 @@ jobs:
       PW: ${{ secrets.PW }}
       LANG: ${{ vars.LANG }}
       TRANSACTION: MB52
+      # Parametros especificos de MB52
+      CENTRO: "4100"
+      ALMACEN: "4161"
+      VARIANTE: "BOTMB52"
+      RUTA_DESTINO: "Y:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
 
     steps:
-      - name: Descargar Código del Repositorio
+      - name: Descargar Codigo del Repositorio
         uses: actions/checkout@v4
 
-      - name: Ejecutar SAP Bot con UI
+      - name: Ejecutar SAP Bot MB52
         shell: powershell
         run: |
-          Write-Host "[INFO] Ejecutando SAP Bot profesional..."
+          Write-Host "[INFO] Ejecutando SAP Bot MB52 - Stock de Tiendas..."
           Set-Location "$env:DEPLOY_PATH"
           
           # Ejecutar el bot con variables de entorno
