@@ -123,27 +123,41 @@ def main():
         print(f"[ERROR] {str(e)}")
         sys.exit(1)
     
-    # 2. Verificar que no haya otra sesion SAP activa
+    # 2. Verificar que no haya otra sesion SAP activa usando UIAutomation
     print("[INFO] Verificando si hay otra sesion SAP activa...")
     try:
         import subprocess
-        # Buscar ventana con titulo "SAP Easy Access" usando PowerShell
+        # Usar UIAutomation de .NET para buscar ventanas con ClassName = SAP_FRONTEND_SESSION
+        ps_script = '''
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$condition = [System.Windows.Automation.Condition]::TrueCondition
+$ventanas = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+$sapSessions = $ventanas | Where-Object { $_.Current.ClassName -eq "SAP_FRONTEND_SESSION" }
+if ($sapSessions) {
+    $titulo = ($sapSessions | Select-Object -First 1).Current.Name
+    Write-Output "FOUND:$titulo"
+} else {
+    Write-Output "NONE"
+}
+'''
         result = subprocess.run(
-            ['powershell', '-Command', 
-             'Get-Process | Where-Object {$_.MainWindowTitle -like "*SAP Easy Access*"} | Select-Object -First 1 | Measure-Object | Select-Object -ExpandProperty Count'],
+            ['powershell', '-Command', ps_script],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=15
         )
-        count = int(result.stdout.strip()) if result.stdout.strip() else 0
+        output = result.stdout.strip()
         
-        if count > 0:
-            print("[ERROR] Hay otro bot funcionando en SAP")
-            print("[ERROR] Se detecto una ventana 'SAP Easy Access' abierta")
+        if output.startswith("FOUND:"):
+            titulo_ventana = output.replace("FOUND:", "")
+            print(f"[ERROR] Hay otro bot funcionando en SAP")
+            print(f"[ERROR] Se detecto sesion activa: '{titulo_ventana}'")
             print("[ERROR] Cierre la sesion SAP existente antes de ejecutar este proceso")
             sys.exit(1)
         else:
-            print("[OK] No hay sesiones SAP activas")
+            print("[OK] No hay sesiones SAP activas (SAP_FRONTEND_SESSION)")
     except Exception as e:
         print(f"[WARN] No se pudo verificar sesiones SAP: {str(e)}")
         print("[INFO] Continuando de todas formas...")
