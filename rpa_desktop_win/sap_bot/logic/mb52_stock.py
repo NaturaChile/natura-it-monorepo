@@ -35,6 +35,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # 2. Llenar campos de seleccion
         print("[MB52] Paso 2: Llenando campos de seleccion...")
         session.findById("wnd[0]/usr/ctxtWERKS-LOW").text = centro
+        session.findById("wnd[0]/usr/ctxtLGORT-HIGH").text = "4195"
         session.findById("wnd[0]/usr/ctxtLGORT-LOW").text = almacen
         session.findById("wnd[0]/usr/ctxtP_VARI").text = variante
         session.findById("wnd[0]/usr/ctxtP_VARI").setFocus()

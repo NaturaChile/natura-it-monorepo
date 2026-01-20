@@ -23,7 +23,7 @@ jobs:
       CENTRO: "4100"
       ALMACEN: "4161"
       VARIANTE: "BOTMB52"
-      RUTA_DESTINO: "Y:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
+      RUTA_DESTINO: "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
 
     steps:
       - name: Descargar Codigo del Repositorio
