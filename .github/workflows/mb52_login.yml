@@ -18,11 +18,11 @@ jobs:
       USER: ${{ vars.USER }}
       PW: ${{ secrets.PW }}
       LANG: ${{ vars.LANG }}
-      TRANSACTION: MB52
+      TRANSACTION: 
       # Parametros especificos de MB52
       CENTRO: "4100"
       ALMACEN: "4161"
-      VARIANTE: "BOTMB52"
+      VARIANTE: "BOTUIPATH"
       RUTA_DESTINO: "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
 
     steps:
