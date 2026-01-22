@@ -111,7 +111,7 @@ def main():
         sap_user = get_env_variable("USER")
         sap_password = get_env_variable("PW")
         sap_lang = get_env_variable("LANG", required=False) or "ES"
-        transaction = get_env_variable("TRANSACTION", required=False) or "MB51"
+        transaction = get_env_variable("TRANSACTION", required=False) or "MB52"
         
         print(f"[CONFIG] Sistema: {sap_system}")
         print(f"[CONFIG] Cliente: {sap_client}")
