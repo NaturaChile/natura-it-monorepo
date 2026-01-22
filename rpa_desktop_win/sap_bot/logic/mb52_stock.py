@@ -80,24 +80,34 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         print(f"[MB52] Datos recibidos del portapapeles: {len(clipboard_data)} caracteres")
         
         # 8. Procesar datos y crear DataFrame
-        print("[MB52] Paso 8: Procesando datos...")
+        print("[MB52] Paso 8: Procesando y limpiando datos...")
         lines = clipboard_data.strip().split('\n')
+        
+        # Filtrar lineas de guiones (separadores visuales)
+        lines = [line for line in lines if not line.strip().startswith('---')]
         
         if len(lines) < 2:
             raise ValueError("Datos insuficientes en el portapapeles")
         
-        # Primera linea es el encabezado (separado por tabs)
-        headers = lines[0].strip().split('\t')
-        print(f"[MB52] Columnas detectadas: {len(headers)}")
+        # Primera linea es el encabezado (separado por |)
+        header_line = lines[0]
+        headers = [col.strip() for col in header_line.split('|') if col.strip()]
+        print(f"[MB52] Columnas detectadas: {len(headers)} - {headers}")
         
         # Resto son datos
         data_rows = []
         for line in lines[1:]:
-            if line.strip():
-                row = line.strip().split('\t')
-                data_rows.append(row)
+            if line.strip() and '|' in line:
+                # Separar por | y limpiar espacios
+                row = [col.strip() for col in line.split('|') if col.strip() != '']
+                # Solo agregar si tiene el numero correcto de columnas
+                if len(row) == len(headers):
+                    data_rows.append(row)
+                elif len(row) > 0:
+                    # Intentar ajustar si hay columnas de mas/menos
+                    print(f"[MB52] [WARN] Fila con {len(row)} columnas (esperadas {len(headers)}): {row[:3]}...")
         
-        print(f"[MB52] Filas de datos: {len(data_rows)}")
+        print(f"[MB52] Filas de datos procesadas: {len(data_rows)}")
         
         # Crear DataFrame
         df = pd.DataFrame(data_rows, columns=headers)
