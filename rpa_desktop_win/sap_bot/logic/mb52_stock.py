@@ -194,6 +194,27 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
                 df.to_excel(fallback_path, index=False, engine='openpyxl')
                 saved_path = fallback_path
                 print(f"[MB52] Archivo guardado en Descargas: {fallback_path}")
+
+                # Intentar mover desde Descargas a la ruta de red usando PowerShell Move-Item
+                try:
+                    import subprocess
+                    dest_dir = ruta_destino
+                    print(f"[MB52] Intentando mover archivo desde Descargas a: {dest_dir}")
+                    # Construir comando PowerShell. Usar -NoProfile para evitar perfiles que cambien el ambiente.
+                    ps_cmd = f"Move-Item -Path '{fallback_path}' -Destination '{dest_dir}' -Force"
+                    result = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        dest_path = os.path.join(dest_dir, nombre_archivo)
+                        if os.path.exists(dest_path):
+                            saved_path = dest_path
+                            print(f"[MB52] [SUCCESS] Archivo movido a ruta de red: {dest_path}")
+                        else:
+                            print(f"[MB52] [WARN] Move-Item retornó 0 pero el archivo no aparece en destino: {dest_path}")
+                    else:
+                        print(f"[MB52] [WARN] Move-Item falló (code {result.returncode}): {result.stderr.strip()}")
+                except Exception as me:
+                    print(f"[MB52] [WARN] Error ejecutando Move-Item: {str(me)}")
+
             except Exception as e2:
                 print(f"[MB52] [ERROR] Fallback a Descargas fallo: {str(e2)}")
                 raise
