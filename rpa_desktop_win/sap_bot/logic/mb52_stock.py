@@ -1,6 +1,7 @@
 """Logica de transaccion MB52 - Stock de almacen."""
 import time
 import os
+import shutil
 from datetime import datetime
 import pandas as pd
 
@@ -195,27 +196,55 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
                 saved_path = fallback_path
                 print(f"[MB52] Archivo guardado en Descargas: {fallback_path}")
 
-                # Intentar mover desde Descargas a la ruta de red usando script PowerShell en sap_bot
+                # Intentar mover desde Descargas a la ruta de red autenticando con `net use` y moviendo con shutil
                 try:
                     import subprocess
-                    from pathlib import Path
 
-                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'move_mb52_to_x.ps1'))
-                    print(f"[MB52] Ejecutando script PowerShell para mover archivo: {script_path}")
-                    result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path], capture_output=True, text=True)
-                    print(f"[MB52] Move script stdout: {result.stdout.strip()}")
-                    if result.returncode == 0:
-                        dest_path = os.path.join(ruta_destino, nombre_archivo)
-                        if os.path.exists(dest_path):
-                            saved_path = dest_path
-                            print(f"[MB52] [SUCCESS] Archivo movido a ruta de red: {dest_path}")
+                    # Extraer UNC raíz (\\server\share) de ruta_destino si es UNC
+                    def unc_root_from_path(p):
+                        p = p.replace('/', '\\')
+                        if p.startswith('\\\\'):
+                            parts = p.strip('\\').split('\\')
+                            if len(parts) >= 2:
+                                return f"\\\\{parts[0]}\\{parts[1]}"
+                        return None
+
+                    unc_root = unc_root_from_path(ruta_destino)
+
+                    # Preferir credenciales desde variables de entorno para seguridad
+                    net_domain = os.getenv('NET_DOMAIN') or os.getenv('DOMAIN')
+                    net_user = os.getenv('NET_USER') or os.getenv('USER_NET')
+                    net_pass = os.getenv('NET_PASS') or os.getenv('NET_PASSWORD')
+
+                    if unc_root and net_user and net_pass:
+                        user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
+                        print(f"[MB52] Intentando `net use` a {unc_root} con usuario {user_full}")
+                        result = subprocess.run(['net', 'use', unc_root, net_pass, f'/user:{user_full}'], capture_output=True, text=True)
+                        if result.returncode != 0:
+                            print(f"[MB52] [WARN] net use falló: {result.stderr.strip()}")
                         else:
-                            print(f"[MB52] [WARN] Script retornó 0 pero el archivo no aparece en destino: {dest_path}")
+                            print(f"[MB52] net use OK: {result.stdout.strip()}")
                     else:
-                        print(f"[MB52] [WARN] Script falló (code {result.returncode}): {result.stderr.strip()}")
-                        print(f"[MB52] [WARN] Conservando archivo en Descargas: {fallback_path}")
+                        print("[MB52] No hay credenciales NET en environment; intentando mover sin autenticar (puede fallar)")
+
+                    dest_path = os.path.join(ruta_destino, nombre_archivo)
+                    print(f"[MB52] Moviendo archivo {fallback_path} -> {dest_path}")
+                    # Asegurarse de que el directorio destino existe
+                    try:
+                        os.makedirs(ruta_destino, exist_ok=True)
+                    except Exception:
+                        # si no se puede crear, se intentará mover de todas formas
+                        pass
+
+                    shutil.move(fallback_path, dest_path)
+                    if os.path.exists(dest_path):
+                        saved_path = dest_path
+                        print(f"[MB52] [SUCCESS] Archivo movido a ruta de red: {dest_path}")
+                    else:
+                        print(f"[MB52] [WARN] Move no lanzó excepción pero el archivo no existe en destino: {dest_path}")
                 except Exception as me:
-                    print(f"[MB52] [WARN] Error ejecutando script Move: {str(me)}")
+                    print(f"[MB52] [WARN] Error moviendo con net/shutil: {str(me)}")
+                    print(f"[MB52] [WARN] Conservando archivo en Descargas: {fallback_path}")
 
             except Exception as e2:
                 print(f"[MB52] [ERROR] Fallback a Descargas fallo: {str(e2)}")
