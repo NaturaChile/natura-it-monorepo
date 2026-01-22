@@ -1,11 +1,13 @@
 """Logica de transaccion MB52 - Stock de almacen."""
 import time
+import os
 from datetime import datetime
+import pandas as pd
 
 
 def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"Y:\Publico\RPA\Retail\Stock - Base Tiendas"):
     """
-    Ejecuta la transaccion MB52 y exporta el resultado a Excel.
+    Ejecuta la transaccion MB52 y exporta el resultado a Excel via portapapeles.
     
     Args:
         session: Sesion SAP activa
@@ -53,62 +55,64 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         session.findById("wnd[0]/tbar[1]/btn[8]").press()
         time.sleep(3)  # Esperar a que cargue el reporte
         
-        # 5. Exportar a Excel
+        # 5. Exportar menu
         print("[MB52] Paso 5: Iniciando exportacion...")
         session.findById("wnd[0]/tbar[1]/btn[45]").press()
         time.sleep(1)
         
-        # 6. Seleccionar formato de exportacion (Excel)
-        print("[MB52] Paso 6: Seleccionando formato Excel...")
-        session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[1,0]").select()
-        session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[1,0]").setFocus()
+        # 6. Seleccionar formato de exportacion (Portapapeles)
+        print("[MB52] Paso 6: Seleccionando formato Portapapeles...")
+        session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[4,0]").select()
+        session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[4,0]").setFocus()
         session.findById("wnd[1]/tbar[0]/btn[0]").press()
-        time.sleep(1)
+        time.sleep(2)
         
-        # 7. Definir ruta y nombre de archivo
-        print("[MB52] Paso 7: Configurando ruta de destino...")
-        session.findById("wnd[1]/usr/ctxtDY_PATH").text = ruta_destino
-        session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = nombre_archivo
-        time.sleep(0.3)
+        # 7. Leer portapapeles y procesar datos
+        print("[MB52] Paso 7: Leyendo datos del portapapeles...")
+        import win32clipboard
         
-        # 8. Confirmar guardado
-        print("[MB52] Paso 8: Guardando archivo...")
-        session.findById("wnd[1]/tbar[0]/btn[0]").press()
+        win32clipboard.OpenClipboard()
+        try:
+            clipboard_data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+        finally:
+            win32clipboard.CloseClipboard()
         
-        # 9. Esperar descarga - 1 minuto inicial luego verificar
-        print("[MB52] Paso 9: Esperando descarga (1 minuto inicial)...")
-        time.sleep(60)  # Esperar 1 minuto inicial
+        print(f"[MB52] Datos recibidos del portapapeles: {len(clipboard_data)} caracteres")
         
-        # Verificar si ya termino la descarga
-        max_intentos = 5  # Maximo 5 intentos adicionales (6 minutos total)
-        descarga_completa = False
+        # 8. Procesar datos y crear DataFrame
+        print("[MB52] Paso 8: Procesando datos...")
+        lines = clipboard_data.strip().split('\n')
         
-        for intento in range(1, max_intentos + 1):
-            try:
-                statusbar_text = session.findById("wnd[0]/sbar/pane[0]").text
-                print(f"[MB52] Intento {intento}: Status = '{statusbar_text}'")
-                
-                if "1160" in statusbar_text:
-                    print("[MB52] [SUCCESS] Descarga completada - code page 1160 detectado")
-                    descarga_completa = True
-                    break
-                else:
-                    if intento < max_intentos:
-                        print(f"[MB52] Descarga en progreso, esperando 1 minuto mas...")
-                        time.sleep(60)  # Esperar otro minuto
-                    
-            except Exception as e:
-                print(f"[MB52] Intento {intento}: Error leyendo barra de estado: {str(e)}")
-                if intento < max_intentos:
-                    time.sleep(60)
+        if len(lines) < 2:
+            raise ValueError("Datos insuficientes en el portapapeles")
         
-        if not descarga_completa:
-            print("[MB52] [WARN] No se detecto confirmacion de descarga despues de 6 minutos")
-            print("[MB52] [WARN] Verificar archivo manualmente")
+        # Primera linea es el encabezado (separado por tabs)
+        headers = lines[0].strip().split('\t')
+        print(f"[MB52] Columnas detectadas: {len(headers)}")
         
+        # Resto son datos
+        data_rows = []
+        for line in lines[1:]:
+            if line.strip():
+                row = line.strip().split('\t')
+                data_rows.append(row)
         
-        ruta_completa = f"{ruta_destino}\\{nombre_archivo}"
+        print(f"[MB52] Filas de datos: {len(data_rows)}")
+        
+        # Crear DataFrame
+        df = pd.DataFrame(data_rows, columns=headers)
+        
+        # 9. Guardar como Excel
+        print("[MB52] Paso 9: Guardando archivo Excel...")
+        ruta_completa = os.path.join(ruta_destino, nombre_archivo)
+        
+        # Crear directorio si no existe
+        os.makedirs(ruta_destino, exist_ok=True)
+        
+        df.to_excel(ruta_completa, index=False, engine='openpyxl')
+        
         print(f"[MB52] [SUCCESS] Archivo exportado: {ruta_completa}")
+        print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
         
         return ruta_completa
         
