@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 
 
-def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"X:\Publico\RPA\Retail\Stock - Base Tiendas"):
+def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"\\10.156.145.28\Publico\RPA\Retail\Stock - Base Tiendas"):
     """
     Ejecuta la transaccion MB52 y exporta el resultado a Excel via portapapeles.
     
@@ -14,7 +14,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         centro: Centro logistico (default: 4100)
         almacen: Almacen (default: 4161)
         variante: Variante de reporte (default: BOTMB52)
-        ruta_destino: Ruta donde guardar el archivo Excel
+        ruta_destino: Ruta UNC donde guardar el archivo Excel (usar \\\\servidor\\... no letras de unidad)
     
     Returns:
         str: Ruta completa del archivo generado
@@ -144,13 +144,25 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         print("[MB52] Paso 9: Guardando archivo Excel...")
         ruta_completa = os.path.join(ruta_destino, nombre_archivo)
         
-        # Crear directorio si no existe
-        os.makedirs(ruta_destino, exist_ok=True)
+        # Verificar que la carpeta de red es accesible
+        print(f"[MB52] Verificando acceso a: {ruta_destino}")
+        if not os.path.exists(ruta_destino):
+            print(f"[MB52] Carpeta no existe, intentando crear...")
+            os.makedirs(ruta_destino, exist_ok=True)
         
         df.to_excel(ruta_completa, index=False, engine='openpyxl')
         
-        print(f"[MB52] [SUCCESS] Archivo exportado: {ruta_completa}")
-        print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
+        # 10. Verificar que el archivo se guardo correctamente
+        print("[MB52] Paso 10: Verificando archivo guardado...")
+        time.sleep(2)  # Dar tiempo a que se escriba el archivo
+        
+        if os.path.exists(ruta_completa):
+            file_size = os.path.getsize(ruta_completa)
+            print(f"[MB52] [SUCCESS] Archivo verificado: {ruta_completa}")
+            print(f"[MB52] [SUCCESS] Tamano archivo: {file_size:,} bytes")
+            print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
+        else:
+            raise Exception(f"El archivo no se encontro despues de guardar: {ruta_completa}")
         
         return ruta_completa
         
