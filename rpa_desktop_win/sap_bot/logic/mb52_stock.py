@@ -142,20 +142,49 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         
         # 9. Guardar como Excel
         print("[MB52] Paso 9: Guardando archivo Excel...")
+
+        def resolve_drive_to_unc(path):
+            """Si path comienza con una letra de unidad mapeada (X:\\...), intenta resolverla usando `net use` y devuelve ruta UNC."""
+            try:
+                if len(path) >= 2 and path[1] == ':':
+                    drive = path[0].upper() + ':'
+                    # Ejecutar `net use` y buscar mapping
+                    import subprocess
+                    result = subprocess.run(['net', 'use'], capture_output=True, text=True, shell=True)
+                    out = result.stdout
+                    for line in out.splitlines():
+                        if drive in line:
+                            parts = line.split()
+                            for p in parts:
+                                if p.startswith('\\\\') or p.startswith('\\'):
+                                    unc = p.rstrip('\\')
+                                    remainder = path[2:].lstrip('\\/')
+                                    # Construir camino UNC
+                                    return os.path.join(unc, remainder)
+                return path
+            except Exception as e:
+                print(f"[MB52] [WARN] No se pudo resolver unidad a UNC: {str(e)}")
+                return path
+
+        ruta_destino_original = ruta_destino
+        ruta_destino = resolve_drive_to_unc(ruta_destino_original)
+        print(f"[MB52] Ruta destino original: {ruta_destino_original}")
+        print(f"[MB52] Ruta destino usada: {ruta_destino}")
+
         ruta_completa = os.path.join(ruta_destino, nombre_archivo)
-        
+
         # Verificar que la carpeta de red es accesible
         print(f"[MB52] Verificando acceso a: {ruta_destino}")
         if not os.path.exists(ruta_destino):
             print(f"[MB52] Carpeta no existe, intentando crear...")
             os.makedirs(ruta_destino, exist_ok=True)
-        
+
         df.to_excel(ruta_completa, index=False, engine='openpyxl')
-        
+
         # 10. Verificar que el archivo se guardo correctamente
         print("[MB52] Paso 10: Verificando archivo guardado...")
         time.sleep(2)  # Dar tiempo a que se escriba el archivo
-        
+
         if os.path.exists(ruta_completa):
             file_size = os.path.getsize(ruta_completa)
             print(f"[MB52] [SUCCESS] Archivo verificado: {ruta_completa}")
@@ -163,7 +192,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
             print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
         else:
             raise Exception(f"El archivo no se encontro despues de guardar: {ruta_completa}")
-        
+
         return ruta_completa
         
     except Exception as e:
