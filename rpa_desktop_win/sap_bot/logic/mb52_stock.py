@@ -195,25 +195,27 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
                 saved_path = fallback_path
                 print(f"[MB52] Archivo guardado en Descargas: {fallback_path}")
 
-                # Intentar mover desde Descargas a la ruta de red usando PowerShell Move-Item
+                # Intentar mover desde Descargas a la ruta de red usando script PowerShell en sap_bot
                 try:
                     import subprocess
-                    dest_dir = ruta_destino
-                    print(f"[MB52] Intentando mover archivo desde Descargas a: {dest_dir}")
-                    # Construir comando PowerShell. Usar -NoProfile para evitar perfiles que cambien el ambiente.
-                    ps_cmd = f"Move-Item -Path '{fallback_path}' -Destination '{dest_dir}' -Force"
-                    result = subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, text=True)
+                    from pathlib import Path
+
+                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'move_mb52_to_x.ps1'))
+                    print(f"[MB52] Ejecutando script PowerShell para mover archivo: {script_path}")
+                    result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script_path], capture_output=True, text=True)
+                    print(f"[MB52] Move script stdout: {result.stdout.strip()}")
                     if result.returncode == 0:
-                        dest_path = os.path.join(dest_dir, nombre_archivo)
+                        dest_path = os.path.join(ruta_destino, nombre_archivo)
                         if os.path.exists(dest_path):
                             saved_path = dest_path
                             print(f"[MB52] [SUCCESS] Archivo movido a ruta de red: {dest_path}")
                         else:
-                            print(f"[MB52] [WARN] Move-Item retornó 0 pero el archivo no aparece en destino: {dest_path}")
+                            print(f"[MB52] [WARN] Script retornó 0 pero el archivo no aparece en destino: {dest_path}")
                     else:
-                        print(f"[MB52] [WARN] Move-Item falló (code {result.returncode}): {result.stderr.strip()}")
+                        print(f"[MB52] [WARN] Script falló (code {result.returncode}): {result.stderr.strip()}")
+                        print(f"[MB52] [WARN] Conservando archivo en Descargas: {fallback_path}")
                 except Exception as me:
-                    print(f"[MB52] [WARN] Error ejecutando Move-Item: {str(me)}")
+                    print(f"[MB52] [WARN] Error ejecutando script Move: {str(me)}")
 
             except Exception as e2:
                 print(f"[MB52] [ERROR] Fallback a Descargas fallo: {str(e2)}")
