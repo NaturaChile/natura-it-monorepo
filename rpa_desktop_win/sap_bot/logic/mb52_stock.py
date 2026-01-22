@@ -173,27 +173,44 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
         ruta_completa = os.path.join(ruta_destino, nombre_archivo)
 
-        # Verificar que la carpeta de red es accesible
-        print(f"[MB52] Verificando acceso a: {ruta_destino}")
-        if not os.path.exists(ruta_destino):
-            print(f"[MB52] Carpeta no existe, intentando crear...")
-            os.makedirs(ruta_destino, exist_ok=True)
+        # Intentar guardar en la ruta de red; si falla, fallback a Descargas
+        fallback_dir = r"C:\Users\robotch_fin\Downloads"
+        saved_path = None
+        try:
+            print(f"[MB52] Verificando acceso a: {ruta_destino}")
+            if not os.path.exists(ruta_destino):
+                print(f"[MB52] Carpeta no existe, intentando crear: {ruta_destino}")
+                os.makedirs(ruta_destino, exist_ok=True)
 
-        df.to_excel(ruta_completa, index=False, engine='openpyxl')
+            df.to_excel(ruta_completa, index=False, engine='openpyxl')
+            saved_path = ruta_completa
+            print(f"[MB52] Archivo guardado en ruta de red: {ruta_completa}")
+        except Exception as e:
+            print(f"[MB52] [WARN] No se pudo guardar en ruta de red: {str(e)}")
+            try:
+                print(f"[MB52] Intentando fallback a Descargas: {fallback_dir}")
+                os.makedirs(fallback_dir, exist_ok=True)
+                fallback_path = os.path.join(fallback_dir, nombre_archivo)
+                df.to_excel(fallback_path, index=False, engine='openpyxl')
+                saved_path = fallback_path
+                print(f"[MB52] Archivo guardado en Descargas: {fallback_path}")
+            except Exception as e2:
+                print(f"[MB52] [ERROR] Fallback a Descargas fallo: {str(e2)}")
+                raise
 
         # 10. Verificar que el archivo se guardo correctamente
         print("[MB52] Paso 10: Verificando archivo guardado...")
         time.sleep(2)  # Dar tiempo a que se escriba el archivo
 
-        if os.path.exists(ruta_completa):
-            file_size = os.path.getsize(ruta_completa)
-            print(f"[MB52] [SUCCESS] Archivo verificado: {ruta_completa}")
+        if saved_path and os.path.exists(saved_path):
+            file_size = os.path.getsize(saved_path)
+            print(f"[MB52] [SUCCESS] Archivo verificado: {saved_path}")
             print(f"[MB52] [SUCCESS] Tamano archivo: {file_size:,} bytes")
             print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
         else:
-            raise Exception(f"El archivo no se encontro despues de guardar: {ruta_completa}")
+            raise Exception("El archivo no se encontro despues de guardar en ninguna ubicacion")
 
-        return ruta_completa
+        return saved_path
         
     except Exception as e:
         print(f"[MB52] [ERROR] Error durante ejecucion: {str(e)}")
