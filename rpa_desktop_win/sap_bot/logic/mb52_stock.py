@@ -75,29 +75,36 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         print("[MB52] Paso 8: Guardando archivo...")
         session.findById("wnd[1]/tbar[0]/btn[0]").press()
         
-        # 9. Esperar a que la descarga complete (buscar "code page 1160" en barra de estado)
-        print("[MB52] Paso 9: Esperando confirmacion de descarga...")
-        max_wait_download = 1000  # 2 minutos maximo para descargar
-        wait_interval = 2
+        # 9. Esperar descarga - 1 minuto inicial luego verificar
+        print("[MB52] Paso 9: Esperando descarga (1 minuto inicial)...")
+        time.sleep(60)  # Esperar 1 minuto inicial
+        
+        # Verificar si ya termino la descarga
+        max_intentos = 5  # Maximo 5 intentos adicionales (6 minutos total)
         descarga_completa = False
         
-        for i in range(0, max_wait_download, wait_interval):
+        for intento in range(1, max_intentos + 1):
             try:
                 statusbar_text = session.findById("wnd[0]/sbar/pane[0]").text
-                print(f"[MB52] [{i}s] Status: {statusbar_text}")
+                print(f"[MB52] Intento {intento}: Status = '{statusbar_text}'")
                 
-                if "code page 1160" in statusbar_text.lower() or "1160" in statusbar_text:
-                    print("[MB52] [SUCCESS] Descarga completada correctamente")
+                if "1160" in statusbar_text:
+                    print("[MB52] [SUCCESS] Descarga completada - code page 1160 detectado")
                     descarga_completa = True
                     break
+                else:
+                    if intento < max_intentos:
+                        print(f"[MB52] Descarga en progreso, esperando 1 minuto mas...")
+                        time.sleep(60)  # Esperar otro minuto
                     
             except Exception as e:
-                print(f"[MB52] [{i}s] No se pudo leer barra de estado: {str(e)}")
-            
-            time.sleep(wait_interval)
+                print(f"[MB52] Intento {intento}: Error leyendo barra de estado: {str(e)}")
+                if intento < max_intentos:
+                    time.sleep(60)
         
         if not descarga_completa:
-            print("[MB52] [WARN] No se detecto confirmacion de descarga, verificar archivo manualmente")
+            print("[MB52] [WARN] No se detecto confirmacion de descarga despues de 6 minutos")
+            print("[MB52] [WARN] Verificar archivo manualmente")
         
         
         ruta_completa = f"{ruta_destino}\\{nombre_archivo}"
