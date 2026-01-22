@@ -23,7 +23,7 @@ jobs:
       CENTRO: "4100"
       ALMACEN: "4161"
       VARIANTE: "BOTUIPATH"
-      RUTA_DESTINO: "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
+      RUTA_DESTINO: "\\\\10.156.145.28\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
 
     steps:
       - name: Descargar Codigo del Repositorio
@@ -33,8 +33,17 @@ jobs:
         shell: powershell
         run: |
           Write-Host "[INFO] Ejecutando SAP Bot MB52 - Stock de Tiendas..."
-          Set-Location "$env:DEPLOY_PATH"
-          
+          # Intento: acceder a la unidad mapeada X: (con comillas por espacios)
+          try {
+            Set-Location "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
+            Write-Host "[INFO] Acceso a unidad mapeada X: OK"
+            # Volver al deploy path para ejecutar el bot
+            Set-Location "$env:DEPLOY_PATH"
+          } catch {
+            Write-Host "[INFO] Unidad mapeada X: no disponible, usando deploy path"
+            Set-Location "$env:DEPLOY_PATH"
+          }
+
           # Ejecutar el bot con variables de entorno
           & "$env:PYTHON_EXE" ".\rpa_desktop_win\sap_bot\main.py"
           

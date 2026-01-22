@@ -9,6 +9,10 @@ python-dotenv>=1.0.0
 psutil>=5.9.0
 pywin32>=306
 
+# Data processing for RPA exports
+pandas>=1.5.0
+openpyxl>=3.0.10
+
 # Logging and monitoring
 loguru>=0.7.0
 

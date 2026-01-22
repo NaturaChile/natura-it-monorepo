@@ -46,9 +46,9 @@ jobs:
           
           Write-Host "[INFO] Ubicando pipeline en: $botPath"
           $env:PYTHONPATH = "$env:DEPLOY_PATH"
-          Set-Location $botPath
+          Set-Location "$botPath"
           
           Write-Host "[INFO] Ejecutando main.py (Ciclo de 6 horas)..."
           
           # Ejecutar
-          & $env:PYTHON_EXE main.py
+          & "$env:PYTHON_EXE" main.py
