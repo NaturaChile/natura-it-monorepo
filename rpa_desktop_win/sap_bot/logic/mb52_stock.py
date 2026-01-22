@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 
 
-def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"Y:\Publico\RPA\Retail\Stock - Base Tiendas"):
+def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"X:\Publico\RPA\Retail\Stock - Base Tiendas"):
     """
     Ejecuta la transaccion MB52 y exporta el resultado a Excel via portapapeles.
     
@@ -82,30 +82,58 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # 8. Procesar datos y crear DataFrame
         print("[MB52] Paso 8: Procesando y limpiando datos...")
         lines = clipboard_data.strip().split('\n')
+        print(f"[MB52] Total lineas en portapapeles: {len(lines)}")
         
-        # Filtrar lineas de guiones (separadores visuales)
-        lines = [line for line in lines if not line.strip().startswith('---')]
+        # Estructura del portapapeles SAP:
+        # Linea 0: ---- separador de guiones
+        # Linea 1: | Col1 | Col2 | ... | (headers)
+        # Linea 2: ---- separador de guiones
+        # Linea 3+: | dato1 | dato2 | ... | (datos)
         
-        if len(lines) < 2:
-            raise ValueError("Datos insuficientes en el portapapeles")
+        # Separar lineas de datos de lineas de guiones
+        header_line = None
+        data_lines = []
         
-        # Primera linea es el encabezado (separado por |)
-        header_line = lines[0]
-        headers = [col.strip() for col in header_line.split('|') if col.strip()]
-        print(f"[MB52] Columnas detectadas: {len(headers)} - {headers}")
+        for line in lines:
+            stripped = line.strip()
+            # Ignorar lineas vacias o que sean solo guiones
+            if not stripped or stripped.replace('-', '').replace('|', '').strip() == '':
+                continue
+            # Si contiene | y no es solo guiones, es una linea de datos
+            if '|' in stripped:
+                if header_line is None:
+                    header_line = stripped
+                else:
+                    data_lines.append(stripped)
         
-        # Resto son datos
+        if header_line is None:
+            raise ValueError("No se encontro linea de encabezados en el portapapeles")
+        
+        # Extraer headers (separar por | y limpiar)
+        headers = [col.strip() for col in header_line.split('|')]
+        # Eliminar elementos vacios al inicio y final
+        headers = [h for h in headers if h]
+        print(f"[MB52] Columnas detectadas ({len(headers)}): {headers[:5]}...")
+        
+        # Procesar filas de datos
         data_rows = []
-        for line in lines[1:]:
-            if line.strip() and '|' in line:
-                # Separar por | y limpiar espacios
-                row = [col.strip() for col in line.split('|') if col.strip() != '']
-                # Solo agregar si tiene el numero correcto de columnas
-                if len(row) == len(headers):
+        for line in data_lines:
+            # Separar por | y limpiar espacios
+            row = [col.strip() for col in line.split('|')]
+            # Eliminar elementos vacios al inicio y final
+            row = [r for r in row if r != '']
+            
+            if len(row) == len(headers):
+                data_rows.append(row)
+            elif len(row) > 0:
+                print(f"[MB52] [WARN] Fila con {len(row)} cols (esperadas {len(headers)}), ajustando...")
+                # Ajustar fila si es necesario
+                if len(row) > len(headers):
+                    data_rows.append(row[:len(headers)])
+                else:
+                    # Rellenar con vacios
+                    row.extend([''] * (len(headers) - len(row)))
                     data_rows.append(row)
-                elif len(row) > 0:
-                    # Intentar ajustar si hay columnas de mas/menos
-                    print(f"[MB52] [WARN] Fila con {len(row)} columnas (esperadas {len(headers)}): {row[:3]}...")
         
         print(f"[MB52] Filas de datos procesadas: {len(data_rows)}")
         
