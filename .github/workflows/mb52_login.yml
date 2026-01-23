@@ -18,6 +18,10 @@ jobs:
       USER: ${{ vars.USER }}
       PW: ${{ secrets.PW }}
       LANG: ${{ vars.LANG }}
+      # Credenciales para acceso a recursos de red (desde Environment secrets)
+      NET_USER: ${{ secrets.NET_USER }}
+      NET_PASS: ${{ secrets.NET_PASS }}
+      NET_DOMAIN: ${{ vars.NET_DOMAIN }}
       TRANSACTION: 
       # Parametros especificos de MB52
       CENTRO: "4100"
