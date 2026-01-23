@@ -157,7 +157,11 @@ def ejecutar_mb51(session,
     print(f"[MB51] Rango historico: {desde.isoformat()} -> {hasta.isoformat()} (tramos de {CHUNK_DAYS} días)")
 
     frames = []
-
+            # 1. Limpiar pantalla inicial
+    print("[MB51] Paso 1: Preparando pantalla...")
+    session.findById("wnd[0]/tbar[0]/okcd").text = "MB51"
+    session.findById("wnd[0]").sendVKey(0)
+    time.sleep(0.5)
     for s, e in _generate_date_ranges(desde, hasta, CHUNK_DAYS):
         print(f"[MB51] Ejecutando tramo: {s.strftime('%d%m%Y')} -> {e.strftime('%d%m%Y')}")
         # Preparar pantalla y filtros en SAP
