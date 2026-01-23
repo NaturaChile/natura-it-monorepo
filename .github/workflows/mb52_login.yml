@@ -22,8 +22,9 @@ jobs:
       NET_USER: ${{ secrets.NET_USER }}
       NET_PASS: ${{ secrets.NET_PASS }}
       NET_DOMAIN: ${{ vars.NET_DOMAIN }}
-      # Credenciales SQL (deberían estar en Environment SAP_Jorge o como Secrets)
-      # NOTA: No sobreescribimos SQL2022_HOST/SQL2022_USER aquí para permitir heredar las Environment Variables definidas en el entorno SAP_Jorge
+      # Credenciales SQL:
+      # - `SQL2022_HOST` y `SQL2022_USER` deben estar definidas como Environment Variables en el Environment `SAP_Jorge` (no son secretos)
+      # - `SQL2022_PW` es un secret y se mantiene como tal
       SQL2022_PW: ${{ secrets.SQL2022_PW }}
       TRANSACTION: 
       # Parametros especificos de MB52
@@ -52,16 +53,16 @@ jobs:
           }
           Write-Host "[INFO] Variables NET_* presentes. Continuando..."
 
-          # Verificar que los secrets SQL estén disponibles en Vault/Environment (esperamos que Vault los inyecte como vars)
-          Write-Host "[INFO] Verificando presencia de secrets SQL2022_* en Vault/Environment..."
+          # Verificar que las credenciales SQL estén disponibles: HOST/USER en Environment, PW como secret
+          Write-Host "[INFO] Verificando presencia de SQL2022_* en Environment/Secrets..."
           $hasSqlHost = -not [string]::IsNullOrEmpty($env:SQL2022_HOST)
           $hasSqlUser = -not [string]::IsNullOrEmpty($env:SQL2022_USER)
           $hasSqlPw = -not [string]::IsNullOrEmpty($env:SQL2022_PW)
-          Write-Host "SQL2022_HOST set? $hasSqlHost"
-          Write-Host "SQL2022_USER set? $hasSqlUser"
-          Write-Host "SQL2022_PW set? $hasSqlPw"
+          Write-Host "SQL2022_HOST set (env)? $hasSqlHost"
+          Write-Host "SQL2022_USER set (env)? $hasSqlUser"
+          Write-Host "SQL2022_PW set (secret)? $hasSqlPw"
           if (-not ($hasSqlHost -and $hasSqlUser -and $hasSqlPw)) {
-            Write-Error "[ERROR] Faltan secrets SQL2022_* en Vault/Environment. Abortar para evitar ingesta insegura."
+            Write-Error "[ERROR] Faltan credenciales SQL2022: asegure SQL2022_HOST y SQL2022_USER en Environment (SAP_Jorge) y SQL2022_PW como Secret. Aborto para evitar ingesta insegura."
             exit 1
           }
 
