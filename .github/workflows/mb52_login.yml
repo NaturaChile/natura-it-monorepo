@@ -22,6 +22,10 @@ jobs:
       NET_USER: ${{ secrets.NET_USER }}
       NET_PASS: ${{ secrets.NET_PASS }}
       NET_DOMAIN: ${{ vars.NET_DOMAIN }}
+      # Credenciales SQL (deberían estar en Environment SAP_Jorge o como Secrets)
+      SQL2022_HOST: ${{ secrets.SQL2022_HOST }}
+      SQL2022_USER: ${{ secrets.SQL2022_USER }}
+      SQL2022_PW: ${{ secrets.SQL2022_PW }}
       TRANSACTION: 
       # Parametros especificos de MB52
       CENTRO: "4100"
@@ -48,6 +52,20 @@ jobs:
             exit 1
           }
           Write-Host "[INFO] Variables NET_* presentes. Continuando..."
+
+          # Verificar que los secrets SQL estén disponibles en Vault/Environment (esperamos que Vault los inyecte como vars)
+          Write-Host "[INFO] Verificando presencia de secrets SQL2022_* en Vault/Environment..."
+          $hasSqlHost = -not [string]::IsNullOrEmpty($env:SQL2022_HOST)
+          $hasSqlUser = -not [string]::IsNullOrEmpty($env:SQL2022_USER)
+          $hasSqlPw = -not [string]::IsNullOrEmpty($env:SQL2022_PW)
+          Write-Host "SQL2022_HOST set? $hasSqlHost"
+          Write-Host "SQL2022_USER set? $hasSqlUser"
+          Write-Host "SQL2022_PW set? $hasSqlPw"
+          if (-not ($hasSqlHost -and $hasSqlUser -and $hasSqlPw)) {
+            Write-Error "[ERROR] Faltan secrets SQL2022_* en Vault/Environment. Abortar para evitar ingesta insegura."
+            exit 1
+          }
+
           # Intento: acceder a la unidad mapeada X: (con comillas por espacios)
           try {
             Set-Location "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"

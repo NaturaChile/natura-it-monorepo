@@ -157,117 +157,185 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # Crear DataFrame
         df = pd.DataFrame(data_rows, columns=headers)
         
-        # 9. Guardar como Excel
-        print("[MB52] Paso 9: Guardando archivo Excel...")
+        # 9. Procesar DataFrame y cargar en SQL
+        print("[MB52] Paso 9: Procesando DataFrame para carga en SQL...")
 
-        def resolve_drive_to_unc(path):
-            """Si path comienza con una letra de unidad mapeada (X:\\...), intenta resolverla usando `net use` y devuelve ruta UNC."""
-            try:
-                if len(path) >= 2 and path[1] == ':':
-                    drive = path[0].upper() + ':'
-                    # Ejecutar `net use` y buscar mapping
-                    import subprocess
-                    result = subprocess.run(['net', 'use'], capture_output=True, text=True, shell=True)
-                    out = result.stdout
-                    for line in out.splitlines():
-                        if drive in line:
-                            parts = line.split()
-                            for p in parts:
-                                if p.startswith('\\\\') or p.startswith('\\'):
-                                    unc = p.rstrip('\\')
-                                    remainder = path[2:].lstrip('\\/')
-                                    # Construir camino UNC
-                                    return os.path.join(unc, remainder)
-                return path
-            except Exception as e:
-                print(f"[MB52] [WARN] No se pudo resolver unidad a UNC: {str(e)}")
-                return path
+        # Columnas objetivo (snake_case)
+        COLUMNAS = [
+            'material', 'centro', 'almacen', 'pb_a_nivel_almacen', 'lote', 
+            'unidad_medida_base', 'libre_utilizacion', 'moneda', 'valor_libre_util', 
+            'trans_trasl', 'val_trans_cond', 'en_control_calidad', 
+            'valor_en_insp_cal', 'stock_no_libre', 'valor_no_libre', 
+            'bloqueado', 'valor_stock_bloq', 'devoluciones', 'val_stock_bl_dev', 
+            'texto_breve_material', 'denominacion_almacen'
+        ]
 
-        ruta_destino_original = ruta_destino
-        ruta_destino = resolve_drive_to_unc(ruta_destino_original)
-        print(f"[MB52] Ruta destino original: {ruta_destino_original}")
-        print(f"[MB52] Ruta destino usada: {ruta_destino}")
+        from sqlalchemy import BigInteger, Text, Numeric, text
+        from datetime import datetime
 
-        ruta_completa = os.path.join(ruta_destino, nombre_archivo)
+        STOCK_DTYPE = {
+            'material': BigInteger(),
+            'centro': BigInteger(),
+            'almacen': BigInteger(),
+            'pb_a_nivel_almacen': Text(),
+            'lote': Text(),
+            'unidad_medida_base': Text(),
+            'moneda': Text(),
+            'texto_breve_material': Text(),
+            'denominacion_almacen': Text(),
+            'libre_utilizacion': Numeric(18, 2),
+            'valor_libre_util': Numeric(18, 2),
+            'trans_trasl': Numeric(18, 2),
+            'val_trans_cond': Numeric(18, 2),
+            'en_control_calidad': Numeric(18, 2),
+            'valor_en_insp_cal': Numeric(18, 2),
+            'stock_no_libre': Numeric(18, 2),
+            'valor_no_libre': Numeric(18, 2),
+            'bloqueado': Numeric(18, 2),
+            'valor_stock_bloq': Numeric(18, 2),
+            'devoluciones': Numeric(18, 2),
+            'val_stock_bl_dev': Numeric(18, 2)
+        }
 
-        # NUEVO: autenticación con `net use` y escritura directa desde memoria al UNC
-        try:
-            print(f"[MB52] Preparando escritura directa a UNC: {ruta_completa}")
+        def normalize_col(c: str) -> str:
+            c = str(c).strip().lower()
+            c = c.replace('-', ' ').replace('/', ' ')
+            c = ''.join(ch if ch.isalnum() or ch == ' ' else '_' for ch in c)
+            c = '_'.join(c.split())
+            return c
 
-            # Extraer UNC raíz (\\server\\share) de ruta_destino si es UNC
-            def unc_root_from_path(p):
-                p = p.replace('/', '\\')
-                if p.startswith('\\'):
-                    parts = p.strip('\\').split('\\')
-                    if len(parts) >= 2:
-                        return f"\\\\{parts[0]}\\{parts[1]}"
-                return None
-
-            unc_root = unc_root_from_path(ruta_destino)
-
-            # Usar credenciales definidas en el bloque de configuración superior
-            if unc_root and USER and PASSWORD:
-                user_full_local = USER_FULL if USER_FULL else (f"{DOMAIN}\\{USER}" if DOMAIN else USER)
-                print(f"[MB52] Ejecutando net use {unc_root} con {user_full_local}")
-                import subprocess
-                result = subprocess.run(['net', 'use', unc_root, PASSWORD, f'/user:{user_full_local}'], capture_output=True, text=True)
-                if result.returncode != 0:
-                    raise Exception(f"net use fallo: {result.stderr.strip()}")
-                print(f"[MB52] net use OK: {result.stdout.strip()}")
-            else:
-                raise Exception('No hay credenciales NET disponibles para autenticacion SMB')
-
-            # Escribir DataFrame a BytesIO en memoria
-            bio = io.BytesIO()
-            with pd.ExcelWriter(bio, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False)
-            bio.seek(0)
-
-            # Asegurarse de que el directorio existe en la ruta remota
-            try:
-                os.makedirs(ruta_destino, exist_ok=True)
-            except Exception:
-                # si no se puede crear directorio remoto, es posible que no haga falta
-                pass
-
-            # Escribir bytes directo al UNC
-            with open(ruta_completa, 'wb') as f:
-                f.write(bio.read())
-
-            saved_path = ruta_completa
-            print(f"[MB52] [SUCCESS] Archivo escrito directamente a UNC: {ruta_completa}")
-            # Limpiar mapping `net use` (desconectar) para no dejar sesiones persistentes
-            try:
-                import subprocess
-                if unc_root:
-                    print(f"[MB52] Intentando limpiar mapping: net use {unc_root} /delete")
-                    delres = subprocess.run(['net', 'use', unc_root, '/delete'], capture_output=True, text=True)
-                    if delres.returncode == 0:
-                        print("[MB52] net use delete OK")
-                    else:
-                        if delres.stdout:
-                            print(f"[MB52] net use delete stdout: {delres.stdout.strip()}")
-                        if delres.stderr:
-                            print(f"[MB52] net use delete stderr: {delres.stderr.strip()}")
-            except Exception as e:
-                print(f"[MB52] [WARN] No se pudo limpiar mapping: {e}")
-        except Exception as e:
-            print(f"[MB52] [ERROR] Error escribiendo directamente a UNC: {str(e)}")
-            raise
-
-        # 10. Verificar que el archivo se guardo correctamente
-        print("[MB52] Paso 10: Verificando archivo guardado...")
-        time.sleep(2)  # Dar tiempo a que se escriba el archivo
-
-        if saved_path and os.path.exists(saved_path):
-            file_size = os.path.getsize(saved_path)
-            print(f"[MB52] [SUCCESS] Archivo verificado: {saved_path}")
-            print(f"[MB52] [SUCCESS] Tamano archivo: {file_size:,} bytes")
-            print(f"[MB52] [SUCCESS] Total filas: {len(df)}, Total columnas: {len(df.columns)}")
+        # Intentar asignar nombres objetivo
+        if len(df.columns) == len(COLUMNAS):
+            df.columns = COLUMNAS
         else:
-            raise Exception("El archivo no se encontro despues de guardar en ninguna ubicacion")
+            cols_map = {}
+            normalized = {normalize_col(c): c for c in df.columns}
+            for target in COLUMNAS:
+                if target in normalized:
+                    cols_map[normalized[target]] = target
+            df = df.rename(columns=cols_map)
+            # Añadir columnas faltantes con nulls
+            for c in COLUMNAS:
+                if c not in df.columns:
+                    df[c] = None
+            # Reordenar
+            df = df[[c for c in COLUMNAS]]
 
-        return saved_path
+        # Convertir dtypes básicos
+        for int_col in ['material', 'centro', 'almacen']:
+            if int_col in df.columns:
+                df[int_col] = pd.to_numeric(df[int_col], errors='coerce').astype('Int64')
+
+        numeric_cols = [
+            'libre_utilizacion','valor_libre_util','trans_trasl','val_trans_cond',
+            'en_control_calidad','valor_en_insp_cal','stock_no_libre','valor_no_libre',
+            'bloqueado','valor_stock_bloq','devoluciones','val_stock_bl_dev'
+        ]
+        for c in numeric_cols:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c].astype(str).str.replace(',', '.'), errors='coerce')
+
+        # Texto
+        for t in ['pb_a_nivel_almacen','lote','unidad_medida_base','moneda','texto_breve_material','denominacion_almacen']:
+            if t in df.columns:
+                df[t] = df[t].astype(str).replace('nan', None)
+
+        # Añadir timestamp de ingestion
+        df['timestamp_ingestion'] = datetime.now()
+
+        # Obtener credenciales **desde Vault** (Environment: SAP_Jorge) — fallback a env solo con advertencia
+        print('[MB52] Intentando leer credenciales SQL2022_* desde Vault...')
+        db_host = Vault.get_secret('SQL2022_HOST')
+        db_user = Vault.get_secret('SQL2022_USER')
+        db_pw = Vault.get_secret('SQL2022_PW')
+        db_name = os.getenv('SQL2022_DB', 'Retail')
+
+        # Si Vault no tiene los secretos, fallback a variables de entorno con WARNING
+        if not (db_host and db_user and db_pw):
+            env_host = os.getenv('SQL2022_HOST')
+            env_user = os.getenv('SQL2022_USER')
+            env_pw = os.getenv('SQL2022_PW')
+            if env_host or env_user or env_pw:
+                print('[MB52] [WARN] Secrets SQL2022_* no encontrados en Vault. Usando variables de entorno para esta ejecución. **Por favor cargue los secrets en Vault (Environment: SAP_Jorge)**')
+                db_host = db_host or env_host
+                db_user = db_user or env_user
+                db_pw = db_pw or env_pw
+            else:
+                raise Exception('Secrets SQL2022_* no encontrados en Vault ni en variables de entorno. Agregue los secrets en Vault (Environment: SAP_Jorge)')
+
+        print(f"[MB52] Conectando a SQL Server {db_host} DB {db_name} como {db_user}")
+
+        # Usar SqlRepository del repositorio existente
+        from data_pipelines_linux.ops_ped_ingest_cartoning_sftp.src.adapters.sql_repository import SqlRepository
+        repo = SqlRepository(host=db_host, db=db_name, user=db_user, password=db_pw)
+
+        # Cargar en tabla temporal y luego reemplazar tabla destino en transaccion
+        table_schema = 'retail'
+        table_name = 'stock_tienda'
+
+        try:
+            with repo.engine.begin() as conn:
+                tmp_table = '#tmp_stock'
+                # Cargar a tabla temporal (se creara en la misma conexion)
+                print('[MB52] Creando tabla temporal y cargando datos...')
+                df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
+
+                # Verificar filas cargadas
+                r = conn.execute("SELECT COUNT(1) FROM #tmp_stock").fetchone()[0]
+                print(f"[MB52] Filas en temp: {r}")
+
+                # Reemplazar tabla destino (con historico)
+                print('[MB52] Reemplazando tabla destino (con historico)...')
+
+                # Nombre de la tabla historica
+                history_table = 'stock_tienda_historica'
+
+                # 1) Asegurar que exista la tabla historica (si no, la creamos como copia vacia + columna ingestion_date)
+                ensure_sql = f"""
+IF OBJECT_ID('[{db_name}].[{table_schema}].[{history_table}]','U') IS NULL
+BEGIN
+    -- Crear tabla historica como copia vacia de la actual y añadir columna ingestion_date
+    SELECT TOP 0 *, CAST(NULL AS datetime2) AS ingestion_date
+    INTO [{db_name}].[{table_schema}].[{history_table}]
+    FROM [{db_name}].[{table_schema}].[{table_name}];
+
+    -- Crear indice en ingestion_date para consultas eficientes si no existe
+    IF NOT EXISTS (
+        SELECT name FROM sys.indexes
+        WHERE name = 'IX_{history_table}_ingestion_date' AND object_id = OBJECT_ID('[{db_name}].[{table_schema}].[{history_table}]')
+    )
+    BEGIN
+        CREATE INDEX IX_{history_table}_ingestion_date ON [{db_name}].[{table_schema}].[{history_table}] (ingestion_date);
+    END
+END
+"""
+                conn.execute(text(ensure_sql))
+
+                # Verificar que el índice de ingestion_date existe y loguear resultado
+                idx_check = conn.execute(text(f"SELECT 1 FROM sys.indexes WHERE name = 'IX_{history_table}_ingestion_date' AND object_id = OBJECT_ID('[{db_name}].[{table_schema}].[{history_table}]')")).fetchone()
+                if idx_check:
+                    print(f"[MB52] [INFO] Índice IX_{history_table}_ingestion_date confirmado en DB.")
+                else:
+                    print(f"[MB52] [WARN] No se encontró el índice IX_{history_table}_ingestion_date tras creación (revisar permisos).")
+
+                # 2) Insertar el contenido actual de la tabla destino en la tabla historica con la fecha de ingesta
+                ingest_ts = datetime.now()
+                cols = ', '.join([c for c in COLUMNAS] + ['timestamp_ingestion'])
+                insert_hist_sql = f"INSERT INTO [{db_name}].[{table_schema}].[{history_table}] ({cols}, ingestion_date) SELECT {cols}, :ingest_ts FROM [{db_name}].[{table_schema}].[{table_name}];"
+                conn.execute(text(insert_hist_sql), {'ingest_ts': ingest_ts})
+
+                # 3) Reemplazar la tabla destino con los datos nuevos
+                conn.execute(f"DELETE FROM [{db_name}].[{table_schema}].[{table_name}]")
+                conn.execute(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM #tmp_stock")
+
+            print('[MB52] [SUCCESS] Ingesta completa y consistente. Tabla reemplazada.')
+            rows_ingested = int(r)
+            print(f"[MB52] [INFO] Filas ingestadas: {rows_ingested}")
+            print(f"[MB52] [INFO] Total columnas: {len(df.columns)}")
+            return rows_ingested
+        except Exception as e:
+            print(f"[MB52] [ERROR] Ingesta fallida, se realizó rollback automático: {e}")
+            raise
         
     except Exception as e:
         print(f"[MB52] [ERROR] Error durante ejecucion: {str(e)}")
