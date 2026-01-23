@@ -157,6 +157,14 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # Crear DataFrame
         df = pd.DataFrame(data_rows, columns=headers)
 
+        # DEBUG: mostrar columnas y primeras 3 filas ANTES de renombrar
+        try:
+            print(f"[MB52 DEBUG] Headers raw: {headers}")
+            for r in data_rows[:3]:
+                print("[MB52 DEBUG BEFORE] " + ";".join(r))
+        except Exception as e:
+            print(f"[MB52 DEBUG] Error mostrando muestras antes: {e}")
+
         # --- Limpiar y normalizar nombres de columna (trim) ---
         cleaned_cols = [str(c).strip() for c in df.columns]
         df.columns = cleaned_cols
@@ -253,6 +261,14 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
             if c not in df.columns:
                 df[c] = None
         df = df[[c for c in required_cols]]
+
+        # DEBUG: mostrar columnas y primeras 3 filas DESPUES de renombrar/reordenar
+        try:
+            print(f"[MB52 DEBUG] Columns after rename: {df.columns.tolist()}")
+            print('[MB52 DEBUG AFTER] ')
+            print(df.head(3).to_csv(sep=';', index=False, header=False))
+        except Exception as e:
+            print(f"[MB52 DEBUG] Error mostrando muestras despues: {e}")
 
         # 9. Procesar DataFrame y cargar en SQL
         print("[MB52] Paso 9: Procesando DataFrame para carga en SQL...")
