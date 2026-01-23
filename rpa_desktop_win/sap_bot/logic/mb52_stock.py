@@ -264,8 +264,33 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
         print(f"[MB52] Conectando a SQL Server {db_host} DB {db_name} como {db_user}")
 
-        # Usar SqlRepository del repositorio existente
-        from data_pipelines_linux.ops_ped_ingest_cartoning_sftp.src.adapters.sql_repository import SqlRepository
+        # SqlRepository local (implementación propia dentro del bot)
+        from sqlalchemy import create_engine
+        import urllib
+
+        class SqlRepository:
+            def __init__(self, host, db, user=None, password=None, driver="ODBC Driver 17 for SQL Server"):
+                if user and password:
+                    print(f"[MB52] [INFO] Conectando a SQL Server {host} con usuario {user}")
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={host};"
+                        f"DATABASE={db};"
+                        f"UID={user};"
+                        f"PWD={password};"
+                        "Encrypt=no;TrustServerCertificate=yes;"
+                    )
+                else:
+                    print(f"[MB52] [INFO] Conectando a SQL Server {host} usando Windows Auth")
+                    connection_string = (
+                        f"DRIVER={{{driver}}};"
+                        f"SERVER={host};"
+                        f"DATABASE={db};"
+                        "Trusted_Connection=yes;"
+                    )
+                params = urllib.parse.quote_plus(connection_string)
+                self.engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+
         repo = SqlRepository(host=db_host, db=db_name, user=db_user, password=db_pw)
 
         # Cargar en tabla temporal y luego reemplazar tabla destino en transaccion
