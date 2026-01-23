@@ -1,0 +1,70 @@
+name: MB51 Login
+
+on:
+  workflow_dispatch:
+  # NOTE: schedule removed — MB51 will be executed manually via workflow_dispatch as requested.
+
+# Evita ejecuciones simultaneas del workflow MB51
+concurrency:
+  group: mb51
+  cancel-in-progress: false
+
+jobs:
+  mb51:
+    runs-on: [self-hosted, Windows, X64, rpa_ui_55]
+    environment: SAP_Jorge
+
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+      SYSTEM: ${{ vars.SYSTEM }}
+      CLIENT: ${{ vars.CLIENT }}
+      USER: ${{ vars.USER }}
+      PW: ${{ secrets.PW }}
+      LANG: ${{ vars.LANG }}
+      NET_USER: ${{ secrets.NET_USER }}
+      NET_PASS: ${{ secrets.NET_PASS }}
+      NET_DOMAIN: ${{ vars.NET_DOMAIN }}
+      SQL2022_HOST: ${{ vars.SQL2022_HOST }}
+      SQL2022_USER: ${{ vars.SQL2022_USER }}
+      SQL2022_PW: ${{ secrets.SQL2022_PW }}
+      # MB51 specific
+      CENTRO: "4100"
+      LGORT_LOW: "4147"
+      LGORT_HIGH: "4195"
+      VARIANTE: "BOTMB51"
+      MB51_DESDE: "01012025"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ejecutar MB51
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando presencia de variables NET_* en entorno..."
+          $hasUser = -not [string]::IsNullOrEmpty($env:NET_USER)
+          $hasPass = -not [string]::IsNullOrEmpty($env:NET_PASS)
+          $hasDomain = -not [string]::IsNullOrEmpty($env:NET_DOMAIN)
+          if (-not ($hasUser -and $hasPass -and $hasDomain)) {
+            Write-Error "[ERROR] Faltan variables NET_* en el entorno del job. Abortando."
+            exit 1
+          }
+
+          Write-Host "[INFO] Verificando presencia de SQL2022_* en Environment/Secrets..."
+          $hasSqlHost = -not [string]::IsNullOrEmpty($env:SQL2022_HOST)
+          $hasSqlUser = -not [string]::IsNullOrEmpty($env:SQL2022_USER)
+          $hasSqlPw = -not [string]::IsNullOrEmpty($env:SQL2022_PW)
+          if (-not ($hasSqlHost -and $hasSqlUser -and $hasSqlPw)) {
+            Write-Error "[ERROR] Faltan credenciales SQL2022: asegure SQL2022_HOST y SQL2022_USER en Environment y SQL2022_PW como Secret. Aborto."
+            exit 1
+          }
+
+          # Ejecutar bot
+          Set-Location "$env:DEPLOY_PATH"
+          & "$env:PYTHON_EXE" ".\rpa_desktop_win\MB51\main.py"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] MB51 fallo con codigo de salida: $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+          Write-Host "[SUCCESS] MB51 ejecutado correctamente."
