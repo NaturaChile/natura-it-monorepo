@@ -17,7 +17,8 @@ de las pruebas.
 """
 
 # --- CREDENCIALES (ejemplo provisto) ---
-SERVER = "fs19k02cl"
+# Usar las credenciales/host proporcionadas en el ejemplo
+SERVER = "10.156.145.28"
 SHARE = "areas"
 SUB_RUTA = r"Publico\RPA\Retail\Stock - Base Tiendas"
 
@@ -86,7 +87,9 @@ def move_file(src: Path, dst: Path):
         print(f"[DIAG] Archivo movido a: {dst}")
         return True
     except Exception as e:
+        import traceback
         print(f"[DIAG] Error moviendo archivo: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -95,30 +98,41 @@ def main():
     root = unc_root()
     full = unc_full()
 
-    # 1) Mapear
+    print(f"[DIAG] Intentando mapear {root} con usuario {DOMAIN}\\{USER}")
     ok_map = net_use_map(root, PASS, DOMAIN, USER)
     if not ok_map:
-        print("[DIAG] net use devolvió error. Intentaremos listar de todas formas.")
+        print("[DIAG] net use devolvió error. Continuaremos para intentar diagnosticar más detalles.")
 
-    # 2) Listar primeras carpetas
+    # 2) Listar primeras carpetas en target
+    print(f"[DIAG] Comprobando existencia de ruta UNC completa: {full}")
     dirs = list_first_folders(full, limit=10)
 
     # Si no pudimos listar carpetas, salir con error para abortar el workflow
     if not dirs:
         print("[DIAG] No se pudo listar carpetas en el share. Abortando con código 1.")
+        # Imprimir estado de net use adicional
+        try:
+            r = subprocess.run('net use', shell=True, capture_output=True, text=True)
+            print('[DIAG] Salida `net use`:\n' + r.stdout)
+            if r.stderr:
+                print('[DIAG] `net use` stderr:\n' + r.stderr)
+        except Exception as e:
+            print(f"[DIAG] No se pudo ejecutar 'net use' para debug: {e}")
         return 1
 
-    # 3) Crear archivo de prueba en Descargas y moverlo
-    downloads = Path.home() / 'Downloads'
-    test_file = downloads / 'mb52_test_move.txt'
+    # 3) Crear archivo de prueba en el directorio actual y moverlo
+    cwd = Path.cwd()
+    test_file = cwd / 'prueba.txt'
+    print(f"[DIAG] Creando archivo de prueba en: {test_file}")
     if not create_test_file(test_file):
         print('[DIAG] No se pudo crear archivo de prueba; abortando movimiento')
         return 2
 
     dest = Path(full) / test_file.name
+    print(f"[DIAG] Intentando mover {test_file} -> {dest}")
     moved = move_file(test_file, dest)
     if not moved:
-        print('[DIAG] Movimiento falló. Revisa permisos o conectividad.')
+        print('[DIAG] Movimiento falló. Revisa permisos o conectividad. Saldremos con código 3')
         return 3
     else:
         print('[DIAG] Movimiento completado correctamente')
