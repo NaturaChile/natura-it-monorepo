@@ -36,7 +36,14 @@ jobs:
       - name: Ejecutar SAP Bot MB52
         shell: powershell
         run: |
-          Write-Host "[INFO] Ejecutando SAP Bot MB52 - Stock de Tiendas..."
+          Write-Host "[INFO] Ejecutando diagnóstico SMB previo al bot..."
+          & "$env:PYTHON_EXE" ".\rpa_desktop_win\sap_bot\diagnostics\list_and_move_test.py"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] Diagnóstico SMB falló con código: $LASTEXITCODE - abortando ejecución del bot"
+            exit $LASTEXITCODE
+          }
+
+          Write-Host "[INFO] Diagnóstico SMB OK. Continuando con ejecución del bot..."
           # Intento: acceder a la unidad mapeada X: (con comillas por espacios)
           try {
             Set-Location "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"
