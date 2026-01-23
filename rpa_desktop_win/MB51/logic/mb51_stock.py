@@ -22,7 +22,7 @@ DEFAULT_LGORT_LOW = "4147"
 DEFAULT_LGORT_HIGH = "4195"
 DEFAULT_VARIANTE = "BOTMB51"
 CHUNK_DAYS = 15
-HISTORIC_FROM = date(2025, 1, 1)
+HISTORIC_FROM = date(2026, 1, 22)
 
 
 def _safe_str(s):
@@ -495,15 +495,18 @@ def ejecutar_mb51(session,
                                 print(f"[MB51] Añadiendo columna '{dbc}' a tabla destino (NVARCHAR(MAX))")
                                 conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
 
-                        # Preparar df para insercion: renombrar columnas a db_cols
+                        # Preparar df para insercion: renombrar columnas a db_cols y mantener solo esas columnas
                         df_to_insert = df.copy()
                         df_to_insert = df_to_insert.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
+                        # Seleccionar solo las columnas que vamos a insertar (en el orden db_cols)
+                        df_to_insert = df_to_insert[[c for c in db_cols]]
 
                         # Cargar a tabla temporal y luego insertar (append)
                         tmp_table = '#tmp_mb51_chunk'
                         df_to_insert.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
-                        # Insert into main (append)
-                        conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+                        # Insert into main con lista explícita de columnas para evitar mismatch
+                        col_list = ', '.join([f'[{c}]' for c in db_cols])
+                        conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list}) SELECT {col_list} FROM {tmp_table}"))
 
                     chunk_entry['ingesta'] = True
                 except Exception as e_inner:
@@ -532,14 +535,16 @@ def ejecutar_mb51(session,
                                 if dbc.lower() not in existing_cols2:
                                     conn2.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
 
-                            # Preparar df renombrado para insert (usar las columnas normalizadas)
+                            # Preparar df renombrado para insert (usar las columnas normalizadas) y mantener solo esas columnas
                             df_to_insert_fb = df.copy()
                             df_to_insert_fb = df_to_insert_fb.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
+                            df_to_insert_fb = df_to_insert_fb[[c for c in db_cols]]
 
                             # Cargar a tabla temporal y luego insertar
                             tmp_table = '#tmp_mb51_chunk'
                             df_to_insert_fb.to_sql(tmp_table, con=conn2, if_exists='replace', index=False)
-                            conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+                            col_list_fb = ', '.join([f'[{c}]' for c in db_cols])
+                            conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list_fb}) SELECT {col_list_fb} FROM {tmp_table}"))
 
                         chunk_entry['ingesta'] = True
                         chunk_entry['create_ok'] = True
