@@ -157,12 +157,85 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # Crear DataFrame
         df = pd.DataFrame(data_rows, columns=headers)
 
-        # Renombrar columna 4 (index 3) a 'pb_a_nivel_almacen' si existe (enumerando desde 1)
-        if len(df.columns) >= 4:
-            old_col = df.columns[3]
-            if old_col != 'pb_a_nivel_almacen':
-                df.rename(columns={old_col: 'pb_a_nivel_almacen'}, inplace=True)
-                print(f"[MB52] Renombrada columna 4: '{old_col}' -> 'pb_a_nivel_almacen'")
+        # --- Limpiar y normalizar nombres de columna (trim) ---
+        cleaned_cols = [str(c).strip() for c in df.columns]
+        df.columns = cleaned_cols
+        print(f"[MB52] Columnas limpias: {df.columns.tolist()[:10]}...")
+
+        # Mapeo explícito de nombres originales a nombres objetivo (prioridad exacta, case-insensitive)
+        explicit_map = {
+            'material': ['material'],
+            'ce.': ['centro'],
+            'ce': ['centro'],
+            'alm.': ['almacen'],
+            'alm': ['pb_a_nivel_almacen'],
+            'lote': ['lote'],
+            'um': ['unidad_medida_base'],
+            'libre utiliz.': ['libre_utilizacion'],
+            'libre utiliz': ['libre_utilizacion'],
+            'mon.': ['moneda'],
+            'mon': ['moneda'],
+            'valor total': ['valor_libre_util', 'valor_stock_bloq'],  # aparece dos veces en el reporte
+            'transytras': ['trans_trasl'],
+            'val.trans.c/cond.': ['val_trans_cond'],
+            'val.trans.c/cond': ['val_trans_cond'],
+            'en ctrlcal': ['en_control_calidad'],
+            'valor en insp.cal.': ['valor_en_insp_cal'],
+            'valor en insp.cal': ['valor_en_insp_cal'],
+            'stock no libre': ['stock_no_libre'],
+            'valor no libre': ['valor_no_libre'],
+            'bloqueado': ['bloqueado'],
+            'devol.': ['devoluciones'],
+            'devol': ['devoluciones'],
+            'val.stock bl.dev.': ['val_stock_bl_dev'],
+            'val.stock bl.dev': ['val_stock_bl_dev'],
+            'texto breve de material': ['texto_breve_material'],
+            'denom-almacén': ['denominacion_almacen'],
+            'denominacion almacen': ['denominacion_almacen'],
+            'denominacion-almacen': ['denominacion_almacen']
+        }
+
+        # Normalization helper (lower and collapse spaces/punctuation minimal)
+        def key_for_exact(s: str) -> str:
+            return s.strip().lower()
+
+        # Track usage counts for keys that map to multiple targets
+        from collections import defaultdict
+        use_count = defaultdict(int)
+
+        renames = {}
+        for col in df.columns.tolist():
+            k = key_for_exact(col)
+            mapped = None
+            if k in explicit_map:
+                targets = explicit_map[k]
+                mapped = targets[use_count[k]] if use_count[k] < len(targets) else targets[-1]
+                use_count[k] += 1
+            else:
+                # Fallback: normalized snake_case matching
+                nk = normalize_col(col)
+                if nk in [ 'material','centro','almacen','pb_a_nivel_almacen','lote','unidad_medida_base','libre_utilizacion','moneda','valor_libre_util','trans_trasl','val_trans_cond','en_control_calidad','valor_en_insp_cal','stock_no_libre','valor_no_libre','bloqueado','valor_stock_bloq','devoluciones','val_stock_bl_dev','texto_breve_material','denominacion_almacen' ]:
+                    mapped = nk
+            if mapped and col != mapped:
+                renames[col] = mapped
+
+        if renames:
+            df = df.rename(columns=renames)
+            for o, n in renames.items():
+                print(f"[MB52] Renombrada columna: '{o}' -> '{n}'")
+
+        # Asegurar columnas objetivo y ordenarlas exactamente como se requiere
+        required_cols = [
+            'material','centro','almacen','pb_a_nivel_almacen','lote',
+            'unidad_medida_base','libre_utilizacion','moneda','valor_libre_util',
+            'trans_trasl','val_trans_cond','en_control_calidad','valor_en_insp_cal',
+            'stock_no_libre','valor_no_libre','bloqueado','valor_stock_bloq',
+            'devoluciones','val_stock_bl_dev','texto_breve_material','denominacion_almacen'
+        ]
+        for c in required_cols:
+            if c not in df.columns:
+                df[c] = None
+        df = df[required_cols]
 
         # 9. Procesar DataFrame y cargar en SQL
         print("[MB52] Paso 9: Procesando DataFrame para carga en SQL...")
