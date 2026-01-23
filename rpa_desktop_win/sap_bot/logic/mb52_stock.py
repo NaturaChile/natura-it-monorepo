@@ -126,23 +126,42 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         if header_line is None:
             raise ValueError("No se encontro linea de encabezados en el portapapeles")
         
-        # Extraer headers (separar por | y limpiar)
-        headers = [col.strip() for col in header_line.split('|')]
-        # Eliminar elementos vacios al inicio y final
-        headers = [h for h in headers if h]
+        # Extraer headers (separar por | y limpiar) - Normalizar UTF-8 y Unicode
+        import unicodedata
+        def safe_str(s):
+            if s is None:
+                return s
+            if isinstance(s, bytes):
+                s = s.decode('utf-8', errors='replace')
+            s = str(s)
+            s = unicodedata.normalize('NFC', s)
+            return s.strip()
+
+        headers = [safe_str(col) for col in header_line.split('|')]
+        # Mantener campos vacíos internos; solo eliminar placeholders vacíos al inicio/final provocados por separadores
+        if headers and headers[0] == '':
+            headers = headers[1:]
+        if headers and headers[-1] == '':
+            headers = headers[:-1]
         print(f"[MB52] Columnas detectadas ({len(headers)}): {headers[:5]}...")
         
         # Procesar filas de datos
         data_rows = []
         for line in data_lines:
             # Separar por | y limpiar espacios (mantener campos vacios para preservar posicion)
-            row = [col.strip() for col in line.split('|')]
-            
+            # Aplicar normalizacion UTF-8 / Unicode a cada celda
+            row = [safe_str(col) for col in line.split('|')]
+
+            # Eliminar solo elementos vacíos al inicio/final causados por separadores leading/trailing
+            if row and row[0] == '':
+                row = row[1:]
+            if row and row[-1] == '':
+                row = row[:-1]
+
             if len(row) == len(headers):
                 data_rows.append(row)
             elif len(row) > 0:
-                print(f"[MB52] [WARN] Fila con {len(row)} cols (esperadas {len(headers)}), ajustando...")
-                # Ajustar fila si es necesario
+                # Ajustar fila si es necesario (sin imprimir warnings para evitar llenar la consola)
                 if len(row) > len(headers):
                     data_rows.append(row[:len(headers)])
                 else:
