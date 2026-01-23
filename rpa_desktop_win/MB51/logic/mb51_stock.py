@@ -433,9 +433,33 @@ def ejecutar_mb51(session,
                 # Asegurar esquema/tabla: create or alter to add missing cols
                 from sqlalchemy import text
                 try:
+                    # Preparar mapeo de columnas: conservar nombres tal cual vienen (raw), pero hacerlos unicos para SQL si hay duplicados
+                    raw_cols = list(df.drop(columns=['timestamp_ingestion']).columns)
+                    seen_cols = {}
+                    db_cols = []
+                    columns_map = []  # list of {original:..., db:...}
+                    for c in raw_cols:
+                        dbname = c
+                        if dbname in seen_cols:
+                            seen_cols[dbname] += 1
+                            dbname = f"{dbname}__{seen_cols[dbname]}"
+                        else:
+                            seen_cols[dbname] = 0
+                        # Truncar nombre si demasiado largo (max identifier 128)
+                        if len(dbname) > 120:
+                            dbname = dbname[:120]
+                        db_cols.append(dbname)
+                        columns_map.append({'original': c, 'db': dbname})
+
+                    chunk_entry['columns_map'] = columns_map
+
+                    # Crear df temporal con nombres db_cols para generar DDL e insertar
+                    df_for_schema = df.drop(columns=['timestamp_ingestion']).copy()
+                    df_for_schema.columns = db_cols
+
                     with repo.engine.begin() as conn:
-                        # Crear tabla si no existe
-                        create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
+                        # Crear tabla si no existe (usando los nombres db_cols)
+                        create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df_for_schema)
                         # Guardar DDL en bitacora
                         chunk_entry['ddl'] = create_table_sql
 
@@ -445,16 +469,20 @@ def ejecutar_mb51(session,
                         obj = conn.execute(text(f"SELECT OBJECT_ID('[{db_name}].[{table_schema}].[{table_name}]')")).fetchone()
                         chunk_entry['create_ok'] = bool(obj and obj[0])
 
-                        # Añadir columnas faltantes si hay
+                        # Añadir columnas faltantes si hay (comparando en minusculas)
                         existing_cols = {r[0].lower() for r in conn.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
-                        for c in df.drop(columns=['timestamp_ingestion']).columns:
-                            if c.lower() not in existing_cols:
-                                print(f"[MB51] Añadiendo columna '{c}' a tabla destino (NVARCHAR(MAX))")
-                                conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+                        for dbc in db_cols:
+                            if dbc.lower() not in existing_cols:
+                                print(f"[MB51] Añadiendo columna '{dbc}' a tabla destino (NVARCHAR(MAX))")
+                                conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
+
+                        # Preparar df para insercion: renombrar columnas a db_cols
+                        df_to_insert = df.copy()
+                        df_to_insert = df_to_insert.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
 
                         # Cargar a tabla temporal y luego insertar (append)
                         tmp_table = '#tmp_mb51_chunk'
-                        df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
+                        df_to_insert.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
                         # Insert into main (append)
                         conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
 
