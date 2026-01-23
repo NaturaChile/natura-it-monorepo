@@ -5,6 +5,9 @@ import shutil
 from datetime import datetime
 import pandas as pd
 
+# Usar helper central para secretos/variables de entorno
+from core_shared.security.vault import Vault
+
 
 def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"\\10.156.145.28\Publico\RPA\Retail\Stock - Base Tiendas"):
     """
@@ -211,10 +214,10 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
                     unc_root = unc_root_from_path(ruta_destino)
 
-                    # Preferir credenciales desde variables de entorno para seguridad
-                    net_domain = os.getenv('NET_DOMAIN') or os.getenv('DOMAIN')
-                    net_user = os.getenv('NET_USER') or os.getenv('USER_NET')
-                    net_pass = os.getenv('NET_PASS') or os.getenv('NET_PASSWORD')
+                    # Preferir credenciales desde el helper central `Vault` (usa env internamente)
+                    net_domain = Vault.get_secret('NET_DOMAIN') or os.getenv('DOMAIN')
+                    net_user = Vault.get_secret('NET_USER') or os.getenv('USER_NET')
+                    net_pass = Vault.get_secret('NET_PASS') or os.getenv('NET_PASSWORD')
 
                     if unc_root and net_user and net_pass:
                         user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
