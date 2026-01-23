@@ -29,6 +29,19 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
     nombre_archivo = f"Base Stock Tiendas {fecha_actual}.xlsx"
     
     print(f"[MB52] Centro: {centro}")
+
+        # ----------------------------
+        # BLOQUE DE CONFIGURACIÓN (solo pruebas)
+        # Igual que en `ejemplo.txt` — quitar tras debug
+        SERVER_IP = "10.156.145.28"
+        RECURSO = "areas"
+        SUB_RUTA_DESTINO = r"Publico\RPA\Retail\Stock - Base Tiendas"
+
+        DOMAIN = "NATURA"
+        USER = "robotch_fin"
+        PASSWORD = "Natura@bot2025/"
+        USER_FULL = f"{DOMAIN}\\{USER}"
+        # ----------------------------
     print(f"[MB52] Almacen: {almacen}")
     print(f"[MB52] Variante: {variante}")
     print(f"[MB52] Archivo destino: {ruta_destino}\\{nombre_archivo}")
@@ -193,10 +206,11 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
             unc_root = unc_root_from_path(ruta_destino)
 
-            # Credenciales desde Vault (o env)
-            net_domain = Vault.get_secret('NET_DOMAIN') or os.getenv('DOMAIN')
-            net_user = Vault.get_secret('NET_USER') or os.getenv('USER_NET')
-            net_pass = Vault.get_secret('NET_PASS') or os.getenv('NET_PASSWORD')
+            # Credenciales para pruebas en claro (solo temporal)
+            # ATENCION: estas credenciales estan embebidas en el codigo para debug
+            net_domain = 'NATURA'
+            net_user = 'robotch_fin'
+            net_pass = 'Natura@bot2025/'
 
             if unc_root and net_user and net_pass:
                 user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
