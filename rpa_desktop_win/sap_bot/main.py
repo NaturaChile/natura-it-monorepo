@@ -4,10 +4,13 @@ import sys
 import time
 from pathlib import Path
 
-# Agregar la raíz del repositorio al path para imports (permite importar `core_shared`)
-# main.py está en rpa_desktop_win/sap_bot -> necesitamos subir dos niveles para llegar a la raíz
+# Agregar la carpeta del paquete (`rpa_desktop_win`) al path para imports (permite importar `sap_bot`)
+pkg_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(pkg_root))
+# También asegurar la raíz del repo está disponible para `core_shared` si se necesita
 repo_root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(repo_root))
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from sap_bot.services.launcher import launch_sap
 from sap_bot.services.sap_controller import SapController
