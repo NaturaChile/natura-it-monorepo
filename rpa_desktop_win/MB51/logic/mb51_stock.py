@@ -177,7 +177,7 @@ def _infer_sql_type(series: pd.Series) -> str:
     if date_like >= 0.6 * total:
         return 'DATE'
     if float_like >= 0.6 * total:
-        return 'NUMERIC(18,2)'
+        return 'NUMERIC(18,4)'
     if int_like >= 0.6 * total:
         # choose size
         if max_int > 2_147_483_647:
@@ -324,6 +324,10 @@ def ejecutar_mb51(session,
 
     repo = SqlRepositoryLocal(host=db_host, db=db_name, user=db_user, password=db_pw)
 
+    # Tabla destino (puede configurarse via env vars)
+    table_schema = os.getenv('MB51_TABLE_SCHEMA', 'Retail')
+    table_name = os.getenv('MB51_TABLE_NAME', 'mb51')
+
     for s, e in _generate_date_ranges(desde, hasta, CHUNK_DAYS):
         print(f"[MB51] Ejecutando tramo: {s.strftime('%d%m%Y')} -> {e.strftime('%d%m%Y')}")
         # Preparar pantalla y filtros en SAP
@@ -433,16 +437,31 @@ def ejecutar_mb51(session,
                 # Asegurar esquema/tabla: create or alter to add missing cols
                 from sqlalchemy import text
                 try:
-                    # Preparar mapeo de columnas: conservar nombres tal cual vienen (raw), pero hacerlos unicos para SQL si hay duplicados
+                    # Preparar mapeo de columnas: normalizar nombres (quitar acentos, espacios -> guiones bajos, minusculas)
+                    def _normalize_db_col(c: str) -> str:
+                        import unicodedata, re
+                        s = str(c).strip()
+                        # quitar acentos
+                        s = unicodedata.normalize('NFKD', s)
+                        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+                        s = s.lower()
+                        s = s.replace('-', ' ').replace('/', ' ')
+                        s = ''.join(ch if ch.isalnum() or ch == ' ' else '_' for ch in s)
+                        s = '_'.join(s.split())
+                        if s == '':
+                            s = 'col'
+                        return s
+
                     raw_cols = list(df.drop(columns=['timestamp_ingestion']).columns)
                     seen_cols = {}
                     db_cols = []
                     columns_map = []  # list of {original:..., db:...}
                     for c in raw_cols:
-                        dbname = c
+                        base = _normalize_db_col(c)
+                        dbname = base
                         if dbname in seen_cols:
                             seen_cols[dbname] += 1
-                            dbname = f"{dbname}__{seen_cols[dbname]}"
+                            dbname = f"{base}__{seen_cols[dbname]}"
                         else:
                             seen_cols[dbname] = 0
                         # Truncar nombre si demasiado largo (max identifier 128)
@@ -453,7 +472,7 @@ def ejecutar_mb51(session,
 
                     chunk_entry['columns_map'] = columns_map
 
-                    # Crear df temporal con nombres db_cols para generar DDL e insertar
+                    # Crear df temporal con nombres db_cols (normalizados) para generar DDL e insertar
                     df_for_schema = df.drop(columns=['timestamp_ingestion']).copy()
                     df_for_schema.columns = db_cols
 
