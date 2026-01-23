@@ -133,6 +133,96 @@ def _generate_date_ranges(start: date, end: date, delta_days: int = CHUNK_DAYS):
         cur = nxt + timedelta(days=1)
 
 
+# --- Helpers para inferir esquema y DDL (deben estar definidos antes del bucle principal) ---
+import re
+
+def _infer_sql_type(series: pd.Series) -> str:
+    samples = series.dropna().astype(str).map(lambda x: x.strip())
+    if len(samples) == 0:
+        return 'NVARCHAR(255)'
+
+    date_re = re.compile(r'^\d{2}[\./-]\d{2}[\./-]\d{4}$')
+    time_re = re.compile(r'^\d{2}:\d{2}(:\d{2})?$')
+    int_like = 0
+    float_like = 0
+    date_like = 0
+    max_len = 0
+    max_int = 0
+    for v in samples.head(200):
+        vv = str(v)
+        max_len = max(max_len, len(vv))
+        if date_re.match(vv):
+            date_like += 1
+            continue
+        if time_re.match(vv):
+            # time only -> keep as NVARCHAR
+            continue
+        # normalize numeric-looking values: remove thousands '.' and convert comma to dot
+        t = vv.rstrip('-')
+        t = t.replace('.', '').replace(',', '.')
+        if re.fullmatch(r'-?\d+', t):
+            int_like += 1
+            try:
+                iv = abs(int(t))
+                if iv > max_int:
+                    max_int = iv
+            except Exception:
+                pass
+        elif re.fullmatch(r'-?\d+\.\d+$', t):
+            float_like += 1
+
+    total = len(samples.head(200))
+    if total == 0:
+        return 'NVARCHAR(255)'
+    if date_like >= 0.6 * total:
+        return 'DATE'
+    if float_like >= 0.6 * total:
+        return 'NUMERIC(18,2)'
+    if int_like >= 0.6 * total:
+        # choose size
+        if max_int > 2_147_483_647:
+            return 'BIGINT'
+        return 'INT'
+    # otherwise string with reasonable length
+    if max_len <= 50:
+        return f'NVARCHAR({max_len + 10})'
+    if max_len <= 4000:
+        return f'NVARCHAR({max_len + 100})'
+    return 'NVARCHAR(MAX)'
+
+
+def _generate_create_table_sql(db: str, schema: str, table: str, df: pd.DataFrame) -> str:
+    cols_defs = []
+    for c in df.columns:
+        t = _infer_sql_type(df[c])
+        cols_defs.append(f'[{c}] {t} NULL')
+    cols_sql = ',\n    '.join(cols_defs)
+    ddl = f"""
+IF OBJECT_ID('[{db}].[{schema}].[{table}]','U') IS NULL
+BEGIN
+    CREATE TABLE [{db}].[{schema}].[{table}] (
+    {cols_sql}
+    );
+END
+"""
+    return ddl
+
+
+def _generate_generic_table_sql(db: str, schema: str, table: str, df: pd.DataFrame) -> str:
+    # Fallback conservador: todas las columnas NVARCHAR(MAX)
+    cols_defs = [f'[{c}] NVARCHAR(MAX) NULL' for c in df.columns]
+    cols_sql = ',\n    '.join(cols_defs)
+    ddl = f"""
+IF OBJECT_ID('[{db}].[{schema}].[{table}]','U') IS NULL
+BEGIN
+    CREATE TABLE [{db}].[{schema}].[{table}] (
+    {cols_sql}
+    );
+END
+"""
+    return ddl
+
+
 def ejecutar_mb51(session,
                  centro: str = DEFAULT_CENTRO,
                  lgort_low: str = DEFAULT_LGORT_LOW,
@@ -183,7 +273,7 @@ def ejecutar_mb51(session,
             raise Exception('Secrets SQL2022_* no encontrados en Vault ni en variables de entorno. Agregue los secrets en Vault (Environment: SAP_Jorge)')
 
     # Instanciar repo SQL (antes de iniciar tramos)
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, text
     import urllib
 
     class SqlRepositoryLocal:
@@ -375,7 +465,39 @@ def ejecutar_mb51(session,
                     chunk_entry['error'] = tb
                     chunk_entry['create_ok'] = False
                     print(f"[MB51] [ERROR] Fallo creando/insertando tabla: {e_inner}\n{tb}")
-                    # No elevar para que la bitacora se guarde y podamos reprocesar solo ese tramo
+
+                    # Intentar fallback conservador: crear tabla con NVARCHAR(MAX) para todas las columnas
+                    try:
+                        fallback_ddl = _generate_generic_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
+                        chunk_entry['ddl_fallback'] = fallback_ddl
+                        print(f"[MB51] [INFO] Intentando fallback conservador para crear tabla {table_name}...")
+                        with repo.engine.begin() as conn2:
+                            conn2.execute(text(fallback_ddl))
+                            # Verificar creación
+                            obj2 = conn2.execute(text(f"SELECT OBJECT_ID('[{db_name}].[{table_schema}].[{table_name}]')")).fetchone()
+                            if not (obj2 and obj2[0]):
+                                raise RuntimeError('Fallback DDL ejecutado pero la tabla sigue sin existir')
+
+                            # Añadir columnas faltantes si hay
+                            existing_cols2 = {r[0].lower() for r in conn2.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
+                            for c in df.drop(columns=['timestamp_ingestion']).columns:
+                                if c.lower() not in existing_cols2:
+                                    conn2.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+
+                            # Cargar a tabla temporal y luego insertar
+                            tmp_table = '#tmp_mb51_chunk'
+                            df.to_sql(tmp_table, con=conn2, if_exists='replace', index=False)
+                            conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+
+                        chunk_entry['ingesta'] = True
+                        chunk_entry['create_ok'] = True
+                        chunk_entry['error'] = None
+                        print(f"[MB51] [INFO] Fallback exitoso: tabla {table_name} creada e ingesta completada para tramo {s} -> {e}.")
+                    except Exception as fallback_exc:
+                        f_tb = traceback.format_exc()
+                        chunk_entry['error_fallback'] = f_tb
+                        print(f"[MB51] [ERROR] Fallback fallido: {fallback_exc}\n{f_tb}")
+                    # fin fallback
 
 
             except Exception as e:

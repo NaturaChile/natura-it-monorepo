@@ -1,0 +1,14 @@
+{
+  "run_id": "20260123155502",
+  "started": "2026-01-23T15:55:02.708162",
+  "chunks": [
+    {
+      "start": "2025-01-31",
+      "end": "2025-02-14",
+      "download_sap": true,
+      "rows": 75546,
+      "ingesta": false,
+      "error": "cannot access local variable 'repo' where it is not associated with a value"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "run_id": "20260123160405",
+  "started": "2026-01-23T16:04:05.998036",
+  "chunks": [
+    {
+      "start": "2025-01-01",
+      "end": "2025-01-15",
+      "download_sap": true,
+      "rows": 71083,
+      "ingesta": false,
+      "error": "Traceback (most recent call last):\n  File \"C:\\natura-it-monorepo\\dev\\rpa_desktop_win\\MB51\\logic\\mb51_stock.py\", line 348, in ejecutar_mb51\n    create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))\n                       ^^^^^^^^^^^^^^^^^^^^^^^^^^\nUnboundLocalError: cannot access local variable '_generate_create_table_sql' where it is not associated with a value\n",
+      "create_ok": false
+    }
+  ]
+}
