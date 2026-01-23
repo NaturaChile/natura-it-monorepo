@@ -515,7 +515,8 @@ def ejecutar_mb51(session,
 
                     # Intentar fallback conservador: crear tabla con NVARCHAR(MAX) para todas las columnas
                     try:
-                        fallback_ddl = _generate_generic_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
+                        # Use df_for_schema (columnas normalizadas) for fallback DDL to keep names consistent
+                        fallback_ddl = _generate_generic_table_sql(db_name, table_schema, table_name, df_for_schema)
                         chunk_entry['ddl_fallback'] = fallback_ddl
                         print(f"[MB51] [INFO] Intentando fallback conservador para crear tabla {table_name}...")
                         with repo.engine.begin() as conn2:
@@ -525,15 +526,19 @@ def ejecutar_mb51(session,
                             if not (obj2 and obj2[0]):
                                 raise RuntimeError('Fallback DDL ejecutado pero la tabla sigue sin existir')
 
-                            # Añadir columnas faltantes si hay
+                            # Añadir columnas faltantes si hay (usando nombres db_cols normalizados)
                             existing_cols2 = {r[0].lower() for r in conn2.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
-                            for c in df.drop(columns=['timestamp_ingestion']).columns:
-                                if c.lower() not in existing_cols2:
-                                    conn2.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+                            for dbc in db_cols:
+                                if dbc.lower() not in existing_cols2:
+                                    conn2.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
+
+                            # Preparar df renombrado para insert (usar las columnas normalizadas)
+                            df_to_insert_fb = df.copy()
+                            df_to_insert_fb = df_to_insert_fb.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
 
                             # Cargar a tabla temporal y luego insertar
                             tmp_table = '#tmp_mb51_chunk'
-                            df.to_sql(tmp_table, con=conn2, if_exists='replace', index=False)
+                            df_to_insert_fb.to_sql(tmp_table, con=conn2, if_exists='replace', index=False)
                             conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
 
                         chunk_entry['ingesta'] = True
@@ -593,73 +598,6 @@ def ejecutar_mb51(session,
     # Inferir esquema SQL a partir de muestras
     import re
 
-    def _infer_sql_type(series: pd.Series) -> str:
-        samples = series.dropna().astype(str).map(lambda x: x.strip())
-        if len(samples) == 0:
-            return 'NVARCHAR(255)'
-
-        date_re = re.compile(r'^\d{2}[\./-]\d{2}[\./-]\d{4}$')
-        time_re = re.compile(r'^\d{2}:\d{2}(:\d{2})?$')
-        int_like = 0
-        float_like = 0
-        date_like = 0
-        max_len = 0
-        max_int = 0
-        for v in samples.head(200):
-            vv = str(v)
-            max_len = max(max_len, len(vv))
-            if date_re.match(vv):
-                date_like += 1
-                continue
-            if time_re.match(vv):
-                # time only -> keep as NVARCHAR
-                continue
-            # normalize numeric-looking values: remove thousands '.' and convert comma to dot
-            t = vv.rstrip('-')
-            t = t.replace('.', '').replace(',', '.')
-            if re.fullmatch(r'-?\d+', t):
-                int_like += 1
-                try:
-                    iv = abs(int(t))
-                    if iv > max_int:
-                        max_int = iv
-                except Exception:
-                    pass
-            elif re.fullmatch(r'-?\d+\.\d+$', t):
-                float_like += 1
-
-        total = len(samples.head(200))
-        if date_like >= 0.6 * total:
-            return 'DATE'
-        if float_like >= 0.6 * total:
-            return 'NUMERIC(18,4)'
-        if int_like >= 0.6 * total:
-            # choose size
-            if max_int > 2_147_483_647:
-                return 'BIGINT'
-            return 'INT'
-        # otherwise string with reasonable length
-        if max_len <= 50:
-            return f'NVARCHAR({max_len + 10})'
-        if max_len <= 4000:
-            return f'NVARCHAR({max_len + 100})'
-        return 'NVARCHAR(MAX)'
-
-    def _generate_create_table_sql(db: str, schema: str, table: str, df: pd.DataFrame) -> str:
-        cols_defs = []
-        for c in df.columns:
-            t = _infer_sql_type(df[c])
-            cols_defs.append(f'[{c}] {t} NULL')
-        cols_sql = ',\n    '.join(cols_defs)
-        ddl = f"""
-IF OBJECT_ID('[{db}].[{schema}].[{table}]','U') IS NULL
-BEGIN
-    CREATE TABLE [{db}].[{schema}].[{table}] (
-    {cols_sql}
-    );
-END
-"""
-        return ddl
 
     # Ingest SQL (misma logica que MB52)
     print('[MB51] Intentando leer credenciales SQL2022_* desde Vault...')
