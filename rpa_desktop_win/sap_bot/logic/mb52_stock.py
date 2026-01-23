@@ -9,6 +9,17 @@ import io
 # Usar helper central para secretos/variables de entorno
 from core_shared.security.vault import Vault
 
+# --- CONFIGURACIÓN ---
+# 1. DATOS DE CONEXIÓN (directos, sin importar variables externas)
+SERVER_IP = "10.156.145.28"
+RECURSO = "areas"
+SUB_RUTA_DESTINO = r"Publico\RPA\Retail\Stock - Base Tiendas"
+
+DOMAIN = "NATURA"
+USER = "robotch_fin"
+PASSWORD = "Natura@bot2025/"
+USER_FULL = f"{DOMAIN}\\{USER}"
+
 
 def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante: str = "BOTMB52", ruta_destino: str = r"\\10.156.145.28\Publico\RPA\Retail\Stock - Base Tiendas"):
     """
@@ -30,18 +41,6 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
     
     print(f"[MB52] Centro: {centro}")
 
-        # ----------------------------
-        # BLOQUE DE CONFIGURACIÓN (solo pruebas)
-        # Igual que en `ejemplo.txt` — quitar tras debug
-        SERVER_IP = "10.156.145.28"
-        RECURSO = "areas"
-        SUB_RUTA_DESTINO = r"Publico\RPA\Retail\Stock - Base Tiendas"
-
-        DOMAIN = "NATURA"
-        USER = "robotch_fin"
-        PASSWORD = "Natura@bot2025/"
-        USER_FULL = f"{DOMAIN}\\{USER}"
-        # ----------------------------
     print(f"[MB52] Almacen: {almacen}")
     print(f"[MB52] Variante: {variante}")
     print(f"[MB52] Archivo destino: {ruta_destino}\\{nombre_archivo}")
@@ -206,22 +205,17 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
             unc_root = unc_root_from_path(ruta_destino)
 
-            # Credenciales para pruebas en claro (solo temporal)
-            # ATENCION: estas credenciales estan embebidas en el codigo para debug
-            net_domain = 'NATURA'
-            net_user = 'robotch_fin'
-            net_pass = 'Natura@bot2025/'
-
-            if unc_root and net_user and net_pass:
-                user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
-                print(f"[MB52] Ejecutando net use {unc_root} con {user_full}")
+            # Usar credenciales definidas en el bloque de configuración superior
+            if unc_root and USER and PASSWORD:
+                user_full_local = USER_FULL if USER_FULL else (f"{DOMAIN}\\{USER}" if DOMAIN else USER)
+                print(f"[MB52] Ejecutando net use {unc_root} con {user_full_local}")
                 import subprocess
-                result = subprocess.run(['net', 'use', unc_root, net_pass, f'/user:{user_full}'], capture_output=True, text=True)
+                result = subprocess.run(['net', 'use', unc_root, PASSWORD, f'/user:{user_full_local}'], capture_output=True, text=True)
                 if result.returncode != 0:
                     raise Exception(f"net use fallo: {result.stderr.strip()}")
                 print(f"[MB52] net use OK: {result.stdout.strip()}")
             else:
-                raise Exception('No hay credenciales NET disponibles para autenticacion SBC/SMB')
+                raise Exception('No hay credenciales NET disponibles para autenticacion SMB')
 
             # Escribir DataFrame a BytesIO en memoria
             bio = io.BytesIO()
