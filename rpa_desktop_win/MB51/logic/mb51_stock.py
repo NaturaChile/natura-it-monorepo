@@ -195,12 +195,99 @@ def ejecutar_mb51(session,
         finally:
             win32clipboard.CloseClipboard()
 
+        # Press "Back" to return to transaction UI so filters can be updated for next tramo
         try:
-            df = _parse_clipboard(clipboard_data)
-            frames.append(df)
-            print(f"[MB51] Tramo {s} -> {e} filas: {len(df)} columnas: {len(df.columns)}")
-        except Exception as e:
-            print(f"[MB51] [WARN] No se pudo parsear tramo {s} -> {e}")
+            # Prefer toolbar back button
+            session.findById("wnd[0]/tbar[0]/btn[3]").press()
+        except Exception:
+            try:
+                session.findById("wnd[0]").sendVKey(3)
+            except Exception:
+                pass
+
+        # Preparar bitacora (por corrida)
+        from pathlib import Path
+        log_dir = os.getenv('MB51_LOG_DIR', str(Path(__file__).resolve().parents[2] / 'MB51' / 'logs'))
+        os.makedirs(log_dir, exist_ok=True)
+        run_id = datetime.now().strftime('%Y%m%d%H%M%S')
+        run_file = os.path.join(log_dir, f'mb51_run_{run_id}.json')
+        # Cargar historico de tramos ya ingestados para evitar reprocesar
+        ingested_chunks = set()
+        for lf in Path(log_dir).glob('mb51_run_*.json'):
+            try:
+                import json
+                with open(lf, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+                for ch in data.get('chunks', []):
+                    if ch.get('ingesta'):
+                        ingested_chunks.add((ch.get('start'), ch.get('end')))
+            except Exception:
+                pass
+
+        # Inicializar registro de corrida
+        run_log = {
+            'run_id': run_id,
+            'started': datetime.now().isoformat(),
+            'chunks': []
+        }
+
+        # Procesar y cargar este tramo inmediatamente
+        chunk_key = (s.isoformat(), e.isoformat())
+        if chunk_key in ingested_chunks:
+            print(f"[MB51] Tramo {s} -> {e} ya procesado con ingesta previa. Saltando.")
+        else:
+            chunk_entry = {
+                'start': s.isoformat(),
+                'end': e.isoformat(),
+                'download_sap': False,
+                'rows': 0,
+                'ingesta': False,
+                'error': None
+            }
+            try:
+                df = _parse_clipboard(clipboard_data)
+                chunk_entry['download_sap'] = True
+                chunk_entry['rows'] = len(df)
+                print(f"[MB51] Tramo {s} -> {e} filas: {len(df)} columnas: {len(df.columns)}")
+
+                # Añadir timestamp
+                df['timestamp_ingestion'] = datetime.now()
+
+                # Asegurar esquema/tabla: create or alter to add missing cols
+                from sqlalchemy import text
+                with repo.engine.begin() as conn:
+                    # Crear tabla si no existe
+                    create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
+                    conn.execute(text(create_table_sql))
+
+                    # Añadir columnas faltantes si hay
+                    existing_cols = {r[0].lower() for r in conn.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
+                    for c in df.drop(columns=['timestamp_ingestion']).columns:
+                        if c.lower() not in existing_cols:
+                            print(f"[MB51] Añadiendo columna '{c}' a tabla destino (NVARCHAR(MAX))")
+                            conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+
+                    # Cargar a tabla temporal y luego insertar (append)
+                    tmp_table = '#tmp_mb51_chunk'
+                    df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
+                    # Insert into main (append)
+                    conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+
+                chunk_entry['ingesta'] = True
+
+            except Exception as e:
+                chunk_entry['error'] = str(e)
+                print(f"[MB51] [ERROR] Tramo {s} -> {e}")
+
+            # Guardar estado parcial en el archivo de corrida
+            try:
+                import json
+                run_log['chunks'].append(chunk_entry)
+                with open(run_file, 'w', encoding='utf-8') as fh:
+                    json.dump(run_log, fh, indent=2, default=str, ensure_ascii=False)
+                print(f"[MB51] Estado de tramo guardado en {run_file}")
+            except Exception as e:
+                print(f"[MB51] [WARN] No se pudo escribir bitacora: {e}")
 
     if not frames:
         print('[MB51] [INFO] No se obtuvieron filas para el rango solicitado.')
