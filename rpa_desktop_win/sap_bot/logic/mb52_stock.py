@@ -135,10 +135,8 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # Procesar filas de datos
         data_rows = []
         for line in data_lines:
-            # Separar por | y limpiar espacios
+            # Separar por | y limpiar espacios (mantener campos vacios para preservar posicion)
             row = [col.strip() for col in line.split('|')]
-            # Eliminar elementos vacios al inicio y final
-            row = [r for r in row if r != '']
             
             if len(row) == len(headers):
                 data_rows.append(row)
@@ -212,29 +210,26 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         for col in df.columns:
             occurrences[key_for_exact(col)] += 1
 
-        renames = {}
-        # Map by position-aware strategy: if a key has multiple targets and multiple occurrences, distribute them in order; if single occurrence, prefer first target
-        for col in df.columns.tolist():
+        # Positional mapping to handle duplicated original names correctly
+        new_cols = list(df.columns)
+        for idx, col in enumerate(df.columns.tolist()):
             k = key_for_exact(col)
             mapped = None
             if k in explicit_map:
                 targets = explicit_map[k]
-                if occurrences[k] == 1 and len(targets) > 1:
-                    mapped = targets[0]
-                else:
-                    mapped = targets[count_by_key[k]] if count_by_key[k] < len(targets) else targets[-1]
+                # choose target by occurrence count for this key
+                mapped = targets[count_by_key[k]] if count_by_key[k] < len(targets) else targets[-1]
                 count_by_key[k] += 1
             else:
                 nk = normalize_col(col)
                 if nk in [ 'material','centro','almacen','pb_a_nivel_almacen','lote','unidad_medida_base','libre_utilizacion','moneda','valor_libre_util','trans_trasl','val_trans_cond','en_control_calidad','valor_en_insp_cal','stock_no_libre','valor_no_libre','bloqueado','valor_stock_bloq','devoluciones','val_stock_bl_dev','texto_breve_material','denominacion_almacen' ]:
                     mapped = nk
-            if mapped and col != mapped:
-                renames[col] = mapped
 
-        if renames:
-            df = df.rename(columns=renames)
-            for o, n in renames.items():
-                print(f"[MB52] Renombrada columna: '{o}' -> '{n}'")
+            if mapped and col != mapped:
+                new_cols[idx] = mapped
+                print(f"[MB52] Renombrada columna pos {idx+1}: '{col}' -> '{mapped}'")
+
+        df.columns = new_cols
 
         # Detectar nombres duplicados y hacerlos unicos por posicion si existen (añadir sufijo __1, __2)
         cols = list(df.columns)
