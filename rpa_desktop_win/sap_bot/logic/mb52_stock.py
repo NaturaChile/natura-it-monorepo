@@ -160,9 +160,9 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         # --- Limpiar y normalizar nombres de columna (trim) ---
         cleaned_cols = [str(c).strip() for c in df.columns]
         df.columns = cleaned_cols
-        print(f"[MB52] Columnas limpias: {df.columns.tolist()[:10]}...")
+        print(f"[MB52] Columnas limpias: {df.columns.tolist()[:20]}...")
 
-        # Mapeo explícito de nombres originales a nombres objetivo (prioridad exacta, case-insensitive)
+        # Mapeo explícito de nombres originales a nombres objetivo (priority explicit matches)
         explicit_map = {
             'material': ['material'],
             'ce.': ['centro'],
@@ -175,7 +175,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
             'libre utiliz': ['libre_utilizacion'],
             'mon.': ['moneda'],
             'mon': ['moneda'],
-            'valor total': ['valor_libre_util', 'valor_stock_bloq'],  # aparece dos veces en el reporte
+            'valor total': ['valor_libre_util', 'valor_stock_bloq'],  # may appear twice
             'transytras': ['trans_trasl'],
             'val.trans.c/cond.': ['val_trans_cond'],
             'val.trans.c/cond': ['val_trans_cond'],
@@ -195,24 +195,28 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
             'denominacion-almacen': ['denominacion_almacen']
         }
 
-        # Normalization helper (lower and collapse spaces/punctuation minimal)
         def key_for_exact(s: str) -> str:
             return s.strip().lower()
 
-        # Track usage counts for keys that map to multiple targets
         from collections import defaultdict
-        use_count = defaultdict(int)
+        count_by_key = defaultdict(int)
+        occurrences = defaultdict(int)
+        for col in df.columns:
+            occurrences[key_for_exact(col)] += 1
 
         renames = {}
+        # Map by position-aware strategy: if a key has multiple targets and multiple occurrences, distribute them in order; if single occurrence, prefer first target
         for col in df.columns.tolist():
             k = key_for_exact(col)
             mapped = None
             if k in explicit_map:
                 targets = explicit_map[k]
-                mapped = targets[use_count[k]] if use_count[k] < len(targets) else targets[-1]
-                use_count[k] += 1
+                if occurrences[k] == 1 and len(targets) > 1:
+                    mapped = targets[0]
+                else:
+                    mapped = targets[count_by_key[k]] if count_by_key[k] < len(targets) else targets[-1]
+                count_by_key[k] += 1
             else:
-                # Fallback: normalized snake_case matching
                 nk = normalize_col(col)
                 if nk in [ 'material','centro','almacen','pb_a_nivel_almacen','lote','unidad_medida_base','libre_utilizacion','moneda','valor_libre_util','trans_trasl','val_trans_cond','en_control_calidad','valor_en_insp_cal','stock_no_libre','valor_no_libre','bloqueado','valor_stock_bloq','devoluciones','val_stock_bl_dev','texto_breve_material','denominacion_almacen' ]:
                     mapped = nk
@@ -224,7 +228,20 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
             for o, n in renames.items():
                 print(f"[MB52] Renombrada columna: '{o}' -> '{n}'")
 
-        # Asegurar columnas objetivo y ordenarlas exactamente como se requiere
+        # Detectar nombres duplicados y hacerlos unicos por posicion si existen (añadir sufijo __1, __2)
+        cols = list(df.columns)
+        seen = {}
+        for i, c in enumerate(cols):
+            if c in seen:
+                seen[c] += 1
+                newc = f"{c}__{seen[c]}"
+                cols[i] = newc
+                print(f"[MB52] [WARN] Nombre de columna duplicado detectado: '{c}' -> renombrado a '{newc}' para evitar ambiguedad")
+            else:
+                seen[c] = 0
+        df.columns = cols
+
+        # Reordenar/asegurar columnas objetivo
         required_cols = [
             'material','centro','almacen','pb_a_nivel_almacen','lote',
             'unidad_medida_base','libre_utilizacion','moneda','valor_libre_util',
@@ -235,7 +252,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         for c in required_cols:
             if c not in df.columns:
                 df[c] = None
-        df = df[required_cols]
+        df = df[[c for c in required_cols]]
 
         # 9. Procesar DataFrame y cargar en SQL
         print("[MB52] Paso 9: Procesando DataFrame para carga en SQL...")
