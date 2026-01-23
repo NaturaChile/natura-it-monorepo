@@ -162,6 +162,78 @@ def ejecutar_mb51(session,
     session.findById("wnd[0]/tbar[0]/okcd").text = "MB51"
     session.findById("wnd[0]").sendVKey(0)
     time.sleep(0.5)
+
+    # --- Preparar conexion a DB y repo ANTES de procesar tramos ---
+    print('[MB51] Intentando leer credenciales SQL2022_* desde Vault...')
+    db_host = Vault.get_secret('SQL2022_HOST')
+    db_user = Vault.get_secret('SQL2022_USER')
+    db_pw = Vault.get_secret('SQL2022_PW')
+    db_name = os.getenv('SQL2022_DB', 'Retail')
+
+    if not (db_host and db_user and db_pw):
+        env_host = os.getenv('SQL2022_HOST')
+        env_user = os.getenv('SQL2022_USER')
+        env_pw = os.getenv('SQL2022_PW')
+        if env_host or env_user or env_pw:
+            print('[MB51] [WARN] Secrets SQL2022_* no encontrados en Vault. Usando variables de entorno para esta ejecución.')
+            db_host = db_host or env_host
+            db_user = db_user or env_user
+            db_pw = db_pw or env_pw
+        else:
+            raise Exception('Secrets SQL2022_* no encontrados en Vault ni en variables de entorno. Agregue los secrets en Vault (Environment: SAP_Jorge)')
+
+    # Instanciar repo SQL (antes de iniciar tramos)
+    from sqlalchemy import create_engine
+    import urllib
+
+    class SqlRepositoryLocal:
+        def __init__(self, host, db, user=None, password=None, driver=None):
+            preferred = [
+                'ODBC Driver 18 for SQL Server',
+                'ODBC Driver 17 for SQL Server',
+                'ODBC Driver 13 for SQL Server',
+                'SQL Server Native Client 11.0',
+                'SQL Server'
+            ]
+            selected_driver = driver
+            try:
+                import pyodbc
+                available = pyodbc.drivers()
+                if not selected_driver:
+                    for d in preferred:
+                        if d in available:
+                            selected_driver = d
+                            break
+                if not selected_driver:
+                    raise RuntimeError(f"No se encontró un driver ODBC compatible. Drivers instalados: {available}")
+            except Exception as e:
+                raise RuntimeError(f"Error detectando drivers ODBC: {e}")
+
+            print(f"[MB51] [INFO] Usando driver ODBC: {selected_driver}")
+            if user and password:
+                connection_string = (
+                    f"DRIVER={{{selected_driver}}};"
+                    f"SERVER={host};"
+                    f"DATABASE={db};"
+                    f"UID={user};"
+                    f"PWD={password};"
+                    "Encrypt=no;TrustServerCertificate=yes;"
+                )
+            else:
+                connection_string = (
+                    f"DRIVER={{{selected_driver}}};"
+                    f"SERVER={host};"
+                    f"DATABASE={db};"
+                    "Trusted_Connection=yes;"
+                )
+            params = urllib.parse.quote_plus(connection_string)
+            try:
+                self.engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+            except Exception as e:
+                raise RuntimeError(f"Error creando engine SQLAlchemy/pyodbc: {e}\nAsegure que el driver ODBC '{selected_driver}' esté instalado y que 'pyodbc' esté disponible.")
+
+    repo = SqlRepositoryLocal(host=db_host, db=db_name, user=db_user, password=db_pw)
+
     for s, e in _generate_date_ranges(desde, hasta, CHUNK_DAYS):
         print(f"[MB51] Ejecutando tramo: {s.strftime('%d%m%Y')} -> {e.strftime('%d%m%Y')}")
         # Preparar pantalla y filtros en SAP
@@ -183,9 +255,24 @@ def ejecutar_mb51(session,
             session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[4,0]").select()
             session.findById("wnd[1]/tbar[0]/btn[0]").press()
             time.sleep(1)
-        except Exception as e:
-            print(f"[MB51] [ERROR] Error exportando tramo {s} - {e}")
-            continue
+        except BaseException as e:
+            # Capturar KeyboardInterrupt y otros errores graves
+            if isinstance(e, KeyboardInterrupt):
+                print(f"[MB51] [ERROR] Export interrumpido por KeyboardInterrupt en tramo {s} -> {e}")
+                # Guardar estado parcial minimal y abortar
+                run_file = os.path.join(log_dir, f'mb51_run_interrupt_{datetime.now().strftime("%Y%m%d%H%M%S")}.json')
+                try:
+                    import json
+                    run_log['error'] = 'KeyboardInterrupt during export'
+                    with open(run_file, 'w', encoding='utf-8') as fh:
+                        json.dump(run_log, fh, indent=2, default=str, ensure_ascii=False)
+                    print(f"[MB51] Estado interrumpido guardado en {run_file}")
+                except Exception:
+                    pass
+                raise
+            else:
+                print(f"[MB51] [ERROR] Error exportando tramo {s} - {e}")
+                continue
 
         # Leer portapapeles
         import win32clipboard
@@ -255,25 +342,41 @@ def ejecutar_mb51(session,
 
                 # Asegurar esquema/tabla: create or alter to add missing cols
                 from sqlalchemy import text
-                with repo.engine.begin() as conn:
-                    # Crear tabla si no existe
-                    create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
-                    conn.execute(text(create_table_sql))
+                try:
+                    with repo.engine.begin() as conn:
+                        # Crear tabla si no existe
+                        create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df.drop(columns=['timestamp_ingestion']))
+                        # Guardar DDL en bitacora
+                        chunk_entry['ddl'] = create_table_sql
 
-                    # Añadir columnas faltantes si hay
-                    existing_cols = {r[0].lower() for r in conn.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
-                    for c in df.drop(columns=['timestamp_ingestion']).columns:
-                        if c.lower() not in existing_cols:
-                            print(f"[MB51] Añadiendo columna '{c}' a tabla destino (NVARCHAR(MAX))")
-                            conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+                        conn.execute(text(create_table_sql))
 
-                    # Cargar a tabla temporal y luego insertar (append)
-                    tmp_table = '#tmp_mb51_chunk'
-                    df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
-                    # Insert into main (append)
-                    conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+                        # Verificar que la tabla fue creada
+                        obj = conn.execute(text(f"SELECT OBJECT_ID('[{db_name}].[{table_schema}].[{table_name}]')")).fetchone()
+                        chunk_entry['create_ok'] = bool(obj and obj[0])
 
-                chunk_entry['ingesta'] = True
+                        # Añadir columnas faltantes si hay
+                        existing_cols = {r[0].lower() for r in conn.execute(text(f"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '{db_name}' AND TABLE_SCHEMA = '{table_schema}' AND TABLE_NAME = '{table_name}'")).fetchall()}
+                        for c in df.drop(columns=['timestamp_ingestion']).columns:
+                            if c.lower() not in existing_cols:
+                                print(f"[MB51] Añadiendo columna '{c}' a tabla destino (NVARCHAR(MAX))")
+                                conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{c}] NVARCHAR(MAX) NULL"))
+
+                        # Cargar a tabla temporal y luego insertar (append)
+                        tmp_table = '#tmp_mb51_chunk'
+                        df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
+                        # Insert into main (append)
+                        conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM {tmp_table}"))
+
+                    chunk_entry['ingesta'] = True
+                except Exception as e_inner:
+                    import traceback
+                    tb = traceback.format_exc()
+                    chunk_entry['error'] = tb
+                    chunk_entry['create_ok'] = False
+                    print(f"[MB51] [ERROR] Fallo creando/insertando tabla: {e_inner}\n{tb}")
+                    # No elevar para que la bitacora se guarde y podamos reprocesar solo ese tramo
+
 
             except Exception as e:
                 chunk_entry['error'] = str(e)
