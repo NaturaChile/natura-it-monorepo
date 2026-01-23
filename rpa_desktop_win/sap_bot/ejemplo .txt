@@ -1,0 +1,76 @@
+import os
+import subprocess
+import shutil
+from pathlib import Path
+
+# --- CONFIGURACIÓN ---
+
+# 1. DATOS DE CONEXIÓN (Igual que antes)
+servidor_ip = "10.156.145.28"
+recurso = "areas"
+sub_ruta_destino = r"Publico\RPA\Retail\Stock - Base Tiendas"
+
+dominio = "NATURA"
+usuario = "robotch_fin"
+clave = "Natura@bot2025/"
+user_full = f"{dominio}\\{usuario}"
+
+# 2. DEFINIR EL ARCHIVO A MOVER
+# Cambia esto por la ruta real en tu PC donde está el archivo hoy
+carpeta_origen_local = r"C:\Users\Ignacio Solar\Downloads"
+nombre_archivo = "prueba_robot.xlsx" # <--- EL NOMBRE DEL ARCHIVO
+
+# --- LÓGICA ---
+
+def mover_archivo_a_red():
+    # Construimos las rutas completas
+    ruta_base_conectar = fr"\\{servidor_ip}\{recurso}"
+    
+    # Ruta ORIGEN (Tu PC)
+    path_origen = Path(carpeta_origen_local) / nombre_archivo
+    
+    # Ruta DESTINO (Servidor)
+    path_destino_dir = Path(fr"\\{servidor_ip}\{recurso}\{sub_ruta_destino}")
+    path_destino_final = path_destino_dir / nombre_archivo
+
+    print(f"--- Preparando movimiento ---")
+    print(f"Origen: {path_origen}")
+    print(f"Destino: {path_destino_final}")
+
+    # 1. VERIFICAR QUE EL ARCHIVO EXISTA EN TU PC
+    if not path_origen.exists():
+        print(f"\n❌ ERROR: No encuentro el archivo '{nombre_archivo}' en '{carpeta_origen_local}'.")
+        return
+
+    # 2. AUTENTICACIÓN (NET USE)
+    print("\n--- Autenticando en el servidor ---")
+    subprocess.run(f'net use "{ruta_base_conectar}" /delete /y', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.run(f'net use "{ruta_base_conectar}" "{clave}" /user:"{user_full}"', shell=True, capture_output=True)
+
+    if proc.returncode == 0:
+        print("✅ Conexión establecida.")
+        
+        try:
+            # 3. MOVER EL ARCHIVO
+            # shutil.move(origen, destino) mueve el archivo.
+            # Si quieres COPIAR (y dejar el original en tu PC), usa shutil.copy(origen, destino)
+            
+            print("⏳ Moviendo archivo...")
+            shutil.move(str(path_origen), str(path_destino_final))
+            
+            print("\n🎉 ¡ÉXITO! Archivo movido correctamente.")
+            
+            # Verificación rápida
+            if path_destino_final.exists():
+                print("   (Verificado: El archivo ya aparece en la carpeta de destino)")
+
+        except PermissionError:
+            print("\n❌ Error de Permisos: No tienes permiso para escribir en esa carpeta de red.")
+        except Exception as e:
+            print(f"\n❌ Ocurrió un error al mover: {e}")
+            
+    else:
+        print("\n❌ Error al conectar con el servidor. Revisa credenciales o VPN.")
+
+if __name__ == "__main__":
+    mover_archivo_a_red()

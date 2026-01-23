@@ -4,8 +4,13 @@ import sys
 import time
 from pathlib import Path
 
-# Agregar el directorio padre al path para imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Agregar la carpeta del paquete (`rpa_desktop_win`) al path para imports (permite importar `sap_bot`)
+pkg_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(pkg_root))
+# También asegurar la raíz del repo está disponible para `core_shared` si se necesita
+repo_root = Path(__file__).resolve().parents[2]
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from sap_bot.services.launcher import launch_sap
 from sap_bot.services.sap_controller import SapController
