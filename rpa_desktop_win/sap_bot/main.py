@@ -4,8 +4,10 @@ import sys
 import time
 from pathlib import Path
 
-# Agregar el directorio padre al path para imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Agregar la raíz del repositorio al path para imports (permite importar `core_shared`)
+# main.py está en rpa_desktop_win/sap_bot -> necesitamos subir dos niveles para llegar a la raíz
+repo_root = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(repo_root))
 
 from sap_bot.services.launcher import launch_sap
 from sap_bot.services.sap_controller import SapController
