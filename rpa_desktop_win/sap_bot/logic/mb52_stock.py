@@ -156,7 +156,14 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         
         # Crear DataFrame
         df = pd.DataFrame(data_rows, columns=headers)
-        
+
+        # Renombrar columna 4 (index 3) a 'pb_a_nivel_almacen' si existe (enumerando desde 1)
+        if len(df.columns) >= 4:
+            old_col = df.columns[3]
+            if old_col != 'pb_a_nivel_almacen':
+                df.rename(columns={old_col: 'pb_a_nivel_almacen'}, inplace=True)
+                print(f"[MB52] Renombrada columna 4: '{old_col}' -> 'pb_a_nivel_almacen'")
+
         # 9. Procesar DataFrame y cargar en SQL
         print("[MB52] Paso 9: Procesando DataFrame para carga en SQL...")
 
