@@ -2,6 +2,19 @@ name: MB52 Login
 
 on:
   workflow_dispatch:
+  # Schedule to run at 08:00 and 19:00 Chile time (America/Santiago).
+  # GitHub Actions uses UTC for cron - to handle DST changes we schedule both offsets
+  # so at least one cron will match the desired local time year-round.
+  schedule:
+    - cron: '0 11 * * *'  # 08:00 Chile (UTC-3, typical summer time)
+    - cron: '0 12 * * *'  # 08:00 Chile (UTC-4, typical winter time)
+    - cron: '0 22 * * *'  # 19:00 Chile (UTC-3, typical summer time)
+    - cron: '0 23 * * *'  # 19:00 Chile (UTC-4, typical winter time)
+
+# Evita ejecuciones simultaneas del workflow MB52
+concurrency:
+  group: mb52
+  cancel-in-progress: false
 
 jobs:
   test-ui:
