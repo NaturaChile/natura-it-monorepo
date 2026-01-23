@@ -36,14 +36,18 @@ jobs:
       - name: Ejecutar SAP Bot MB52
         shell: powershell
         run: |
-          Write-Host "[INFO] Ejecutando diagnóstico SMB previo al bot..."
-          & "$env:PYTHON_EXE" ".\rpa_desktop_win\sap_bot\diagnostics\list_and_move_test.py"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "[ERROR] Diagnóstico SMB falló con código: $LASTEXITCODE - abortando ejecución del bot"
-            exit $LASTEXITCODE
+          Write-Host "[INFO] Verificando presencia de variables NET_* en entorno..."
+          $hasUser = -not [string]::IsNullOrEmpty($env:NET_USER)
+          $hasPass = -not [string]::IsNullOrEmpty($env:NET_PASS)
+          $hasDomain = -not [string]::IsNullOrEmpty($env:NET_DOMAIN)
+          Write-Host "NET_USER set? $hasUser"
+          Write-Host "NET_PASS set? $hasPass"
+          Write-Host "NET_DOMAIN set? $hasDomain"
+          if (-not ($hasUser -and $hasPass -and $hasDomain)) {
+            Write-Error "[ERROR] Faltan variables NET_* en el entorno del job. Abortando."
+            exit 1
           }
-
-          Write-Host "[INFO] Diagnóstico SMB OK. Continuando con ejecución del bot..."
+          Write-Host "[INFO] Variables NET_* presentes. Continuando..."
           # Intento: acceder a la unidad mapeada X: (con comillas por espacios)
           try {
             Set-Location "X:\\Publico\\RPA\\Retail\\Stock - Base Tiendas"

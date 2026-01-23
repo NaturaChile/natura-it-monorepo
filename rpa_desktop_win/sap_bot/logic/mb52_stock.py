@@ -4,6 +4,7 @@ import os
 import shutil
 from datetime import datetime
 import pandas as pd
+import io
 
 # Usar helper central para secretos/variables de entorno
 from core_shared.security.vault import Vault
@@ -177,81 +178,74 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
 
         ruta_completa = os.path.join(ruta_destino, nombre_archivo)
 
-        # Intentar guardar en la ruta de red; si falla, fallback a Descargas
-        fallback_dir = r"C:\Users\robotch_fin\Downloads"
-        saved_path = None
+        # NUEVO: autenticación con `net use` y escritura directa desde memoria al UNC
         try:
-            print(f"[MB52] Verificando acceso a: {ruta_destino}")
-            if not os.path.exists(ruta_destino):
-                print(f"[MB52] Carpeta no existe, intentando crear: {ruta_destino}")
-                os.makedirs(ruta_destino, exist_ok=True)
+            print(f"[MB52] Preparando escritura directa a UNC: {ruta_completa}")
 
-            df.to_excel(ruta_completa, index=False, engine='openpyxl')
-            saved_path = ruta_completa
-            print(f"[MB52] Archivo guardado en ruta de red: {ruta_completa}")
-        except Exception as e:
-            print(f"[MB52] [WARN] No se pudo guardar en ruta de red: {str(e)}")
+            # Extraer UNC raíz (\\server\\share) de ruta_destino si es UNC
+            def unc_root_from_path(p):
+                p = p.replace('/', '\\')
+                if p.startswith('\\'):
+                    parts = p.strip('\\').split('\\')
+                    if len(parts) >= 2:
+                        return f"\\\\{parts[0]}\\{parts[1]}"
+                return None
+
+            unc_root = unc_root_from_path(ruta_destino)
+
+            # Credenciales desde Vault (o env)
+            net_domain = Vault.get_secret('NET_DOMAIN') or os.getenv('DOMAIN')
+            net_user = Vault.get_secret('NET_USER') or os.getenv('USER_NET')
+            net_pass = Vault.get_secret('NET_PASS') or os.getenv('NET_PASSWORD')
+
+            if unc_root and net_user and net_pass:
+                user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
+                print(f"[MB52] Ejecutando net use {unc_root} con {user_full}")
+                import subprocess
+                result = subprocess.run(['net', 'use', unc_root, net_pass, f'/user:{user_full}'], capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise Exception(f"net use fallo: {result.stderr.strip()}")
+                print(f"[MB52] net use OK: {result.stdout.strip()}")
+            else:
+                raise Exception('No hay credenciales NET disponibles para autenticacion SBC/SMB')
+
+            # Escribir DataFrame a BytesIO en memoria
+            bio = io.BytesIO()
+            with pd.ExcelWriter(bio, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            bio.seek(0)
+
+            # Asegurarse de que el directorio existe en la ruta remota
             try:
-                print(f"[MB52] Intentando fallback a Descargas: {fallback_dir}")
-                os.makedirs(fallback_dir, exist_ok=True)
-                fallback_path = os.path.join(fallback_dir, nombre_archivo)
-                df.to_excel(fallback_path, index=False, engine='openpyxl')
-                saved_path = fallback_path
-                print(f"[MB52] Archivo guardado en Descargas: {fallback_path}")
+                os.makedirs(ruta_destino, exist_ok=True)
+            except Exception:
+                # si no se puede crear directorio remoto, es posible que no haga falta
+                pass
 
-                # Intentar mover desde Descargas a la ruta de red autenticando con `net use` y moviendo con shutil
-                try:
-                    import subprocess
+            # Escribir bytes directo al UNC
+            with open(ruta_completa, 'wb') as f:
+                f.write(bio.read())
 
-                    # Extraer UNC raíz (\\server\share) de ruta_destino si es UNC
-                    def unc_root_from_path(p):
-                        p = p.replace('/', '\\')
-                        if p.startswith('\\\\'):
-                            parts = p.strip('\\').split('\\')
-                            if len(parts) >= 2:
-                                return f"\\\\{parts[0]}\\{parts[1]}"
-                        return None
-
-                    unc_root = unc_root_from_path(ruta_destino)
-
-                    # Preferir credenciales desde el helper central `Vault` (usa env internamente)
-                    net_domain = Vault.get_secret('NET_DOMAIN') or os.getenv('DOMAIN')
-                    net_user = Vault.get_secret('NET_USER') or os.getenv('USER_NET')
-                    net_pass = Vault.get_secret('NET_PASS') or os.getenv('NET_PASSWORD')
-
-                    if unc_root and net_user and net_pass:
-                        user_full = f"{net_domain}\\{net_user}" if net_domain else net_user
-                        print(f"[MB52] Intentando `net use` a {unc_root} con usuario {user_full}")
-                        result = subprocess.run(['net', 'use', unc_root, net_pass, f'/user:{user_full}'], capture_output=True, text=True)
-                        if result.returncode != 0:
-                            print(f"[MB52] [WARN] net use falló: {result.stderr.strip()}")
-                        else:
-                            print(f"[MB52] net use OK: {result.stdout.strip()}")
+            saved_path = ruta_completa
+            print(f"[MB52] [SUCCESS] Archivo escrito directamente a UNC: {ruta_completa}")
+            # Limpiar mapping `net use` (desconectar) para no dejar sesiones persistentes
+            try:
+                import subprocess
+                if unc_root:
+                    print(f"[MB52] Intentando limpiar mapping: net use {unc_root} /delete")
+                    delres = subprocess.run(['net', 'use', unc_root, '/delete'], capture_output=True, text=True)
+                    if delres.returncode == 0:
+                        print("[MB52] net use delete OK")
                     else:
-                        print("[MB52] No hay credenciales NET en environment; intentando mover sin autenticar (puede fallar)")
-
-                    dest_path = os.path.join(ruta_destino, nombre_archivo)
-                    print(f"[MB52] Moviendo archivo {fallback_path} -> {dest_path}")
-                    # Asegurarse de que el directorio destino existe
-                    try:
-                        os.makedirs(ruta_destino, exist_ok=True)
-                    except Exception:
-                        # si no se puede crear, se intentará mover de todas formas
-                        pass
-
-                    shutil.move(fallback_path, dest_path)
-                    if os.path.exists(dest_path):
-                        saved_path = dest_path
-                        print(f"[MB52] [SUCCESS] Archivo movido a ruta de red: {dest_path}")
-                    else:
-                        print(f"[MB52] [WARN] Move no lanzó excepción pero el archivo no existe en destino: {dest_path}")
-                except Exception as me:
-                    print(f"[MB52] [WARN] Error moviendo con net/shutil: {str(me)}")
-                    print(f"[MB52] [WARN] Conservando archivo en Descargas: {fallback_path}")
-
-            except Exception as e2:
-                print(f"[MB52] [ERROR] Fallback a Descargas fallo: {str(e2)}")
-                raise
+                        if delres.stdout:
+                            print(f"[MB52] net use delete stdout: {delres.stdout.strip()}")
+                        if delres.stderr:
+                            print(f"[MB52] net use delete stderr: {delres.stderr.strip()}")
+            except Exception as e:
+                print(f"[MB52] [WARN] No se pudo limpiar mapping: {e}")
+        except Exception as e:
+            print(f"[MB52] [ERROR] Error escribiendo directamente a UNC: {str(e)}")
+            raise
 
         # 10. Verificar que el archivo se guardo correctamente
         print("[MB52] Paso 10: Verificando archivo guardado...")
