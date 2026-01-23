@@ -324,7 +324,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         repo = SqlRepository(host=db_host, db=db_name, user=db_user, password=db_pw)
 
         # Cargar en tabla temporal y luego reemplazar tabla destino en transaccion
-        table_schema = 'retail'
+        table_schema = 'Retail'
         table_name = 'stock_tienda'
 
         try:
@@ -335,7 +335,7 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
                 df.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
 
                 # Verificar filas cargadas
-                r = conn.execute("SELECT COUNT(1) FROM #tmp_stock").fetchone()[0]
+                r = conn.execute(text("SELECT COUNT(1) FROM #tmp_stock")).fetchone()[0]
                 print(f"[MB52] Filas en temp: {r}")
 
                 # Reemplazar tabla destino (con historico)
@@ -379,8 +379,8 @@ END
                 conn.execute(text(insert_hist_sql), {'ingest_ts': ingest_ts})
 
                 # 3) Reemplazar la tabla destino con los datos nuevos
-                conn.execute(f"DELETE FROM [{db_name}].[{table_schema}].[{table_name}]")
-                conn.execute(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM #tmp_stock")
+                conn.execute(text(f"DELETE FROM [{db_name}].[{table_schema}].[{table_name}]") )
+                conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] SELECT * FROM #tmp_stock"))
 
             print('[MB52] [SUCCESS] Ingesta completa y consistente. Tabla reemplazada.')
             rows_ingested = int(r)
