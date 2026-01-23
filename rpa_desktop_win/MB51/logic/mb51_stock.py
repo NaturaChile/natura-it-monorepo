@@ -48,7 +48,12 @@ def _parse_clipboard(clipboard_data: str) -> pd.DataFrame:
         if s is None:
             return s
         t = str(s).strip()
-        # Detect patterns like '9.911.196-' or '1.732' or '1.234,56-'
+        # If it matches a DATE or TIME pattern, keep as-is (don't coerce to number)
+        date_re = re.compile(r'^\d{2}[\./-]\d{2}[\./-]\d{4}$')
+        time_re = re.compile(r'^\d{2}:\d{2}(:\d{2})?$')
+        if date_re.match(t) or time_re.match(t):
+            return t
+        # Detect numeric patterns like '9.911.196-' or '1.732' or '1.234,56-'
         if re.fullmatch(r"[\d\.,]+-?", t):
             sign = -1 if t.endswith('-') else 1
             t_clean = t.rstrip('-')
@@ -501,6 +506,20 @@ def ejecutar_mb51(session,
                         # Seleccionar solo las columnas que vamos a insertar (en el orden db_cols)
                         df_to_insert = df_to_insert[[c for c in db_cols]]
 
+                        # Coerciones por tipo: convertir fechas/decimales/ints según lo inferido para evitar operand type clash
+                        type_map = {c: _infer_sql_type(df_for_schema[c]) for c in df_for_schema.columns}
+                        for c in df_to_insert.columns:
+                            t = type_map.get(c, '').upper()
+                            if t == 'DATE':
+                                # Convertir formatos comunes: dd.mm.yyyy, dd/mm/yyyy -> datetime
+                                df_to_insert[c] = pd.to_datetime(df_to_insert[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
+                            elif t.startswith('NUMERIC') or t.startswith('DECIMAL'):
+                                df_to_insert[c] = pd.to_numeric(df_to_insert[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
+                            elif t in ('INT', 'BIGINT'):
+                                df_to_insert[c] = pd.to_numeric(df_to_insert[c].astype(str).str.replace('.', '').str.replace(',', ''), errors='coerce')
+                            else:
+                                df_to_insert[c] = df_to_insert[c].astype(str)
+
                         # Cargar a tabla temporal y luego insertar (append)
                         tmp_table = '#tmp_mb51_chunk'
                         df_to_insert.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
@@ -539,6 +558,19 @@ def ejecutar_mb51(session,
                             df_to_insert_fb = df.copy()
                             df_to_insert_fb = df_to_insert_fb.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
                             df_to_insert_fb = df_to_insert_fb[[c for c in db_cols]]
+
+                            # Coerciones por tipo antes del fallback insert
+                            type_map_fb = {c: _infer_sql_type(df_for_schema[c]) for c in df_for_schema.columns}
+                            for c in df_to_insert_fb.columns:
+                                t = type_map_fb.get(c, '').upper()
+                                if t == 'DATE':
+                                    df_to_insert_fb[c] = pd.to_datetime(df_to_insert_fb[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
+                                elif t.startswith('NUMERIC') or t.startswith('DECIMAL'):
+                                    df_to_insert_fb[c] = pd.to_numeric(df_to_insert_fb[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
+                                elif t in ('INT', 'BIGINT'):
+                                    df_to_insert_fb[c] = pd.to_numeric(df_to_insert_fb[c].astype(str).str.replace('.', '').str.replace(',', ''), errors='coerce')
+                                else:
+                                    df_to_insert_fb[c] = df_to_insert_fb[c].astype(str)
 
                             # Cargar a tabla temporal y luego insertar
                             tmp_table = '#tmp_mb51_chunk'
