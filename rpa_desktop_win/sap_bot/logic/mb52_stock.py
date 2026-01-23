@@ -269,11 +269,38 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         import urllib
 
         class SqlRepository:
-            def __init__(self, host, db, user=None, password=None, driver="ODBC Driver 17 for SQL Server"):
+            def __init__(self, host, db, user=None, password=None, driver=None):
+                # Detectar driver disponible si no se especifica
+                preferred = [
+                    'ODBC Driver 18 for SQL Server',
+                    'ODBC Driver 17 for SQL Server',
+                    'ODBC Driver 13 for SQL Server',
+                    'SQL Server Native Client 11.0',
+                    'SQL Server'
+                ]
+                selected_driver = driver
+                try:
+                    import pyodbc
+                    available = pyodbc.drivers()
+                    # Buscar el primer preferido que esté disponible
+                    if not selected_driver:
+                        for d in preferred:
+                            if d in available:
+                                selected_driver = d
+                                break
+                    if not selected_driver:
+                        # No se encontró driver preferido
+                        raise RuntimeError(f"No se encontró un driver ODBC compatible. Drivers instalados: {available}")
+                except Exception as e:
+                    # Si pyodbc no está disponible o no hay drivers, fallamos con mensaje claro
+                    raise RuntimeError(f"Error detectando drivers ODBC: {e}")
+
+                print(f"[MB52] [INFO] Usando driver ODBC: {selected_driver}")
+
                 if user and password:
                     print(f"[MB52] [INFO] Conectando a SQL Server {host} con usuario {user}")
                     connection_string = (
-                        f"DRIVER={{{driver}}};"
+                        f"DRIVER={{{selected_driver}}};"
                         f"SERVER={host};"
                         f"DATABASE={db};"
                         f"UID={user};"
@@ -283,13 +310,16 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
                 else:
                     print(f"[MB52] [INFO] Conectando a SQL Server {host} usando Windows Auth")
                     connection_string = (
-                        f"DRIVER={{{driver}}};"
+                        f"DRIVER={{{selected_driver}}};"
                         f"SERVER={host};"
                         f"DATABASE={db};"
                         "Trusted_Connection=yes;"
                     )
                 params = urllib.parse.quote_plus(connection_string)
-                self.engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+                try:
+                    self.engine = create_engine(f"mssql+pyodbc:///?odbc_connect={params}", fast_executemany=True)
+                except Exception as e:
+                    raise RuntimeError(f"Error creando engine SQLAlchemy/pyodbc: {e}\nAsegure que el driver ODBC '{selected_driver}' esté instalado en el runner y que 'pyodbc' esté disponible en el entorno Python.")
 
         repo = SqlRepository(host=db_host, db=db_name, user=db_user, password=db_pw)
 
