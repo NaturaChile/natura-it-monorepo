@@ -23,8 +23,11 @@ jobs:
       NET_PASS: ${{ secrets.NET_PASS }}
       NET_DOMAIN: ${{ vars.NET_DOMAIN }}
       # Credenciales SQL:
-      # - `SQL2022_HOST` y `SQL2022_USER` deben estar definidas como Environment Variables en el Environment `SAP_Jorge` (no son secretos)
+      # - `SQL2022_HOST` y `SQL2022_USER` preferentemente están en el Environment `SAP_Jorge` (no son secretos)
+      # - Si no están en el Environment, podemos leerlos desde Repository Variables (vars.) como fallback
       # - `SQL2022_PW` es un secret y se mantiene como tal
+      SQL2022_HOST: ${{ vars.SQL2022_HOST }}
+      SQL2022_USER: ${{ vars.SQL2022_USER }}
       SQL2022_PW: ${{ secrets.SQL2022_PW }}
       TRANSACTION: 
       # Parametros especificos de MB52
