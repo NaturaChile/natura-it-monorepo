@@ -171,7 +171,6 @@ def ejecutar_mb52(session, centro: str = "4100", almacen: str = "4161", variante
         ]
 
         from sqlalchemy import BigInteger, Text, Numeric, text
-        from datetime import datetime
 
         STOCK_DTYPE = {
             'material': BigInteger(),
