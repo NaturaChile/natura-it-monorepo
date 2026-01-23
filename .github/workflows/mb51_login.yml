@@ -2,12 +2,7 @@ name: MB51 Login
 
 on:
   workflow_dispatch:
-  # Schedule to run at 08:00 and 19:00 Chile time (America/Santiago).
-  schedule:
-    - cron: '0 11 * * *'  # 08:00 Chile (UTC-3 typical)
-    - cron: '0 12 * * *'  # 08:00 Chile (UTC-4 typical)
-    - cron: '0 22 * * *'  # 19:00 Chile (UTC-3 typical)
-    - cron: '0 23 * * *'  # 19:00 Chile (UTC-4 typical)
+  # NOTE: schedule removed — MB51 will be executed manually via workflow_dispatch as requested.
 
 # Evita ejecuciones simultaneas del workflow MB51
 concurrency:
