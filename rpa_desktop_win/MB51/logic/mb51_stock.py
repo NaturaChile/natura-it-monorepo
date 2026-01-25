@@ -193,14 +193,27 @@ def _infer_sql_type(series: pd.Series) -> str:
 
     date_re = re.compile(r'^\d{2}[\./-]\d{2}[\./-]\d{4}$')
     time_re = re.compile(r'^\d{2}:\d{2}(:\d{2})?$')
-    int_like = 0
-    float_like = 0
-    date_like = 0
+
+    # If any sample contains alphabetic characters (like 'YR1'), prefer string to avoid casting loss
+    alpha_count = samples.str.contains(r'[A-Za-z]', regex=True).sum()
     max_len = 0
-    max_int = 0
     for v in samples.head(200):
         vv = str(v)
         max_len = max(max_len, len(vv))
+
+    if alpha_count > 0:
+        if max_len <= 50:
+            return f'NVARCHAR({max_len + 10})'
+        if max_len <= 4000:
+            return f'NVARCHAR({max_len + 100})'
+        return 'NVARCHAR(MAX)'
+
+    int_like = 0
+    float_like = 0
+    date_like = 0
+    max_int = 0
+    for v in samples.head(200):
+        vv = str(v)
         if date_re.match(vv):
             date_like += 1
             continue
@@ -221,9 +234,7 @@ def _infer_sql_type(series: pd.Series) -> str:
         elif re.fullmatch(r'-?\d+\.\d+$', t):
             float_like += 1
 
-    total = len(samples.head(200))
-    if total == 0:
-        return 'NVARCHAR(255)'
+    total = max(1, len(samples.head(200)))
     if date_like >= 0.6 * total:
         return 'DATE'
     if float_like >= 0.6 * total:
@@ -582,9 +593,28 @@ def ejecutar_mb51(session,
 
                     # Build df_for_schema using canonical final_cols in that order
                     df_for_schema = pd.DataFrame({c: df.get(raw) if raw else None for (raw,c) in [(m['original'], m['db']) for m in columns_map]})
-                    # Ensure types are pandas-friendly (strings for now — coercions happen later)
+                    # Ensure types are pandas-friendly (objects) and fill missing series with None-series of correct length
                     for c in df_for_schema.columns:
-                        df_for_schema[c] = df_for_schema[c].astype(object)
+                        if df_for_schema[c] is None:
+                            df_for_schema[c] = pd.Series([None] * len(df), dtype=object)
+                        else:
+                            df_for_schema[c] = df_for_schema[c].astype(object)
+
+                    # Add timestamp_ingestion column with current datetime for all rows
+                    if 'timestamp_ingestion' not in df_for_schema.columns:
+                        df_for_schema['timestamp_ingestion'] = pd.Series([datetime.now()] * len(df))
+                    else:
+                        # ensure it's populated
+                        df_for_schema['timestamp_ingestion'] = pd.to_datetime(df_for_schema['timestamp_ingestion'], errors='coerce')
+
+                    # Define canonical types (canonical schema provided by user)
+                    canonical_types = {
+                        'Ce.': 'STRING', 'Alm.': 'STRING', 'CMv': 'STRING', 'Razión': 'STRING',
+                        'Registrado': 'DATE', 'Hora': 'STRING', 'Doc.mat.': 'STRING', 'Usuario': 'STRING',
+                        'Fecha doc.': 'DATE', 'Material': 'STRING', 'Texto breve de material': 'STRING',
+                        'Lote': 'STRING', 'Cantidad': 'NUMERIC', 'Impte.ML': 'NUMERIC', 'Txt.cab.doc.': 'STRING',
+                        'Pedido': 'STRING', 'Proveedor': 'STRING', 'Txt clase-mov.': 'STRING', 'timestamp_ingestion': 'DATETIME'
+                    }
 
                     # Use canonical column list for creation and insertion
                     db_cols = list(df_for_schema.columns)
@@ -618,19 +648,22 @@ def ejecutar_mb51(session,
                         # Seleccionar por orden db_cols para consistencia
                         df_to_insert = df_to_insert[[c for c in db_cols]]
 
-                        # Coerciones por tipo: convertir fechas/decimales/ints según lo inferido para evitar operand type clash
-                        type_map = {c: _infer_sql_type(df_for_schema[c]) for c in df_for_schema.columns}
+                        # Coerciones por tipo según el esquema canónico (no inferir)
+                        type_map = {c: canonical_types.get(c, 'STRING') for c in df_for_schema.columns}
                         for c in df_to_insert.columns:
                             t = type_map.get(c, '').upper()
-                            if t == 'DATE':
-                                # Convertir formatos comunes: dd.mm.yyyy, dd/mm/yyyy -> datetime
+                            if t == 'DATETIME' or t.startswith('DATETIME') or t == 'DATETIME2' or c == 'timestamp_ingestion':
+                                df_to_insert[c] = pd.to_datetime(df_to_insert[c], errors='coerce')
+                            elif t == 'DATE':
                                 df_to_insert[c] = pd.to_datetime(df_to_insert[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
-                            elif t.startswith('NUMERIC') or t.startswith('DECIMAL'):
+                            elif t == 'NUMERIC':
                                 df_to_insert[c] = pd.to_numeric(df_to_insert[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
-                            elif t in ('INT', 'BIGINT'):
+                            elif t == 'INT' or t == 'BIGINT':
                                 df_to_insert[c] = pd.to_numeric(df_to_insert[c].astype(str).str.replace('.', '').str.replace(',', ''), errors='coerce')
                             else:
-                                df_to_insert[c] = df_to_insert[c].astype(str)
+                                # Keep original strings (preserve values like 'YR1' in CMv)
+                                df_to_insert[c] = df_to_insert[c].astype(object)
+
 
                         # Cargar a tabla temporal y luego insertar (append)
                         tmp_table = '#tmp_mb51_chunk'
@@ -673,18 +706,20 @@ def ejecutar_mb51(session,
                                     df_to_insert_fb[c] = pd.Series([None]*len(df), dtype=object)
                             df_to_insert_fb = df_to_insert_fb[[c for c in db_cols]]
 
-                            # Coerciones por tipo antes del fallback insert
-                            type_map_fb = {c: _infer_sql_type(df_for_schema[c]) for c in df_for_schema.columns}
+                            # Coerciones por tipo antes del fallback insert (usando esquema canonico)
+                            type_map_fb = {c: canonical_types.get(c, 'STRING') for c in df_for_schema.columns}
                             for c in df_to_insert_fb.columns:
                                 t = type_map_fb.get(c, '').upper()
-                                if t == 'DATE':
+                                if t == 'DATETIME' or t.startswith('DATETIME') or t == 'DATETIME2' or c == 'timestamp_ingestion':
+                                    df_to_insert_fb[c] = pd.to_datetime(df_to_insert_fb[c], errors='coerce')
+                                elif t == 'DATE':
                                     df_to_insert_fb[c] = pd.to_datetime(df_to_insert_fb[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
-                                elif t.startswith('NUMERIC') or t.startswith('DECIMAL'):
+                                elif t == 'NUMERIC':
                                     df_to_insert_fb[c] = pd.to_numeric(df_to_insert_fb[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
-                                elif t in ('INT', 'BIGINT'):
+                                elif t == 'INT' or t == 'BIGINT':
                                     df_to_insert_fb[c] = pd.to_numeric(df_to_insert_fb[c].astype(str).str.replace('.', '').str.replace(',', ''), errors='coerce')
                                 else:
-                                    df_to_insert_fb[c] = df_to_insert_fb[c].astype(str)
+                                    df_to_insert_fb[c] = df_to_insert_fb[c].astype(object)
 
                             # Cargar a tabla temporal y luego insertar
                             tmp_table = '#tmp_mb51_chunk'
