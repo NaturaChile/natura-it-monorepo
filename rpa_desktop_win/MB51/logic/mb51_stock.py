@@ -23,7 +23,7 @@ DEFAULT_LGORT_LOW = "4147"
 DEFAULT_LGORT_HIGH = "4195"
 DEFAULT_VARIANTE = "BOTMB51"
 CHUNK_DAYS = 15
-HISTORIC_FROM = date(2026, 1, 22)
+HISTORIC_FROM = date(2025, 1, 15)
 
 
 def _safe_str(s):
@@ -115,13 +115,22 @@ def _parse_clipboard(clipboard_data: str) -> pd.DataFrame:
     df = pd.DataFrame(rows, columns=headers)
 
     # Normalizar columnas numericas detectadas: si la mayoria de valores se parsean como numeros, convertir
+    # Columns that must remain TEXT regardless of content
+    non_numeric_force = {'Razión', 'Txt.cab.doc.', 'Pedido', 'Proveedor'}
     for col in df.columns:
         non_null = df[col].dropna().astype(str)
         if len(non_null) == 0:
             continue
-        numeric_like = non_null.str.match(r"^-?[0-9]+(\.[0-9]+)?$")
+        # If column is explicitly forced to non-numeric, skip numeric coercion
+        if col in non_numeric_force:
+            continue
+        numeric_like = non_null.str.match(r"^-?[0-9]+([.,][0-9]+)?$")
         if numeric_like.sum() >= max(1, int(0.6 * len(non_null))):
-            df[col] = pd.to_numeric(df[col].astype(str).replace('', None), errors='coerce')
+            # Normalize common thousand/decimal formats before coercion
+            s = df[col].astype(str).str.strip()
+            s = s.str.rstrip('-')
+            s = s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df[col] = pd.to_numeric(s.replace('', None), errors='coerce')
 
     return df
 
@@ -173,16 +182,54 @@ def _clean_clipboard_df(df: pd.DataFrame) -> pd.DataFrame:
     num_cols = ['Cantidad', 'Impte.ML']
     for c in num_cols:
         if c in df.columns:
-            s = df[c].astype(str).str.strip()
-            s = s.str.rstrip('-')
+            s_raw = df[c].astype(str).str.strip()
+            s = s_raw.str.rstrip('-')
             s = s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-            df[c] = pd.to_numeric(s, errors='coerce')
+            num = pd.to_numeric(s.replace('', None), errors='coerce')
+            # Fallback: if parsing failed but original contains digits, try extracting numeric fragments
+            mask_na = num.isna() & s_raw.str.contains(r'\d', regex=True)
+            if mask_na.any():
+                import re as _re
+                def _extract_numeric(x):
+                    if not _re.search(r'\d', x):
+                        return None
+                    t = _re.sub(r'[^\d\-,\.]', '', x)
+                    sign = -1 if t.endswith('-') else 1
+                    t = t.rstrip('-')
+                    t = t.replace('.', '')
+                    t = t.replace(',', '.')
+                    try:
+                        return float(t) * sign
+                    except Exception:
+                        m = _re.search(r'[\d]+[,.]?\d*', t)
+                        return float(m.group(0).replace(',', '.')) if m else None
+                num_fallback = s_raw[mask_na].apply(lambda x: _extract_numeric(str(x)))
+                num.loc[mask_na] = num_fallback
+            df[c] = num
 
     # Forzar strings en el resto
     preserve = set(date_cols + num_cols + ['timestamp_ingestion'])
     for c in df.columns:
         if c not in preserve:
             df[c] = df[c].where(df[c].notna(), None)
+
+    # 'Razión' debe ser siempre texto; conservar valores aunque parezcan numericos
+    if 'Razión' in df.columns:
+        df['Razión'] = df['Razión'].astype(str).str.strip().replace({'': None})
+
+    # 'Txt.cab.doc.', 'Pedido', 'Proveedor' sin letras ni numeros -> null
+    for tcol in ['Txt.cab.doc.', 'Pedido', 'Proveedor']:
+        if tcol in df.columns:
+            def _maybe_null_text(x):
+                if x is None:
+                    return None
+                s = str(x).strip()
+                if s == '':
+                    return None
+                if re.search(r'[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]', s) is None:
+                    return None
+                return s
+            df[tcol] = df[tcol].apply(_maybe_null_text)
 
     return df
 
