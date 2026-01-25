@@ -13,6 +13,7 @@ from datetime import datetime, date, timedelta
 import time
 import os
 import pandas as pd
+import uuid
 
 from core_shared.security.vault import Vault
 
@@ -162,8 +163,11 @@ def _clean_clipboard_df(df: pd.DataFrame) -> pd.DataFrame:
     date_cols = ['Registrado', 'Fecha doc.']
     for c in date_cols:
         if c in df.columns:
-            # convertimos formatos dd.mm.yyyy o dd/mm/yyyy
-            df[c] = pd.to_datetime(df[c].str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce').dt.date
+            # convertimos formatos dd.mm.yyyy o dd/mm/yyyy y también yyyy-mm-dd (dos intentos explícitos para evitar warnings)
+            tmp = df[c].astype(str).str.replace('.', '-', regex=False).str.replace('/', '-', regex=False)
+            res = pd.to_datetime(tmp, format='%d-%m-%Y', errors='coerce')
+            res2 = pd.to_datetime(tmp, format='%Y-%m-%d', errors='coerce')
+            df[c] = res.fillna(res2).dt.date
 
     # Numericas: quitar separadores de miles y normalizar decimal
     num_cols = ['Cantidad', 'Impte.ML']
@@ -655,7 +659,10 @@ def ejecutar_mb51(session,
                             if t == 'DATETIME' or t.startswith('DATETIME') or t == 'DATETIME2' or c == 'timestamp_ingestion':
                                 df_to_insert[c] = pd.to_datetime(df_to_insert[c], errors='coerce')
                             elif t == 'DATE':
-                                df_to_insert[c] = pd.to_datetime(df_to_insert[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
+                                tmp = df_to_insert[c].astype(str).str.replace('.', '-', regex=False).str.replace('/', '-', regex=False)
+                                res = pd.to_datetime(tmp, format='%d-%m-%Y', errors='coerce')
+                                res2 = pd.to_datetime(tmp, format='%Y-%m-%d', errors='coerce')
+                                df_to_insert[c] = res.fillna(res2)
                             elif t == 'NUMERIC':
                                 df_to_insert[c] = pd.to_numeric(df_to_insert[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
                             elif t == 'INT' or t == 'BIGINT':
@@ -665,12 +672,19 @@ def ejecutar_mb51(session,
                                 df_to_insert[c] = df_to_insert[c].astype(object)
 
 
-                        # Cargar a tabla temporal y luego insertar (append)
-                        tmp_table = '#tmp_mb51_chunk'
-                        df_to_insert.to_sql(tmp_table, con=conn, if_exists='replace', index=False)
+                        # Cargar a tabla de staging (única por corrida) y luego insertar (append)
+                        short = uuid.uuid4().hex[:8]
+                        tmp_table = f"tmp_mb51_chunk_{short}"
+                        print(f"[MB51] [DEBUG] Creando staging table {table_schema}.{tmp_table} ...")
+                        df_to_insert.to_sql(tmp_table, con=conn, if_exists='replace', index=False, schema=table_schema)
                         # Insert into main con lista explícita de columnas para evitar mismatch
                         col_list = ', '.join([f'[{c}]' for c in db_cols])
-                        conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list}) SELECT {col_list} FROM {tmp_table}"))
+                        conn.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list}) SELECT {col_list} FROM [{db_name}].[{table_schema}].[{tmp_table}]"))
+                        # Cleanup staging table
+                        try:
+                            conn.execute(text(f"DROP TABLE [{db_name}].[{table_schema}].[{tmp_table}]") )
+                        except Exception:
+                            pass
 
                     chunk_entry['ingesta'] = True
                 except Exception as e_inner:
@@ -713,7 +727,10 @@ def ejecutar_mb51(session,
                                 if t == 'DATETIME' or t.startswith('DATETIME') or t == 'DATETIME2' or c == 'timestamp_ingestion':
                                     df_to_insert_fb[c] = pd.to_datetime(df_to_insert_fb[c], errors='coerce')
                                 elif t == 'DATE':
-                                    df_to_insert_fb[c] = pd.to_datetime(df_to_insert_fb[c].astype(str).str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce')
+                                    tmp = df_to_insert_fb[c].astype(str).str.replace('.', '-', regex=False).str.replace('/', '-', regex=False)
+                                    res = pd.to_datetime(tmp, format='%d-%m-%Y', errors='coerce')
+                                    res2 = pd.to_datetime(tmp, format='%Y-%m-%d', errors='coerce')
+                                    df_to_insert_fb[c] = res.fillna(res2)
                                 elif t == 'NUMERIC':
                                     df_to_insert_fb[c] = pd.to_numeric(df_to_insert_fb[c].astype(str).str.replace('.', '').str.replace(',', '.'), errors='coerce')
                                 elif t == 'INT' or t == 'BIGINT':
@@ -721,11 +738,17 @@ def ejecutar_mb51(session,
                                 else:
                                     df_to_insert_fb[c] = df_to_insert_fb[c].astype(object)
 
-                            # Cargar a tabla temporal y luego insertar
-                            tmp_table = '#tmp_mb51_chunk'
-                            df_to_insert_fb.to_sql(tmp_table, con=conn2, if_exists='replace', index=False)
+                            # Cargar a tabla de staging (única por corrida) y luego insertar
+                            short_fb = uuid.uuid4().hex[:8]
+                            tmp_table = f"tmp_mb51_chunk_{short_fb}"
+                            print(f"[MB51] [DEBUG] Creando staging table {table_schema}.{tmp_table} (fallback) ...")
+                            df_to_insert_fb.to_sql(tmp_table, con=conn2, if_exists='replace', index=False, schema=table_schema)
                             col_list_fb = ', '.join([f'[{c}]' for c in db_cols])
-                            conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list_fb}) SELECT {col_list_fb} FROM {tmp_table}"))
+                            conn2.execute(text(f"INSERT INTO [{db_name}].[{table_schema}].[{table_name}] ({col_list_fb}) SELECT {col_list_fb} FROM [{db_name}].[{table_schema}].[{tmp_table}]") )
+                            try:
+                                conn2.execute(text(f"DROP TABLE [{db_name}].[{table_schema}].[{tmp_table}]") )
+                            except Exception:
+                                pass
 
                         chunk_entry['ingesta'] = True
                         chunk_entry['create_ok'] = True
