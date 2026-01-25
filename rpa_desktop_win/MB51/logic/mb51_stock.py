@@ -138,6 +138,51 @@ def _generate_date_ranges(start: date, end: date, delta_days: int = CHUNK_DAYS):
         cur = nxt + timedelta(days=1)
 
 
+def _clean_clipboard_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Limpia y castea el DataFrame bruto extraído del portapapeles.
+    Basado en el ejemplo Polars del repo, adaptado a pandas.
+
+    Reglas principales:
+    - Quitar espacios y normalizar strings.
+    - Parsear fechas 'Registrado' y 'Fecha doc.' con dayfirst True.
+    - 'Cantidad' y 'Impte.ML' -> NUMERIC (float) limpiando miles (puntos) y coma decimal.
+    - Mantener otras columnas como string.
+    """
+    import unicodedata
+
+    # Normalizar columnas (quitar espacios sobrantes en nombres)
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Strip en string columns
+    for c in df.columns:
+        df[c] = df[c].astype(str).str.strip()
+
+    # Parsear fechas
+    date_cols = ['Registrado', 'Fecha doc.']
+    for c in date_cols:
+        if c in df.columns:
+            # convertimos formatos dd.mm.yyyy o dd/mm/yyyy
+            df[c] = pd.to_datetime(df[c].str.replace('.', '-').str.replace('/', '-'), dayfirst=True, errors='coerce').dt.date
+
+    # Numericas: quitar separadores de miles y normalizar decimal
+    num_cols = ['Cantidad', 'Impte.ML']
+    for c in num_cols:
+        if c in df.columns:
+            s = df[c].astype(str).str.strip()
+            s = s.str.rstrip('-')
+            s = s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
+            df[c] = pd.to_numeric(s, errors='coerce')
+
+    # Forzar strings en el resto
+    preserve = set(date_cols + num_cols + ['timestamp_ingestion'])
+    for c in df.columns:
+        if c not in preserve:
+            df[c] = df[c].where(df[c].notna(), None)
+
+    return df
+
+
 # --- Helpers para inferir esquema y DDL (deben estar definidos antes del bucle principal) ---
 import re
 
@@ -431,7 +476,10 @@ def ejecutar_mb51(session,
                 'error': None
             }
             try:
-                df = _parse_clipboard(clipboard_data)
+                            df = _parse_clipboard(clipboard_data)
+                # Aplicar limpieza robusta basada en el ejemplo Polars del repo
+                df = _clean_clipboard_df(df)
+
                 chunk_entry['download_sap'] = True
                 chunk_entry['rows'] = len(df)
                 print(f"[MB51] Tramo {s} -> {e} filas: {len(df)} columnas: {len(df.columns)}")
@@ -442,27 +490,13 @@ def ejecutar_mb51(session,
                 # Asegurar esquema/tabla: create or alter to add missing cols
                 from sqlalchemy import text
                 try:
-                    # Preparar mapeo de columnas: normalizar nombres (quitar acentos, espacios -> guiones bajos, minusculas)
-                    def _normalize_db_col(c: str) -> str:
-                        import unicodedata, re
-                        s = str(c).strip()
-                        # quitar acentos
-                        s = unicodedata.normalize('NFKD', s)
-                        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
-                        s = s.lower()
-                        s = s.replace('-', ' ').replace('/', ' ')
-                        s = ''.join(ch if ch.isalnum() or ch == ' ' else '_' for ch in s)
-                        s = '_'.join(s.split())
-                        if s == '':
-                            s = 'col'
-                        return s
-
+                    # Preparar mapeo de columnas: usar nombres crudos del encabezado, deduplicando sufijos si es necesario
                     raw_cols = list(df.drop(columns=['timestamp_ingestion']).columns)
                     seen_cols = {}
                     db_cols = []
                     columns_map = []  # list of {original:..., db:...}
                     for c in raw_cols:
-                        base = _normalize_db_col(c)
+                        base = str(c).strip()
                         dbname = base
                         if dbname in seen_cols:
                             seen_cols[dbname] += 1
