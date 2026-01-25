@@ -273,6 +273,41 @@ END
     return ddl
 
 
+def _generate_canonical_table_sql(db: str, schema: str, table: str) -> str:
+    """Return DDL for canonical MB51 table with fixed schema (no inference)."""
+    cols_defs = [
+        '[Ce.] NVARCHAR(50) NULL',
+        '[Alm.] NVARCHAR(50) NULL',
+        '[CMv] NVARCHAR(50) NULL',
+        '[Razión] NVARCHAR(100) NULL',
+        '[Registrado] DATE NULL',
+        '[Hora] NVARCHAR(16) NULL',
+        '[Doc.mat.] NVARCHAR(50) NULL',
+        '[Usuario] NVARCHAR(64) NULL',
+        '[Fecha doc.] DATE NULL',
+        '[Material] NVARCHAR(50) NULL',
+        '[Texto breve de material] NVARCHAR(400) NULL',
+        '[Lote] NVARCHAR(100) NULL',
+        '[Cantidad] NUMERIC(18,4) NULL',
+        '[Impte.ML] NUMERIC(18,4) NULL',
+        '[Txt.cab.doc.] NVARCHAR(255) NULL',
+        '[Pedido] NVARCHAR(100) NULL',
+        '[Proveedor] NVARCHAR(100) NULL',
+        '[Txt clase-mov.] NVARCHAR(200) NULL',
+        '[timestamp_ingestion] DATETIME2 NULL'
+    ]
+    cols_sql = ',\n    '.join(cols_defs)
+    ddl = f"""
+IF OBJECT_ID('[{db}].[{schema}].[{table}]','U') IS NULL
+BEGIN
+    CREATE TABLE [{db}].[{schema}].[{table}] (
+    {cols_sql}
+    );
+END
+"""
+    return ddl
+
+
 def ejecutar_mb51(session,
                  centro: str = DEFAULT_CENTRO,
                  lgort_low: str = DEFAULT_LGORT_LOW,
@@ -511,13 +546,52 @@ def ejecutar_mb51(session,
 
                     chunk_entry['columns_map'] = columns_map
 
-                    # Crear df temporal con nombres db_cols (normalizados) para generar DDL e insertar
-                    df_for_schema = df.drop(columns=['timestamp_ingestion']).copy()
-                    df_for_schema.columns = db_cols
+                    # Crear df temporal con nombres db_cols (crudos o canónicos) para generar DDL e insertar
+                    # Mapamos columnas a esquema canonico si es posible
+                    canonical = [
+                        'Ce.','Alm.','CMv','Razión','Registrado','Hora','Doc.mat.','Usuario','Fecha doc.','Material',
+                        'Texto breve de material','Lote','Cantidad','Impte.ML','Txt.cab.doc.','Pedido','Proveedor','Txt clase-mov.'
+                    ]
+
+                    # Normalizer helper for matching header names (remove diacritics, punctuation, lower)
+                    def _norm_key(s: str) -> str:
+                        import unicodedata, re
+                        s = str(s)
+                        s = unicodedata.normalize('NFKD', s)
+                        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+                        s = s.lower()
+                        s = re.sub(r"[^a-z0-9]","", s)
+                        return s
+
+                    raw_cols = list(df.drop(columns=['timestamp_ingestion']).columns)
+                    raw_map = { _norm_key(c): c for c in raw_cols }
+
+                    final_cols = []
+                    columns_map = []
+                    for can in canonical:
+                        nk = _norm_key(can)
+                        if nk in raw_map:
+                            final_cols.append(can)
+                            columns_map.append({'original': raw_map[nk], 'db': can})
+                        else:
+                            # If not present in raw, keep missing but still include column to preserve final schema
+                            final_cols.append(can)
+                            columns_map.append({'original': None, 'db': can})
+
+                    chunk_entry['columns_map'] = columns_map
+
+                    # Build df_for_schema using canonical final_cols in that order
+                    df_for_schema = pd.DataFrame({c: df.get(raw) if raw else None for (raw,c) in [(m['original'], m['db']) for m in columns_map]})
+                    # Ensure types are pandas-friendly (strings for now — coercions happen later)
+                    for c in df_for_schema.columns:
+                        df_for_schema[c] = df_for_schema[c].astype(object)
+
+                    # Use canonical column list for creation and insertion
+                    db_cols = list(df_for_schema.columns)
 
                     with repo.engine.begin() as conn:
-                        # Crear tabla si no existe (usando los nombres db_cols)
-                        create_table_sql = _generate_create_table_sql(db_name, table_schema, table_name, df_for_schema)
+                        # Crear tabla si no existe usando esquema canonico (evita discrepancias entre tramos)
+                        create_table_sql = _generate_canonical_table_sql(db_name, table_schema, table_name)
                         # Guardar DDL en bitacora
                         chunk_entry['ddl'] = create_table_sql
 
@@ -534,10 +608,14 @@ def ejecutar_mb51(session,
                                 print(f"[MB51] Añadiendo columna '{dbc}' a tabla destino (NVARCHAR(MAX))")
                                 conn.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
 
-                        # Preparar df para insercion: renombrar columnas a db_cols y mantener solo esas columnas
-                        df_to_insert = df.copy()
-                        df_to_insert = df_to_insert.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
-                        # Seleccionar solo las columnas que vamos a insertar (en el orden db_cols)
+                        # Preparar df para insercion usando df_for_schema (ya mapeada a columnas canonicas)
+                        df_to_insert = df_for_schema.copy()
+                        # Asegurar que df_to_insert tenga el mismo numero de filas que df (si df_for_schema fue construido con series)
+                        # Si df_for_schema columnas son None, reemplazarlas por None series con len(df)
+                        for c in df_to_insert.columns:
+                            if df_to_insert[c] is None:
+                                df_to_insert[c] = pd.Series([None]*len(df), dtype=object)
+                        # Seleccionar por orden db_cols para consistencia
                         df_to_insert = df_to_insert[[c for c in db_cols]]
 
                         # Coerciones por tipo: convertir fechas/decimales/ints según lo inferido para evitar operand type clash
@@ -588,9 +666,11 @@ def ejecutar_mb51(session,
                                 if dbc.lower() not in existing_cols2:
                                     conn2.execute(text(f"ALTER TABLE [{db_name}].[{table_schema}].[{table_name}] ADD [{dbc}] NVARCHAR(MAX) NULL"))
 
-                            # Preparar df renombrado para insert (usar las columnas normalizadas) y mantener solo esas columnas
-                            df_to_insert_fb = df.copy()
-                            df_to_insert_fb = df_to_insert_fb.rename(columns={orig: db for orig, db in zip(raw_cols, db_cols)})
+                            # Preparar df renombrado para insert (usar las columnas canonicas) y mantener solo esas columnas
+                            df_to_insert_fb = df_for_schema.copy()
+                            for c in df_to_insert_fb.columns:
+                                if df_to_insert_fb[c] is None:
+                                    df_to_insert_fb[c] = pd.Series([None]*len(df), dtype=object)
                             df_to_insert_fb = df_to_insert_fb[[c for c in db_cols]]
 
                             # Coerciones por tipo antes del fallback insert
