@@ -1,0 +1,46 @@
+import polars as pl
+import pyperclip
+
+# 1. Capturar el contenido del portapapeles
+contenido = pyperclip.paste()
+
+# 2. Convertir el texto en una lista de líneas
+lineas = contenido.splitlines()
+
+
+df_raw = pl.DataFrame({"raw_text": lineas})
+
+df_raw=df_raw.slice(3)
+df_raw = df_raw.filter(~pl.col("raw_text").str.contains("---"))
+pipes= df_raw[0,0]
+pipes_total=pipes.count('|')-1
+df_raw= df_raw.with_columns(pl.col("raw_text").str.split_exact("|",pipes_total).alias("partes")).unnest("partes")
+df_raw=df_raw.drop('raw_text','field_0')
+
+df_raw= df_raw.with_columns(pl.col(pl.String).str.strip_chars())
+encabezados=dict(zip(df_raw.columns,df_raw.row(0)))
+df_raw = df_raw.rename(encabezados).slice(1)
+
+df_raw = df_raw.with_columns(
+    pl.col("Registrado",'Fecha doc.')
+    .str.strip_chars()                       # Aseguramos que no haya espacios
+    .str.to_date(format="%d.%m.%Y", strict=False) # strict=False pone 'null' si la fecha es inválida en vez de dar error
+)
+
+columnas_numericas = ["Cantidad",  "Impte.ML"]
+
+df_raw = df_raw.with_columns(
+    pl.col(columnas_numericas)
+    .str.replace_all(r"\.", "")
+    .str.replace(",", ".")
+    .cast(pl.Float64, strict=False) # strict=False convierte errores en 'null' en lugar de fallar
+)
+
+# Definimos qué columnas NO deben ser tocadas (las que ya procesaste)
+columnas_procesadas = ["Registrado", "Fecha doc.", "Cantidad", "Impte.ML"]
+
+# Aplicamos el cast a String a todo lo demás
+df_raw = df_raw.with_columns(
+    pl.all().exclude(columnas_procesadas).cast(pl.String)
+)
+
