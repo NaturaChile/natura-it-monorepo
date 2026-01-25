@@ -476,7 +476,7 @@ def ejecutar_mb51(session,
                 'error': None
             }
             try:
-                            df = _parse_clipboard(clipboard_data)
+                df = _parse_clipboard(clipboard_data)
                 # Aplicar limpieza robusta basada en el ejemplo Polars del repo
                 df = _clean_clipboard_df(df)
 
