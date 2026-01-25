@@ -183,18 +183,27 @@ def _clean_clipboard_df(df: pd.DataFrame) -> pd.DataFrame:
     for c in num_cols:
         if c in df.columns:
             s_raw = df[c].astype(str).str.strip()
+            # Detect trailing negative sign, preserve in mask
+            neg_mask = s_raw.str.endswith('-', na=False)
+            # Remove trailing '-' for normalization, we'll reapply sign later
             s = s_raw.str.rstrip('-')
             s = s.str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
             num = pd.to_numeric(s.replace('', None), errors='coerce')
-            # Fallback: if parsing failed but original contains digits, try extracting numeric fragments
+            # Reapply negative sign where numeric parsed but original had trailing '-'
+            if neg_mask.any():
+                neg_valid = neg_mask & num.notna()
+                if neg_valid.any():
+                    num.loc[neg_valid] = -num.loc[neg_valid]
+            # Fallback: if parsing failed but original contains digits, try extracting numeric fragments (and sign)
             mask_na = num.isna() & s_raw.str.contains(r'\d', regex=True)
             if mask_na.any():
                 import re as _re
                 def _extract_numeric(x):
                     if not _re.search(r'\d', x):
                         return None
-                    t = _re.sub(r'[^\d\-,\.]', '', x)
-                    sign = -1 if t.endswith('-') else 1
+                    t = str(x)
+                    sign = -1 if t.strip().endswith('-') else 1
+                    t = _re.sub(r'[^\d\-,\.]', '', t)
                     t = t.rstrip('-')
                     t = t.replace('.', '')
                     t = t.replace(',', '.')
@@ -202,7 +211,7 @@ def _clean_clipboard_df(df: pd.DataFrame) -> pd.DataFrame:
                         return float(t) * sign
                     except Exception:
                         m = _re.search(r'[\d]+[,.]?\d*', t)
-                        return float(m.group(0).replace(',', '.')) if m else None
+                        return float(m.group(0).replace(',', '.')) * sign if m else None
                 num_fallback = s_raw[mask_na].apply(lambda x: _extract_numeric(str(x)))
                 num.loc[mask_na] = num_fallback
             df[c] = num
@@ -628,6 +637,10 @@ def ejecutar_mb51(session,
                     raw_cols = list(df.drop(columns=['timestamp_ingestion']).columns)
                     raw_map = { _norm_key(c): c for c in raw_cols }
 
+                    # Debug: show raw headers collected and normalized keys (helps detectar problemas de caracteres invisibles)
+                    print(f"[MB51] [DEBUG] Raw headers: {raw_cols}")
+                    print(f"[MB51] [DEBUG] Normalized raw keys: {list(raw_map.keys())}")
+
                     final_cols = []
                     columns_map = []
                     for can in canonical:
@@ -636,7 +649,8 @@ def ejecutar_mb51(session,
                             final_cols.append(can)
                             columns_map.append({'original': raw_map[nk], 'db': can})
                         else:
-                            # If not present in raw, keep missing but still include column to preserve final schema
+                            # Not present in raw headers; keep as missing to preserve final schema and log for debugging
+                            print(f"[MB51] [WARN] Header canonico '{can}' no encontrado en raw headers")
                             final_cols.append(can)
                             columns_map.append({'original': None, 'db': can})
 
