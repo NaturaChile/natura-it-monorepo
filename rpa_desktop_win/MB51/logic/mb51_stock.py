@@ -641,13 +641,33 @@ def ejecutar_mb51(session,
                     print(f"[MB51] [DEBUG] Raw headers: {raw_cols}")
                     print(f"[MB51] [DEBUG] Normalized raw keys: {list(raw_map.keys())}")
 
+                    # Alias mapping for known header variants to canonical names
+                    alias_norms = {
+                        'importeml': 'Impte.ML',
+                        'importe': 'Impte.ML',
+                        'importemlml': 'Impte.ML',
+                        'textodeclasemov': 'Txt clase-mov.'
+                    }
+
                     final_cols = []
                     columns_map = []
                     for can in canonical:
                         nk = _norm_key(can)
+                        source = None
                         if nk in raw_map:
+                            source = raw_map[nk]
+                        else:
+                            # buscar alias normalizados si existen
+                            # el alias_norms contiene claves normalizadas
+                            for a_norm, canon_target in alias_norms.items():
+                                if canon_target == can and a_norm in raw_map:
+                                    source = raw_map[a_norm]
+                                    print(f"[MB51] [DEBUG] Header '{source}' mapeado a canonico '{can}' mediante alias '{a_norm}'")
+                                    break
+
+                        if source:
                             final_cols.append(can)
-                            columns_map.append({'original': raw_map[nk], 'db': can})
+                            columns_map.append({'original': source, 'db': can})
                         else:
                             # Not present in raw headers; keep as missing to preserve final schema and log for debugging
                             print(f"[MB51] [WARN] Header canonico '{can}' no encontrado en raw headers")
