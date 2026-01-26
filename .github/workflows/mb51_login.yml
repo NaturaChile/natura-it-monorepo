@@ -1,8 +1,11 @@
-name: MB51 Login
+name: MB51 - Daily run (Chile 06:00)
 
 on:
   workflow_dispatch:
-  # NOTE: schedule removed — MB51 will be executed manually via workflow_dispatch as requested.
+  schedule:
+    # Two UTC crons to cover CLST (UTC-3) and CLT (UTC-4)
+    - cron: '0 9 * * *'   # 06:00 Chile (UTC-3 / summer)
+    - cron: '0 10 * * *'  # 06:00 Chile (UTC-4 / winter)
 
 # Evita ejecuciones simultaneas del workflow MB51
 concurrency:
@@ -10,61 +13,80 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  mb51:
+  run-mb51:
     runs-on: [self-hosted, Windows, X64, rpa_ui_55]
     environment: SAP_Jorge
 
     env:
       DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
       PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+      # Variables SAP desde environment SAP_Jorge
       SYSTEM: ${{ vars.SYSTEM }}
       CLIENT: ${{ vars.CLIENT }}
       USER: ${{ vars.USER }}
       PW: ${{ secrets.PW }}
       LANG: ${{ vars.LANG }}
+      # Credenciales red (desde Environment secrets)
       NET_USER: ${{ secrets.NET_USER }}
       NET_PASS: ${{ secrets.NET_PASS }}
       NET_DOMAIN: ${{ vars.NET_DOMAIN }}
+
+      # Credenciales SQL (host/user en Environment, pw como secret)
       SQL2022_HOST: ${{ vars.SQL2022_HOST }}
       SQL2022_USER: ${{ vars.SQL2022_USER }}
       SQL2022_PW: ${{ secrets.SQL2022_PW }}
-      # MB51 specific
+
+      # Parametros especificos de MB51
+      TRANSACTION: "MB51"
       CENTRO: "4100"
-      LGORT_LOW: "4147"
-      LGORT_HIGH: "4195"
       VARIANTE: "BOTMB51"
-      MB51_DESDE: "01012025"
+      RUTA_DESTINO: "\\\\10.156.145.28\\Publico\\RPA\\Retail\\MB51 - Base Tiendas"
 
     steps:
-      - name: Checkout
+      - name: Descargar Codigo del Repositorio
         uses: actions/checkout@v4
 
-      - name: Ejecutar MB51
+      - name: Ejecutar SAP Bot MB51
         shell: powershell
         run: |
           Write-Host "[INFO] Verificando presencia de variables NET_* en entorno..."
           $hasUser = -not [string]::IsNullOrEmpty($env:NET_USER)
           $hasPass = -not [string]::IsNullOrEmpty($env:NET_PASS)
           $hasDomain = -not [string]::IsNullOrEmpty($env:NET_DOMAIN)
+          Write-Host "NET_USER set? $hasUser"
+          Write-Host "NET_PASS set? $hasPass"
+          Write-Host "NET_DOMAIN set? $hasDomain"
           if (-not ($hasUser -and $hasPass -and $hasDomain)) {
             Write-Error "[ERROR] Faltan variables NET_* en el entorno del job. Abortando."
             exit 1
           }
+          Write-Host "[INFO] Variables NET_* presentes. Continuando..."
 
           Write-Host "[INFO] Verificando presencia de SQL2022_* en Environment/Secrets..."
           $hasSqlHost = -not [string]::IsNullOrEmpty($env:SQL2022_HOST)
           $hasSqlUser = -not [string]::IsNullOrEmpty($env:SQL2022_USER)
           $hasSqlPw = -not [string]::IsNullOrEmpty($env:SQL2022_PW)
+          Write-Host "SQL2022_HOST set (env)? $hasSqlHost"
+          Write-Host "SQL2022_USER set (env)? $hasSqlUser"
+          Write-Host "SQL2022_PW set (secret)? $hasSqlPw"
           if (-not ($hasSqlHost -and $hasSqlUser -and $hasSqlPw)) {
-            Write-Error "[ERROR] Faltan credenciales SQL2022: asegure SQL2022_HOST y SQL2022_USER en Environment y SQL2022_PW como Secret. Aborto."
+            Write-Error "[ERROR] Faltan credenciales SQL2022: asegure SQL2022_HOST y SQL2022_USER en Environment (SAP_Jorge) y SQL2022_PW como Secret. Aborto para evitar ingesta insegura."
             exit 1
           }
 
-          # Ejecutar bot
-          Set-Location "$env:DEPLOY_PATH"
+          try {
+            Set-Location "X:\\Publico\\RPA\\Retail\\MB51 - Base Tiendas"
+            Write-Host "[INFO] Acceso a unidad mapeada X: OK"
+            Set-Location "$env:DEPLOY_PATH"
+          } catch {
+            Write-Host "[INFO] Unidad mapeada X: no disponible, usando deploy path"
+            Set-Location "$env:DEPLOY_PATH"
+          }
+
+          # Ejecutar el bot MB51
           & "$env:PYTHON_EXE" ".\rpa_desktop_win\MB51\main.py"
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "[ERROR] MB51 fallo con codigo de salida: $LASTEXITCODE"
+            Write-Error "[ERROR] Bot MB51 fallo con codigo de salida: $LASTEXITCODE"
             exit $LASTEXITCODE
           }
-          Write-Host "[SUCCESS] MB51 ejecutado correctamente."
+          Write-Host "[SUCCESS] Bot MB51 ejecutado correctamente."
