@@ -3,15 +3,15 @@ name: MB51 - Daily run (Chile 06:00)
 on:
   workflow_dispatch:
   schedule:
-    # Two UTC crons to cover CLST (UTC-3) and CLT (UTC-4)
-    - cron: '0 9 * * *'   # 06:00 Chile (UTC-3 / summer)
-    - cron: '0 10 * * *'  # 06:00 Chile (UTC-4 / winter)
+    # 09:12 Chile (UTC-3 Verano / UTC-4 Invierno)
+    - cron: '12 12 * * *'   # 09:12 AM Chile (Verano: UTC 12:12)
+    - cron: '12 13 * * *'   # 09:12 AM Chile (Invierno: UTC 13:12)
 
-# Evita ejecuciones simultaneas del workflow MB51
 concurrency:
-  group: mb51
+  # Usamos un nombre de grupo ÚNICO para MB51
+  group: mb51-production
   cancel-in-progress: false
-
+  
 jobs:
   run-mb51:
     runs-on: [self-hosted, Windows, X64, rpa_ui_55]
@@ -89,4 +89,5 @@ jobs:
             Write-Error "[ERROR] Bot MB51 fallo con codigo de salida: $LASTEXITCODE"
             exit $LASTEXITCODE
           }
+
           Write-Host "[SUCCESS] Bot MB51 ejecutado correctamente."
