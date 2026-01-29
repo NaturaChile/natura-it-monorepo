@@ -5,8 +5,7 @@ on:
   schedule:
     # 09:12 Chile (UTC-3 Verano / UTC-4 Invierno)
     - cron: '12 12 * * *'   # 09:12 AM Chile (Verano: UTC 12:12)
-    - cron: '12 13 * * *'   # 09:12 AM Chile (Invierno: UTC 13:12)
-
+    
 concurrency:
   # Usamos un nombre de grupo ÚNICO para MB51
   group: mb51-production
