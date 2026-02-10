@@ -19,7 +19,7 @@ BEGIN
     BEGIN
         CREATE TABLE dbo.EWM_OBDConfirm_FileHash (
             Id INT IDENTITY(1,1) PRIMARY KEY,
-            NombreArchivo NVARCHAR(500) NOT NULL,
+            NombreArchivo NVARCHAR(1000) NOT NULL,
             HashValor VARBINARY(64) NOT NULL,
             FechaCreacion DATETIME NOT NULL DEFAULT GETDATE()
         );

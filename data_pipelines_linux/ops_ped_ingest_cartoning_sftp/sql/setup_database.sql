@@ -22,24 +22,24 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_Cartoning', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_Cartoning(
-        Id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
         TipoRegistro NVARCHAR(50), -- debe soportar valores como ZSIEWM_CARTONIZACAO_*
-        C1 VARCHAR(MAX), -- PedidoID / CajaID
-        C2 VARCHAR(MAX), -- Entrega / Posicion
-        C3 VARCHAR(MAX), -- TipoCaja / CajaID
-        C4 VARCHAR(MAX), -- Vol / SKU
-        C5 VARCHAR(MAX), -- Unidad / Descripcion
-        C6 VARCHAR(MAX), -- Peso / Cantidad
-        C7 VARCHAR(MAX), -- Unidad
-        C8 VARCHAR(MAX),
-        C9 VARCHAR(MAX),
-        C10 VARCHAR(MAX),
-        C11 VARCHAR(MAX), -- Tracking
-        C12 VARCHAR(MAX),
-        C13 VARCHAR(MAX), -- Bultos
-        C14 VARCHAR(MAX), -- Cliente
-        NombreArchivo VARCHAR(255),
-        FechaIngesta DATETIME DEFAULT GETDATE()
+        C1 NVARCHAR(510),
+        C2 NVARCHAR(510),
+        C3 NVARCHAR(510),
+        C4 NVARCHAR(510),
+        C5 NVARCHAR(510),
+        C6 NVARCHAR(510),
+        C7 NVARCHAR(510),
+        C8 NVARCHAR(510),
+        C9 NVARCHAR(510),
+        C10 NVARCHAR(510),
+        C11 NVARCHAR(510),
+        C12 NVARCHAR(510),
+        C13 NVARCHAR(510),
+        C14 NVARCHAR(510),
+        NombreArchivo NVARCHAR(1000),
+        FechaCreacion DATETIME DEFAULT GETDATE()
     );
 END
 GO
@@ -48,11 +48,12 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_WaveConfirm', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_WaveConfirm(
-        Id BIGINT IDENTITY(1,1) PRIMARY KEY,
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
         WaveID VARCHAR(50),
         PedidoID VARCHAR(50),
         columna0 VARCHAR(50),
         CajaID VARCHAR(100),
+        columna_extra VARCHAR(100),
         NombreArchivo VARCHAR(255),
         FechaIngesta DATETIME DEFAULT GETDATE(),
         Procesado BIT DEFAULT 0
@@ -69,15 +70,15 @@ IF OBJECT_ID('dbo.Staging_EWM_OutboundDelivery_Header', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OutboundDelivery_Header (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Delivery_ID NVARCHAR(50) NOT NULL,
+        Delivery_ID NVARCHAR(100) NOT NULL,
         Peso_Bruto DECIMAL(18,3) NULL,
         Volumen DECIMAL(18,3) NULL,
-        Destinatario NVARCHAR(255) NULL,
-        Direccion NVARCHAR(500) NULL,
-        Region NVARCHAR(100) NULL,
-        Transportista NVARCHAR(255) NULL,
-        Fecha_Entrega NVARCHAR(50) NULL,
-        NombreArchivo NVARCHAR(500) NULL,
+        Destinatario NVARCHAR(510) NULL,
+        Direccion NVARCHAR(1000) NULL,
+        Region NVARCHAR(200) NULL,
+        Transportista NVARCHAR(510) NULL,
+        Fecha_Entrega NVARCHAR(100) NULL,
+        NombreArchivo NVARCHAR(1000) NULL,
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     
@@ -91,14 +92,14 @@ IF OBJECT_ID('dbo.Staging_EWM_OutboundDelivery_Items', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OutboundDelivery_Items (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Delivery_ID_FK NVARCHAR(50) NOT NULL,
-        Item_Number NVARCHAR(50) NULL,
-        Material_SKU NVARCHAR(100) NULL,
-        Descripcion NVARCHAR(500) NULL,
+        Delivery_ID_FK NVARCHAR(100) NOT NULL,
+        Item_Number NVARCHAR(100) NULL,
+        Material_SKU NVARCHAR(200) NULL,
+        Descripcion NVARCHAR(1000) NULL,
         Cantidad DECIMAL(18,3) NULL,
-        Unidad_Medida NVARCHAR(10) NULL,
+        Unidad_Medida NVARCHAR(20) NULL,
         Peso_Neto_Item DECIMAL(18,3) NULL,
-        NombreArchivo NVARCHAR(500) NULL,
+        NombreArchivo NVARCHAR(1000) NULL,
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     
@@ -195,17 +196,17 @@ IF OBJECT_ID('dbo.EWM_OutboundDelivery_Header', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OutboundDelivery_Header (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Delivery_ID NVARCHAR(50) NOT NULL,
+        Delivery_ID NVARCHAR(100) NOT NULL,
         Peso_Bruto DECIMAL(18,3) NULL,
         Volumen DECIMAL(18,3) NULL,
-        Destinatario NVARCHAR(255) NULL,
-        Direccion NVARCHAR(500) NULL,
-        Region NVARCHAR(100) NULL,
-        Transportista NVARCHAR(255) NULL,
+        Destinatario NVARCHAR(510) NULL,
+        Direccion NVARCHAR(1000) NULL,
+        Region NVARCHAR(200) NULL,
+        Transportista NVARCHAR(510) NULL,
         Fecha_Entrega DATE NULL,
         NumeroVersion INT NOT NULL,
         FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500) NULL
+        NombreArchivo NVARCHAR(1000) NULL
     );
     
     CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Header_DeliveryID 
@@ -221,16 +222,16 @@ IF OBJECT_ID('dbo.EWM_OutboundDelivery_Items', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OutboundDelivery_Items (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Delivery_ID_FK NVARCHAR(50) NOT NULL,
-        Item_Number NVARCHAR(50) NULL,
-        Material_SKU NVARCHAR(100) NULL,
-        Descripcion NVARCHAR(500) NULL,
+        Delivery_ID_FK NVARCHAR(100) NOT NULL,
+        Item_Number NVARCHAR(100) NULL,
+        Material_SKU NVARCHAR(200) NULL,
+        Descripcion NVARCHAR(1000) NULL,
         Cantidad DECIMAL(18,3) NULL,
-        Unidad_Medida NVARCHAR(10) NULL,
+        Unidad_Medida NVARCHAR(20) NULL,
         Peso_Neto_Item DECIMAL(18,3) NULL,
         NumeroVersion INT NOT NULL,
         FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500) NULL
+        NombreArchivo NVARCHAR(1000) NULL
     );
     
     CREATE NONCLUSTERED INDEX IX_EWM_OutboundDelivery_Items_DeliveryID 
@@ -596,11 +597,11 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Cabecera', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Cabecera (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50) NOT NULL,
-        Fecha_WSHDRLFDAT NVARCHAR(50),
-        Fecha_WSHDRWADTI NVARCHAR(50),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        Fecha_WSHDRLFDAT NVARCHAR(40),
+        Fecha_WSHDRWADTI NVARCHAR(40),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Cabecera_NumeroEntrega ON dbo.Staging_EWM_OBDConfirm_Cabecera(Numero_Entrega);
@@ -611,14 +612,14 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Posiciones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Posiciones (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
-        Pedido_Ref NVARCHAR(50),
-        Material_SKU NVARCHAR(100),
-        Cantidad DECIMAL(18,3),
-        Unidad NVARCHAR(10),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        Numero_Posicion NVARCHAR(40),
+        Pedido_Ref NVARCHAR(100),
+        Material_SKU NVARCHAR(200),
+        Cantidad NVARCHAR(100),
+        Unidad NVARCHAR(20),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Posiciones_NumeroEntrega ON dbo.Staging_EWM_OBDConfirm_Posiciones(Numero_Entrega);
@@ -629,11 +630,11 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Control_Posiciones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Control_Posiciones (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
-        Flag_Confirmacion NVARCHAR(10),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        Numero_Posicion NVARCHAR(40),
+        Flag_Confirmacion NVARCHAR(20),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Control_NumeroEntrega ON dbo.Staging_EWM_OBDConfirm_Control_Posiciones(Numero_Entrega);
@@ -644,14 +645,14 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Unidades_HDR', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Unidades_HDR (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        ID_Unidad_Manipulacion NVARCHAR(50),
-        Tipo_Embalaje NVARCHAR(10),
-        HU_Nivel NVARCHAR(10),
-        Numero_Externo NVARCHAR(100),
-        Cantidad_HU DECIMAL(18,3),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        Numero_Entrega NVARCHAR(100),
+        ID_Unidad_Manipulacion NVARCHAR(200),
+        Tipo_Embalaje NVARCHAR(100),
+        HU_Nivel NVARCHAR(20),
+        Numero_Externo NVARCHAR(200),
+        Cantidad_HU NVARCHAR(100),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Unidades_NumeroEntrega ON dbo.Staging_EWM_OBDConfirm_Unidades_HDR(Numero_Entrega);
@@ -663,16 +664,16 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Contenido_Embalaje', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Contenido_Embalaje (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        ID_Unidad_Manipulacion_Padre NVARCHAR(50),
-        ID_Unidad_Manipulacion_Hijo NVARCHAR(50),
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
-        Cantidad_Empacada DECIMAL(18,3),
-        Unidad NVARCHAR(10),
-        Material_SKU NVARCHAR(100),
-        Nivel_HU NVARCHAR(10),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        ID_Unidad_Manipulacion_Padre NVARCHAR(200),
+        ID_Unidad_Manipulacion_Hijo NVARCHAR(200),
+        Numero_Entrega NVARCHAR(100),
+        Numero_Posicion NVARCHAR(40),
+        Cantidad_Empacada NVARCHAR(100),
+        Unidad NVARCHAR(20),
+        Material_SKU NVARCHAR(200),
+        Nivel_HU NVARCHAR(20),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Contenido_Padre ON dbo.Staging_EWM_OBDConfirm_Contenido_Embalaje(ID_Unidad_Manipulacion_Padre);
@@ -684,13 +685,13 @@ GO
 IF OBJECT_ID('dbo.Staging_EWM_OBDConfirm_Extensiones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_OBDConfirm_Extensiones (
-        ID INT IDENTITY(1,1) PRIMARY KEY,
-        Nombre_Campo NVARCHAR(50),
-        ID_Referencia NVARCHAR(50),
-        Valor_1 NVARCHAR(500),
-        Valor_2 NVARCHAR(500),
-        Valor_3 NVARCHAR(500),
-        NombreArchivo NVARCHAR(500),
+        ID BIGINT IDENTITY(1,1) PRIMARY KEY,
+        Nombre_Campo NVARCHAR(200),
+        ID_Referencia NVARCHAR(200),
+        Valor_1 NVARCHAR(400),
+        Valor_2 NVARCHAR(400),
+        Valor_3 NVARCHAR(400),
+        NombreArchivo NVARCHAR(1000),
         FechaCreacion DATETIME DEFAULT GETDATE()
     );
     CREATE INDEX IX_Staging_OBDConfirm_Extensiones_Campo ON dbo.Staging_EWM_OBDConfirm_Extensiones(Nombre_Campo);
@@ -704,12 +705,12 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Cabecera', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Cabecera (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50) NOT NULL,
+        Numero_Entrega NVARCHAR(100) NOT NULL,
         Fecha_WSHDRLFDAT DATE,
         Fecha_WSHDRWADTI DATE,
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Cabecera_NumeroEntrega ON dbo.EWM_OBDConfirm_Cabecera(Numero_Entrega);
     CREATE INDEX IX_EWM_OBDConfirm_Cabecera_Version ON dbo.EWM_OBDConfirm_Cabecera(NumeroVersion DESC);
@@ -721,15 +722,15 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Posiciones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Posiciones (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
-        Pedido_Ref NVARCHAR(50),
-        Material_SKU NVARCHAR(100),
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        Numero_Posicion NVARCHAR(40),
+        Pedido_Ref NVARCHAR(100),
+        Material_SKU NVARCHAR(200),
         Cantidad DECIMAL(18,3),
-        Unidad NVARCHAR(10),
+        Unidad NVARCHAR(20),
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Posiciones_NumeroEntrega ON dbo.EWM_OBDConfirm_Posiciones(Numero_Entrega);
     CREATE INDEX IX_EWM_OBDConfirm_Posiciones_Material ON dbo.EWM_OBDConfirm_Posiciones(Material_SKU);
@@ -741,12 +742,12 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Control_Posiciones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Control_Posiciones (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
-        Flag_Confirmacion NVARCHAR(10),
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        Numero_Posicion NVARCHAR(40),
+        Flag_Confirmacion NVARCHAR(20),
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Control_NumeroEntrega ON dbo.EWM_OBDConfirm_Control_Posiciones(Numero_Entrega);
 END
@@ -757,15 +758,15 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Unidades_HDR', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Unidades_HDR (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Numero_Entrega NVARCHAR(50),
-        ID_Unidad_Manipulacion NVARCHAR(50),
-        Tipo_Embalaje NVARCHAR(10),
-        HU_Nivel NVARCHAR(10),
-        Numero_Externo NVARCHAR(100),
+        Numero_Entrega NVARCHAR(100) NOT NULL,
+        ID_Unidad_Manipulacion NVARCHAR(200),
+        Tipo_Embalaje NVARCHAR(100),
+        HU_Nivel NVARCHAR(20),
+        Numero_Externo NVARCHAR(200),
         Cantidad_HU DECIMAL(18,3),
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Unidades_NumeroEntrega ON dbo.EWM_OBDConfirm_Unidades_HDR(Numero_Entrega);
     CREATE INDEX IX_EWM_OBDConfirm_Unidades_HUID ON dbo.EWM_OBDConfirm_Unidades_HDR(ID_Unidad_Manipulacion);
@@ -777,17 +778,17 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Contenido_Embalaje', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Contenido_Embalaje (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        ID_Unidad_Manipulacion_Padre NVARCHAR(50),
-        ID_Unidad_Manipulacion_Hijo NVARCHAR(50),
-        Numero_Entrega NVARCHAR(50),
-        Numero_Posicion NVARCHAR(50),
+        ID_Unidad_Manipulacion_Padre NVARCHAR(200),
+        ID_Unidad_Manipulacion_Hijo NVARCHAR(200),
+        Numero_Entrega NVARCHAR(100),
+        Numero_Posicion NVARCHAR(40),
         Cantidad_Empacada DECIMAL(18,3),
-        Unidad NVARCHAR(10),
-        Material_SKU NVARCHAR(100),
-        Nivel_HU NVARCHAR(10),
+        Unidad NVARCHAR(20),
+        Material_SKU NVARCHAR(200),
+        Nivel_HU NVARCHAR(20),
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Contenido_Padre ON dbo.EWM_OBDConfirm_Contenido_Embalaje(ID_Unidad_Manipulacion_Padre);
     CREATE INDEX IX_EWM_OBDConfirm_Contenido_NumeroEntrega ON dbo.EWM_OBDConfirm_Contenido_Embalaje(Numero_Entrega);
@@ -800,14 +801,14 @@ IF OBJECT_ID('dbo.EWM_OBDConfirm_Extensiones', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.EWM_OBDConfirm_Extensiones (
         ID INT IDENTITY(1,1) PRIMARY KEY,
-        Nombre_Campo NVARCHAR(50),
-        ID_Referencia NVARCHAR(50),
-        Valor_1 NVARCHAR(500),
-        Valor_2 NVARCHAR(500),
-        Valor_3 NVARCHAR(500),
+        Nombre_Campo NVARCHAR(200),
+        ID_Referencia NVARCHAR(200),
+        Valor_1 NVARCHAR(400),
+        Valor_2 NVARCHAR(400),
+        Valor_3 NVARCHAR(400),
         NumeroVersion INT NOT NULL,
-        FechaProceso DATETIME DEFAULT GETDATE(),
-        NombreArchivo NVARCHAR(500)
+        FechaProceso DATETIME NOT NULL DEFAULT GETDATE(),
+        NombreArchivo NVARCHAR(1000)
     );
     CREATE INDEX IX_EWM_OBDConfirm_Extensiones_Campo ON dbo.EWM_OBDConfirm_Extensiones(Nombre_Campo);
     CREATE INDEX IX_EWM_OBDConfirm_Extensiones_Referencia ON dbo.EWM_OBDConfirm_Extensiones(ID_Referencia);
@@ -815,13 +816,26 @@ END
 GO
 
 -- =====================================================
--- SP PARA OUTBOUND DELIVERY CONFIRM (Con versionado)
+-- SP PARA OUTBOUND DELIVERY CONFIRM (Con versionado + idempotencia por hash)
 -- =====================================================
 CREATE OR ALTER PROCEDURE sp_Procesar_OutboundDeliveryConfirm_EWM
     @ArchivoActual NVARCHAR(500)
 AS
 BEGIN
     SET NOCOUNT ON;
+    
+    -- Garantiza tabla de hash para idempotencia por archivo
+    IF OBJECT_ID('dbo.EWM_OBDConfirm_FileHash', 'U') IS NULL
+    BEGIN
+        CREATE TABLE dbo.EWM_OBDConfirm_FileHash (
+            Id INT IDENTITY(1,1) PRIMARY KEY,
+            NombreArchivo NVARCHAR(1000) NOT NULL,
+            HashValor VARBINARY(64) NOT NULL,
+            FechaCreacion DATETIME NOT NULL DEFAULT GETDATE()
+        );
+        CREATE UNIQUE INDEX UX_EWM_OBDConfirm_FileHash_FileHash
+            ON dbo.EWM_OBDConfirm_FileHash(NombreArchivo, HashValor);
+    END;
     
     DECLARE @NumeroVersion INT;
     DECLARE @RegistrosCabecera INT = 0;
@@ -830,10 +844,41 @@ BEGIN
     DECLARE @RegistrosUnidades INT = 0;
     DECLARE @RegistrosContenido INT = 0;
     DECLARE @RegistrosExtensiones INT = 0;
+    DECLARE @HashActual VARBINARY(64);
     
     BEGIN TRY
         BEGIN TRANSACTION;
         
+        -- 0. Calcular hash del set de staging (idempotencia por archivo)
+        ;WITH TodoStaging AS (
+            SELECT 'CAB' AS Tipo, Numero_Entrega, Numero_Posicion = NULL, Pedido_Ref = NULL, Material_SKU = NULL, Cantidad = NULL, Unidad = NULL, HU_Nivel = NULL, ID_Unidad_Manipulacion = NULL, Nivel_HU = NULL, ID_Referencia = NULL, Valor_1 = NULL, Valor_2 = NULL, Valor_3 = NULL
+            FROM Staging_EWM_OBDConfirm_Cabecera WHERE NombreArchivo = @ArchivoActual
+            UNION ALL
+            SELECT 'POS', Numero_Entrega, Numero_Posicion, Pedido_Ref, Material_SKU, Cantidad, Unidad, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            FROM Staging_EWM_OBDConfirm_Posiciones WHERE NombreArchivo = @ArchivoActual
+            UNION ALL
+            SELECT 'CTL', Numero_Entrega, Numero_Posicion, NULL, NULL, Flag_Confirmacion, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            FROM Staging_EWM_OBDConfirm_Control_Posiciones WHERE NombreArchivo = @ArchivoActual
+            UNION ALL
+            SELECT 'UNI', Numero_Entrega, NULL, NULL, NULL, Cantidad_HU, NULL, HU_Nivel, ID_Unidad_Manipulacion, NULL, NULL, NULL, NULL, NULL
+            FROM Staging_EWM_OBDConfirm_Unidades_HDR WHERE NombreArchivo = @ArchivoActual
+            UNION ALL
+            SELECT 'CON', Numero_Entrega, Numero_Posicion, NULL, Material_SKU, Cantidad_Empacada, Unidad, Nivel_HU, NULL, ID_Unidad_Manipulacion_Padre, NULL, NULL, NULL, NULL
+            FROM Staging_EWM_OBDConfirm_Contenido_Embalaje WHERE NombreArchivo = @ArchivoActual
+            UNION ALL
+            SELECT 'EXT', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, ID_Referencia, Valor_1, Valor_2, Valor_3
+            FROM Staging_EWM_OBDConfirm_Extensiones WHERE NombreArchivo = @ArchivoActual
+        )
+        SELECT @HashActual = HASHBYTES('SHA2_256', STRING_AGG(CONCAT_WS('|', Tipo, ISNULL(LTRIM(RTRIM(Numero_Entrega)), ''), ISNULL(LTRIM(RTRIM(Numero_Posicion)), ''), ISNULL(LTRIM(RTRIM(Pedido_Ref)), ''), ISNULL(LTRIM(RTRIM(Material_SKU)), ''), ISNULL(LTRIM(RTRIM(Cantidad)), ''), ISNULL(LTRIM(RTRIM(Unidad)), ''), ISNULL(LTRIM(RTRIM(HU_Nivel)), ''), ISNULL(LTRIM(RTRIM(ID_Unidad_Manipulacion)), ''), ISNULL(LTRIM(RTRIM(Nivel_HU)), ''), ISNULL(LTRIM(RTRIM(ID_Referencia)), ''), ISNULL(LTRIM(RTRIM(Valor_1)), ''), ISNULL(LTRIM(RTRIM(Valor_2)), ''), ISNULL(LTRIM(RTRIM(Valor_3)), '')), '#') WITHIN GROUP (ORDER BY Tipo, Numero_Entrega, Numero_Posicion))
+        FROM TodoStaging;
+
+        -- Si hash ya existe para este archivo, no inflar versión ni reprocesar
+        IF EXISTS (SELECT 1 FROM dbo.EWM_OBDConfirm_FileHash WHERE NombreArchivo = @ArchivoActual AND HashValor = @HashActual)
+        BEGIN
+            PRINT '--> Archivo sin cambios, se omite reproceso: ' + @ArchivoActual;
+            RETURN;
+        END;
+
         -- 1. Determinar número de versión (global para todo el archivo)
         SELECT @NumeroVersion = ISNULL(MAX(NumeroVersion), 0) + 1
         FROM EWM_OBDConfirm_Cabecera;
@@ -845,7 +890,6 @@ BEGIN
         )
         SELECT 
             LTRIM(RTRIM(Numero_Entrega)),
-            -- Convertir YYYYMMDDHHMMSS (14 chars) a DATE usando solo los primeros 8 chars
             TRY_CONVERT(DATE, LEFT(LTRIM(RTRIM(Fecha_WSHDRLFDAT)), 8), 112),
             TRY_CONVERT(DATE, LEFT(LTRIM(RTRIM(Fecha_WSHDRWADTI)), 8), 112),
             @NumeroVersion,
@@ -856,7 +900,7 @@ BEGIN
         
         SET @RegistrosCabecera = @@ROWCOUNT;
         
-        -- 3. Insertar POSICIONES
+        -- 3. Insertar POSICIONES (Cantidad es NVARCHAR en staging, convertir)
         INSERT INTO EWM_OBDConfirm_Posiciones (
             Numero_Entrega, Numero_Posicion, Pedido_Ref, Material_SKU,
             Cantidad, Unidad, NumeroVersion, NombreArchivo
@@ -866,7 +910,7 @@ BEGIN
             LTRIM(RTRIM(Numero_Posicion)),
             LTRIM(RTRIM(Pedido_Ref)),
             LTRIM(RTRIM(Material_SKU)),
-            TRY_CAST(NULLIF(Cantidad, 0) AS DECIMAL(18,3)),
+            TRY_CONVERT(DECIMAL(18,3), REPLACE(NULLIF(LTRIM(RTRIM(Cantidad)), ''), ',', '.')),
             LTRIM(RTRIM(Unidad)),
             @NumeroVersion,
             @ArchivoActual
@@ -893,7 +937,7 @@ BEGIN
         
         SET @RegistrosControl = @@ROWCOUNT;
         
-        -- 5. Insertar UNIDADES MANIPULACION
+        -- 5. Insertar UNIDADES MANIPULACION (Cantidad_HU es NVARCHAR en staging)
         INSERT INTO EWM_OBDConfirm_Unidades_HDR (
             Numero_Entrega, ID_Unidad_Manipulacion, Tipo_Embalaje, HU_Nivel,
             Numero_Externo, Cantidad_HU, NumeroVersion, NombreArchivo
@@ -904,7 +948,7 @@ BEGIN
             LTRIM(RTRIM(Tipo_Embalaje)),
             LTRIM(RTRIM(HU_Nivel)),
             LTRIM(RTRIM(Numero_Externo)),
-            TRY_CAST(NULLIF(Cantidad_HU, 0) AS DECIMAL(18,3)),
+            TRY_CONVERT(DECIMAL(18,3), REPLACE(NULLIF(LTRIM(RTRIM(Cantidad_HU)), ''), ',', '.')),
             @NumeroVersion,
             @ArchivoActual
         FROM Staging_EWM_OBDConfirm_Unidades_HDR
@@ -913,7 +957,7 @@ BEGIN
         
         SET @RegistrosUnidades = @@ROWCOUNT;
         
-        -- 6. Insertar CONTENIDO EMBALAJE
+        -- 6. Insertar CONTENIDO EMBALAJE (Cantidad_Empacada es NVARCHAR en staging)
         INSERT INTO EWM_OBDConfirm_Contenido_Embalaje (
             ID_Unidad_Manipulacion_Padre, ID_Unidad_Manipulacion_Hijo,
             Numero_Entrega, Numero_Posicion, Cantidad_Empacada, Unidad,
@@ -924,7 +968,7 @@ BEGIN
             LTRIM(RTRIM(ID_Unidad_Manipulacion_Hijo)),
             LTRIM(RTRIM(Numero_Entrega)),
             LTRIM(RTRIM(Numero_Posicion)),
-            TRY_CAST(NULLIF(Cantidad_Empacada, 0) AS DECIMAL(18,3)),
+            TRY_CONVERT(DECIMAL(18,3), REPLACE(NULLIF(LTRIM(RTRIM(Cantidad_Empacada)), ''), ',', '.')),
             LTRIM(RTRIM(Unidad)),
             LTRIM(RTRIM(Material_SKU)),
             LTRIM(RTRIM(Nivel_HU)),
@@ -953,7 +997,11 @@ BEGIN
         
         SET @RegistrosExtensiones = @@ROWCOUNT;
         
-        -- 8. Registrar en bitácora
+        -- 8. Registrar hash del archivo procesado (para idempotencia futura)
+        INSERT INTO dbo.EWM_OBDConfirm_FileHash (NombreArchivo, HashValor)
+        VALUES (@ArchivoActual, @HashActual);
+        
+        -- 9. Registrar en bitácora
         INSERT INTO BitacoraArchivos (NombreArchivo, Estado, Mensaje)
         VALUES (
             @ArchivoActual, 
@@ -967,7 +1015,7 @@ BEGIN
             ' | Ver:' + CAST(@NumeroVersion AS NVARCHAR)
         );
         
-        -- 9. Limpiar staging
+        -- 10. Limpiar staging
         DELETE FROM Staging_EWM_OBDConfirm_Cabecera WHERE NombreArchivo = @ArchivoActual;
         DELETE FROM Staging_EWM_OBDConfirm_Posiciones WHERE NombreArchivo = @ArchivoActual;
         DELETE FROM Staging_EWM_OBDConfirm_Control_Posiciones WHERE NombreArchivo = @ArchivoActual;
