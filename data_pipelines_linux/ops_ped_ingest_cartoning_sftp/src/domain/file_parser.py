@@ -1,18 +1,40 @@
 import os
 import re
+import time
 import pandas as pd
 from io import StringIO
+from datetime import datetime
+
+def _log(tag: str, msg: str):
+    """Log centralizado con timestamp y etapa."""
+    ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    print(f"[{ts}] [{tag}] {msg}")
 
 class FileParser:
     """Responsable de transformar archivos crudos en datos estructurados."""
     
     @staticmethod
+    def _safe_numeric(value: str):
+        """Convierte string SAP a valor numérico seguro para DECIMAL.
+        Retorna None si vacío/solo espacios (evita error varchar→decimal)."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned if cleaned else None
+    
+    @staticmethod
     def parse_cartoning_to_dataframe(file_path: str) -> pd.DataFrame:
         """Parser para archivos de Cartoning"""
+        fname = os.path.basename(file_path)
+        _log('PARSER-CART', f'Inicio parseo: {fname}')
+        t0 = time.time()
         try:
             # 1. Leer y corregir formato (Regla de negocio de limpieza)
             with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
                 raw_content = f.read()
+            
+            file_size_kb = len(raw_content) / 1024
+            _log('PARSER-CART', f'  Archivo leído: {file_size_kb:.1f} KB')
             
             # Regex: Insertar separador donde faltan espacios
             clean_content = re.sub(r'(\d)\s{2,}(\d)', r'\1;\2', raw_content)
@@ -22,7 +44,7 @@ class FileParser:
             df = df.where(pd.notnull(df), None) # Null safety para SQL
             
             # 3. Enriquecer
-            df['NombreArchivo'] = os.path.basename(file_path)
+            df['NombreArchivo'] = fname
             
             # 4. Normalizar columnas para el Insert Masivo
             cols_map = {0: 'TipoRegistro'}
@@ -32,15 +54,27 @@ class FileParser:
             
             # Filtrar solo columnas válidas
             expected_cols = list(cols_map.values()) + ['NombreArchivo']
-            return df[[c for c in df.columns if c in expected_cols]]
+            result = df[[c for c in df.columns if c in expected_cols]]
+            
+            # Resumen por TipoRegistro
+            if 'TipoRegistro' in result.columns:
+                tipo_counts = result['TipoRegistro'].value_counts().to_dict()
+                for tipo, count in tipo_counts.items():
+                    _log('PARSER-CART', f'  TipoRegistro={tipo}: {count} filas')
+            
+            _log('PARSER-CART', f'  OK: {len(result)} filas, {len(result.columns)} cols en {time.time()-t0:.2f}s')
+            return result
             
         except Exception as e:
-            print(f"Error parseando Cartoning {os.path.basename(file_path)}: {e}")
+            _log('PARSER-CART', f'  ERROR parseando {fname}: {e}')
             return None
     
     @staticmethod
     def parse_waveconfirm_to_dataframe(file_path: str) -> pd.DataFrame:
         """Parser para archivos de WaveConfirm"""
+        fname = os.path.basename(file_path)
+        _log('PARSER-WAVE', f'Inicio parseo: {fname}')
+        t0 = time.time()
         try:
             # Leer archivo con separador ;
             df = pd.read_csv(
@@ -54,18 +88,29 @@ class FileParser:
             )
             
             # Limpiar columnas vacías al final
+            cols_antes = len(df.columns)
             df = df.dropna(axis=1, how='all')
+            cols_removidas = cols_antes - len(df.columns)
+            if cols_removidas > 0:
+                _log('PARSER-WAVE', f'  Columnas vacías removidas: {cols_removidas}')
             
             # Null safety para SQL
             df = df.where(pd.notnull(df), None)
             
             # Enriquecer con nombre de archivo
-            df['NombreArchivo'] = os.path.basename(file_path)
+            df['NombreArchivo'] = fname
             
+            # Validar datos
+            nulls_wave = df['WaveID'].isna().sum() if 'WaveID' in df.columns else 0
+            nulls_pedido = df['PedidoID'].isna().sum() if 'PedidoID' in df.columns else 0
+            if nulls_wave > 0 or nulls_pedido > 0:
+                _log('PARSER-WAVE', f'  WARN: {nulls_wave} WaveID nulos, {nulls_pedido} PedidoID nulos')
+            
+            _log('PARSER-WAVE', f'  OK: {len(df)} filas en {time.time()-t0:.2f}s')
             return df
             
         except Exception as e:
-            print(f"Error parseando WaveConfirm {os.path.basename(file_path)}: {e}")
+            _log('PARSER-WAVE', f'  ERROR parseando {fname}: {e}')
             return None
     
     @staticmethod
@@ -74,13 +119,19 @@ class FileParser:
         Parser para archivos IDoc SAP (SHP_OBDLV_SAVE_REPLICA).
         Retorna (df_headers, df_items) - dos DataFrames separados.
         """
+        fname = os.path.basename(file_path)
+        _log('PARSER-OBD', f'Inicio parseo: {fname}')
+        t0 = time.time()
         try:
             headers_data = []
             items_data = []
+            segment_counts = {}
             
             # Leer archivo línea por línea
             with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
                 lines = [line.strip() for line in f.readlines()]
+            
+            _log('PARSER-OBD', f'  Archivo leído: {len(lines)} líneas')
             
             current_delivery_id = None
             current_header = {}
@@ -92,6 +143,7 @@ class FileParser:
                 
                 cols = line.split(';')
                 segment_type = cols[0] if cols else ''
+                segment_counts[segment_type] = segment_counts.get(segment_type, 0) + 1
                 
                 # Detectar inicio de nuevo delivery
                 if segment_type == 'E1BPOBDLVHDR':
@@ -104,8 +156,8 @@ class FileParser:
                     current_delivery_id = cols[1] if len(cols) > 1 else None
                     current_header = {
                         'Delivery_ID': current_delivery_id,
-                        'Peso_Bruto': cols[6] if len(cols) > 6 else None,
-                        'Volumen': cols[10] if len(cols) > 10 else None,
+                        'Peso_Bruto': FileParser._safe_numeric(cols[6]) if len(cols) > 6 else None,
+                        'Volumen': FileParser._safe_numeric(cols[10]) if len(cols) > 10 else None,
                     }
                     current_block_lines = [line]
                 
@@ -115,13 +167,13 @@ class FileParser:
                     # Extraer items
                     if segment_type == 'E1BPOBDLVITEM':
                         items_data.append({
-                            'Delivery_ID_FK': cols[1] if len(cols) > 1 else None,
-                            'Item_Number': cols[2] if len(cols) > 2 else None,
-                            'Material_SKU': cols[3] if len(cols) > 3 else None,
-                            'Descripcion': cols[5] if len(cols) > 5 else None,
-                            'Cantidad': cols[8] if len(cols) > 8 else None,
-                            'Unidad_Medida': cols[9] if len(cols) > 9 else None,
-                            'Peso_Neto_Item': cols[15] if len(cols) > 15 else None,
+                            'Delivery_ID_FK': cols[1].strip() if len(cols) > 1 else None,
+                            'Item_Number': cols[2].strip() if len(cols) > 2 else None,
+                            'Material_SKU': cols[3].strip() if len(cols) > 3 else None,
+                            'Descripcion': cols[5].strip() if len(cols) > 5 else None,
+                            'Cantidad': FileParser._safe_numeric(cols[8]) if len(cols) > 8 else None,
+                            'Unidad_Medida': cols[9].strip() if len(cols) > 9 else None,
+                            'Peso_Neto_Item': FileParser._safe_numeric(cols[15]) if len(cols) > 15 else None,
                         })
             
             # Procesar último bloque
@@ -140,10 +192,18 @@ class FileParser:
             if not df_items.empty:
                 df_items['NombreArchivo'] = filename
             
+            # Resumen de segmentos encontrados
+            for seg, cnt in sorted(segment_counts.items()):
+                _log('PARSER-OBD', f'  Segmento {seg}: {cnt} líneas')
+            
+            h_count = len(df_headers) if not df_headers.empty else 0
+            i_count = len(df_items) if not df_items.empty else 0
+            _log('PARSER-OBD', f'  OK: {h_count} headers, {i_count} items en {time.time()-t0:.2f}s')
+            
             return df_headers, df_items
             
         except Exception as e:
-            print(f"Error parseando Outbound Delivery {os.path.basename(file_path)}: {e}")
+            _log('PARSER-OBD', f'  ERROR parseando {fname}: {e}')
             return None, None
     
     @staticmethod
@@ -187,6 +247,9 @@ class FileParser:
         Retorna 6 DataFrames separados:
         (df_cabecera, df_posiciones, df_control_posiciones, df_unidades_hdr, df_contenido_embalaje, df_extensiones)
         """
+        fname = os.path.basename(file_path)
+        _log('PARSER-OBDC', f'Inicio parseo: {fname}')
+        t0 = time.time()
         try:
             cabecera_data = []
             posiciones_data = []
@@ -194,10 +257,13 @@ class FileParser:
             unidades_hdr_data = []
             contenido_embalaje_data = []
             extensiones_data = []
+            segment_counts = {}
             
             # Leer archivo línea por línea
             with open(file_path, 'r', encoding='latin-1', errors='replace') as f:
                 lines = [line.strip() for line in f.readlines()]
+            
+            _log('PARSER-OBDC', f'  Archivo leído: {len(lines)} líneas')
             
             current_delivery_id = None
             
@@ -207,6 +273,7 @@ class FileParser:
                 
                 cols = [c.strip() for c in line.split(';')]
                 segment_type = cols[0] if cols else ''
+                segment_counts[segment_type] = segment_counts.get(segment_type, 0) + 1
                 
                 # Identificar número de entrega
                 if len(cols) > 1 and cols[1] and cols[1].isdigit():
@@ -301,9 +368,21 @@ class FileParser:
                 if not df.empty:
                     df['NombreArchivo'] = filename
             
+            # Resumen de segmentos
+            for seg, cnt in sorted(segment_counts.items()):
+                _log('PARSER-OBDC', f'  Segmento {seg}: {cnt} líneas')
+            
+            _log('PARSER-OBDC', f'  OK: Cab={len(df_cabecera) if not df_cabecera.empty else 0}'
+                 f' | Pos={len(df_posiciones) if not df_posiciones.empty else 0}'
+                 f' | Ctrl={len(df_control_posiciones) if not df_control_posiciones.empty else 0}'
+                 f' | Uni={len(df_unidades_hdr) if not df_unidades_hdr.empty else 0}'
+                 f' | Cont={len(df_contenido_embalaje) if not df_contenido_embalaje.empty else 0}'
+                 f' | Ext={len(df_extensiones) if not df_extensiones.empty else 0}'
+                 f' en {time.time()-t0:.2f}s')
+            
             return (df_cabecera, df_posiciones, df_control_posiciones, 
                     df_unidades_hdr, df_contenido_embalaje, df_extensiones)
             
         except Exception as e:
-            print(f"Error parseando Outbound Delivery Confirm {os.path.basename(file_path)}: {e}")
+            _log('PARSER-OBDC', f'  ERROR parseando {fname}: {e}')
             return None, None, None, None, None, None

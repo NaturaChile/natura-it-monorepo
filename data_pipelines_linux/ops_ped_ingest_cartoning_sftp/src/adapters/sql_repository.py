@@ -1,28 +1,33 @@
 import os
 import re
 import time
+import traceback
 import urllib
+from datetime import datetime
 from sqlalchemy import create_engine, text
 import pandas as pd
+
+def _log(tag: str, msg: str):
+    """Log centralizado con timestamp y etapa."""
+    ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+    print(f"[{ts}] [{tag}] {msg}")
 
 class SqlRepository:
     def __init__(self, host, db, user=None, password=None, driver="ODBC Driver 17 for SQL Server"):
         
         # Lógica inteligente: ¿SQL Auth o Windows Auth?
         if user and password:
-            # Opción A: Tenemos usuario y contraseña (SQL Authentication)
-            print(f"Conectando a SQL Server ({host}) con usuario: {user}")
+            _log('SQL-CONN', f'Conectando a {host}/{db} con usuario: {user}')
             connection_string = (
                 f"DRIVER={{{driver}}};"
                 f"SERVER={host};"
                 f"DATABASE={db};"
                 f"UID={user};"
                 f"PWD={password};"
-                "Encrypt=no;TrustServerCertificate=yes;"  # Útil para servidores locales/antiguos
+                "Encrypt=no;TrustServerCertificate=yes;"
             )
         else:
-            # Opción B: No hay credenciales, usamos la cuenta de servicio de Windows
-            print(f"Conectando a SQL Server ({host}) vía Windows Auth...")
+            _log('SQL-CONN', f'Conectando a {host}/{db} vía Windows Auth...')
             connection_string = (
                 f"DRIVER={{{driver}}};"
                 f"SERVER={host};"
@@ -30,48 +35,83 @@ class SqlRepository:
                 f"Trusted_Connection=yes;"
             )
 
-        # Codificamos la cadena para SQLAlchemy
         params = urllib.parse.quote_plus(connection_string)
         
-        # Creamos el engine
         self.engine = create_engine(
             f"mssql+pyodbc:///?odbc_connect={params}", 
             fast_executemany=True
         )
+        
+        # Verificar conectividad
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text("SELECT 1"))
+                result.fetchone()
+            _log('SQL-CONN', 'Conexión verificada OK')
+        except Exception as e:
+            _log('SQL-CONN', f'ERROR verificando conexión: {e}')
 
     def init_schema(self, script_path: str):
-        # ... (El resto del código sigue igual) ...
-        if not os.path.exists(script_path): return
-        print("Inicializando esquema de BD...")
+        if not os.path.exists(script_path): 
+            _log('SQL-SCHEMA', f'WARN: Script no encontrado: {script_path}')
+            return
+        _log('SQL-SCHEMA', f'Ejecutando setup_database.sql...')
+        t0 = time.time()
         try:
             with open(script_path, 'r', encoding='utf-8') as f: sql = f.read()
             commands = re.split(r'\bGO\b', sql, flags=re.IGNORECASE)
+            executed = 0
             with self.engine.connect() as conn:
                 for cmd in commands:
                     if cmd.strip():
                         conn.execute(text(cmd))
                         conn.commit()
+                        executed += 1
+            _log('SQL-SCHEMA', f'Schema OK: {executed} bloques ejecutados en {time.time()-t0:.2f}s')
         except Exception as e:
-            print(f"Error Schema Init (Info): {e}")
+            _log('SQL-SCHEMA', f'ERROR Schema Init: {e}')
 
     def bulk_insert(self, df: pd.DataFrame, table_name: str) -> bool:
         try:
             t0 = time.time()
-            # method=None para usar fast_executemany por defecto de pandas/sqlalchemy modernos
+            rows = len(df)
+            cols = list(df.columns)
+            _log('SQL-INSERT', f'Insertando {rows} filas en {table_name} (cols: {", ".join(cols)})')
+            
+            # Detectar posibles problemas antes del insert
+            for col in cols:
+                max_len = df[col].astype(str).str.len().max() if not df[col].isna().all() else 0
+                null_count = df[col].isna().sum()
+                if max_len > 400:
+                    _log('SQL-INSERT', f'  WARN: {col} tiene valor máx de {max_len} chars')
+                if null_count == rows:
+                    _log('SQL-INSERT', f'  INFO: {col} es 100% NULL')
+            
             df.to_sql(table_name, con=self.engine, if_exists='append', index=False, chunksize=20000)
-            print(f"      Insert SQL: {len(df)} filas en {time.time()-t0:.2f}s")
+            elapsed = time.time() - t0
+            rate = rows / elapsed if elapsed > 0 else 0
+            _log('SQL-INSERT', f'OK: {rows} filas en {table_name} ({elapsed:.2f}s, {rate:.0f} filas/s)')
             return True
         except Exception as e:
-            print(f"      Error Bulk Insert: {e}")
+            _log('SQL-INSERT', f'ERROR bulk insert en {table_name}: {e}')
+            _log('SQL-INSERT', f'  Columnas del DataFrame: {list(df.columns)}')
+            _log('SQL-INSERT', f'  Dtypes: {df.dtypes.to_dict()}')
+            _log('SQL-INSERT', f'  Primeras 2 filas: {df.head(2).to_dict()}')
             return False
 
     def execute_sp(self, sp_name: str, params: dict):
         try:
+            t0 = time.time()
+            _log('SQL-SP', f'Ejecutando {sp_name} con params: {params}')
             with self.engine.begin() as conn:
                 param_str = ", ".join([f"@{k}=:{k}" for k in params.keys()])
                 query = text(f"EXEC {sp_name} {param_str}")
                 conn.execute(query, params)
+            elapsed = time.time() - t0
+            _log('SQL-SP', f'OK: {sp_name} completado en {elapsed:.2f}s')
             return True
         except Exception as e:
-            print(f"      Error SP {sp_name}: {e}")
+            elapsed = time.time() - t0
+            _log('SQL-SP', f'ERROR en {sp_name} ({elapsed:.2f}s): {e}')
+            _log('SQL-SP', f'  Traceback: {traceback.format_exc()}')
             return False
