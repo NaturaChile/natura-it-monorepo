@@ -1,0 +1,353 @@
+[INFO] Ubicando pipeline en: E:\natura-it-monorepo\dev\data_pipelines_linux\ops_ped_ingest_cartoning_sftp
+[INFO] Ejecutando main.py (Ciclo de 6 horas)...
+Inicializando Pipeline Multi-Fuente EWM (Local + Streaming)...
+Conectando a SQL Server (10.156.16.45\SQL2019) con usuario: ***
+======================================================================
+ MULTI-SOURCE STREAMING SERVICE INICIADO
+ Fuentes: Cartoning, WaveConfirm, OutboundDelivery, OutboundDeliveryConfirm
+ Intervalo de polling: 300 segundos
+ Threads compartidos: 3
+======================================================================
+Inicializando esquema de BD...
+Error Schema Init (Info): (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecDirectW)")
+[SQL: 
+-- =============================================
+-- 3. STORED PROCEDURES
+-- =============================================
+-- =====================================================
+-- SP PARA CARTONING (Con versionado)
+-- =====================================================
+CREATE OR ALTER PROCEDURE [dbo].[sp_Proce***r_Cartoning_EWM]
+    @ArchivoActual NVARCHAR(500)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        -- 1. Capturamos Pedidos desde Staging_EWM_Cartoning
+        SELECT DISTINCT
+            C1 AS PedidoID, C2 AS EntregaSAP, 
+            TRY_CAST(C4 AS DECIMAL(18,3)) AS Volumen, 
+            C5 AS UnidadVol,
+            TRY_CAST(C6 AS DECIMAL(18,3)) AS Peso, 
+            C7 AS UnidadPeso, 
+            TRY_CAST(C13 AS INT) AS Bultos, 
+            C14 AS Cliente, 
+            NombreArchivo
+        INTO #TempPedidos
+        FROM Staging_EWM_Cartoning
+        WHERE NombreArchivo = @ArchivoActual 
+          AND TipoRegistro = 'ZSIEWM_CARTONIZACAO_PEDIDO';
+        -- 2. Insertamos Pedidos (Logica +1 Version)
+        INSERT INTO EWM_Pedidos (
+            PedidoID, EntregaSAP, VolumenTotal, UnidadVol, PesoTotal, UnidadPeso, 
+            TotalBultos, ClienteID, NombreArchivo, NumeroVersion
+        )
+        SELECT 
+            T.PedidoID, T.EntregaSAP, T.Volumen, T.UnidadVol, T.Peso, T.UnidadPeso, 
+            T.Bultos, T.Cliente, T.NombreArchivo,
+            ISNULL((SELECT MAX(NumeroVersion) FROM EWM_Pedidos WHERE PedidoID = T.PedidoID), 0) + 1
+        FROM #TempPedidos T;
+        -- 3. Insertamos Cajas
+        INSERT INTO EWM_Cajas (
+            CajaID, PedidoID, TipoCaja, Volumen, Peso, TrackingCode, 
+            NombreArchivo, NumeroVersion
+        )
+        SELECT DISTINCT
+            R.C2, R.C1, R.C3, 
+            TRY_CAST(R.C4 AS DECIMAL(18,3)), 
+            TRY_CAST(R.C6 AS DECIMAL(18,3)), 
+            R.C11, R.NombreArchivo,
+            (SELECT MAX(NumeroVersion) FROM EWM_Pedidos WHERE PedidoID = R.C1)
+        FROM Staging_EWM_Cartoning R
+        WHERE R.NombreArchivo = @ArchivoActual 
+          AND R.TipoRegistro = 'ZSIEWM_CARTONIZACAO_CAIXA';
+        -- 4. Insertamos Items
+        INSERT INTO EWM_Items (
+            PedidoID, Posicion, CajaID, SKU, Descripcion, 
+            Cantidad, Unidad, NombreArchivo, NumeroVersion
+        )
+        SELECT 
+            R.C1, R.C2, R.C3, R.C4, R.C5, 
+            TRY_CAST(R.C6 AS DECIMAL(18,3)), R.C7, 
+            R.NombreArchivo,
+            (SELECT MAX(NumeroVersion) FROM EWM_Pedidos WHERE PedidoID = R.C1)
+        FROM Staging_EWM_Cartoning R
+        WHERE R.NombreArchivo = @ArchivoActual 
+          AND R.TipoRegistro = 'ZSIEWM_CARTONIZACAO_ITEM';
+        -- 5. Limpieza y Bit�cora
+        DROP TABLE IF EXISTS #TempPedidos;
+        
+        -- Borrar del staging
+        DELETE FROM Staging_EWM_Cartoning WHERE NombreArchivo = @ArchivoActual;
+        -- Registrar en BitacoraArchivos que terminamos bien
+        INSERT INTO BitacoraArchivos (NombreArchivo, Estado, Men***je)
+        VALUES (@ArchivoActual, 'PROCESADO', 'Carga exito*** con versionado.');
+        COMMIT TRANSACTION;
+        PRINT '--> [VERSIONADO] Archivo proce***do y registrado en Bit�cora: ' + @ArchivoActual;
+        
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        
+        -- Registrar error en Bit�cora
+        INSERT INTO BitacoraArchivos (NombreArchivo, Estado, Men***je)
+        VALUES (@ArchivoActual, 'ERROR', ERROR_MESSAGE());
+        PRINT 'ERROR CRITICO: ' + ERROR_MESSAGE();
+    END CATCH
+END
+]
+(Background on this error at: https://sqlalche.me/e/20/f405)
+----------------------------------------------------------------------
+CICLO #1 | 2026-02-10 10:40:07
+  Cartoning: 0 descargados, 0 proce***dos, 0 errores
+  WaveConfirm: 0 descargados, 0 proce***dos, 0 errores
+  OutboundDelivery: 0 descargados, 0 proce***dos, 0 errores
+  OutboundDeliveryConfirm: 0 descargados, 0 proce***dos, 0 errores
+----------------------------------------------------------------------
+>>> FUENTE: Cartoning <<<
+  DETECTANDO archivos nuevos/modificados...
+  DETECTADOS: 3057 archivos para proce***r
+  PROCESANDO: 3057 archivos en lotes...
+    Lote 1/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25855914', '11337616', '1', '9765.360', 'CM3', '1784.000', 'G', None, None, None, None, None, '7.000', '000000000', 'CARTONING_SIMULATION_20251203192322_119_JS_8e149c65-d8bf-4738-ba6a-7cdf8744f723_e840b9de-3cae-42b7-8f3e-a102dfc2ac89.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25855914', '1244324655', 'Z09', '9765.360', 'CM3', '1784.000', 'G', None, '1', None, '7', '00025855914', None, None, 'CARTONING_SIMULATION_20251203192322_119_JS_8e149c65-d8bf-4738-ba6a-7cdf8744f723_e840b9de-3cae-42b7-8f3e-a102dfc2ac89.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25855914', '00010', '1244324655', '50481936', 'TODODIA COND NUTRICAO 280ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251203192322_119_JS_8e149c65-d8bf-4738-ba6a-7cdf8744f723_e840b9de-3cae-42b7-8f3e-a102dfc2ac89.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25855914', '00020', '1244324655', '50481933', 'TODODIA SH NUTRICAO 300ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SI
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 2/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25922743', '10514945', '1', '9765.360', 'CM3', '1579.000', 'G', None, None, None, None, None, '7.000', '106305328', 'CARTONING_SIMULATION_20251214212821_309_3d2c6fb3-3b9d-4955-a0b3-b1b8916bd3cd.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25922743', '1246154557', 'Z09', '9765.360', 'CM3', '1579.000', 'G', None, '1', None, '7', '5330010630532800013201', '1', None, 'CARTONING_SIMULATION_20251214212821_309_3d2c6fb3-3b9d-4955-a0b3-b1b8916bd3cd.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25922743', '00010', '1246154557', '50487854', 'TODODIA RF HID DES CORP AVELACA 400ML', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251214212821_309_3d2c6fb3-3b9d-4955-a0b3-b1b8916bd3cd.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25922743', '00020', '1246154557', '50527993', 'TODODIA DES ROLLON AMEIXA 70ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251214212821_309_3d2c6fb3-3b9d-4955-a0b3-b1b8916bd3cd.txt'), ('ZSIEWM_CARTONIZACAO_I
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 3/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25922682', '11277477', '1', '9765.360', 'CM3', '718.000', 'G', None, None, None, None, None, '15.000', '106305321', 'CARTONING_SIMULATION_20251215012910_329_10_ec96c27a-3bc5-4f76-8762-f60243dc341d.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25922682', '1246204887', 'Z09', '9765.360', 'CM3', '718.000', 'G', None, '1', None, '15', '5330010630532100013201', '1', None, 'CARTONING_SIMULATION_20251215012910_329_10_ec96c27a-3bc5-4f76-8762-f60243dc341d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25922682', '00010', '1246204887', '50499009', 'ADV TECH CREME DE TRATAMENTO 150ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215012910_329_10_ec96c27a-3bc5-4f76-8762-f60243dc341d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25922682', '00020', '1246204887', '50489683', 'AT CEPILLO CON ESPEJO 2 EN 1', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215012910_329_10_ec96c27a-3bc5-4f76-8762-f60243dc341d.txt'), ('ZSIEWM_CARTONI
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 4/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25915291', '11318509', '1', '14796.000', 'CM3', '2730.000', 'G', None, None, None, None, None, '16.000', '006724822', 'CARTONING_SIMULATION_20251215083250_349_fd6a26da-bbfa-4629-8616-8a7d420a2840.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25915291', '1246239780', 'Z14', '14796.000', 'CM3', '2730.000', 'G', None, '1', None, '16', '920', '2561467006724822001', None, 'CARTONING_SIMULATION_20251215083250_349_fd6a26da-bbfa-4629-8616-8a7d420a2840.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25915291', '00010', '1246239780', '50487851', 'TODODIA RF HID DES CORP FRU VER 400ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215083250_349_fd6a26da-bbfa-4629-8616-8a7d420a2840.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25915291', '00020', '1246239780', '50487853', 'TODODIA RF HID DES CORP FLIMAO 400ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215083250_349_fd6a26da-bbfa-4629-8616-8a7d420a2840.txt'), ('ZSIEWM_CARTO
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 5/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25914950', '11376912', '1', '14796.000', 'CM3', '3989.000', 'G', None, None, None, None, None, '16.000', '000000000', 'CARTONING_SIMULATION_20251215163748_409_7ae5ed31-26b6-4885-80bf-1cd4bfd4b912.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25914950', '1246299289', 'Z14', '14796.000', 'CM3', '3989.000', 'G', None, '1', None, '16', '00025914950', None, None, 'CARTONING_SIMULATION_20251215163748_409_7ae5ed31-26b6-4885-80bf-1cd4bfd4b912.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25914950', '00010', '1246299289', '50267839', 'TODODIA SAB BARRA FRUTAS VERM 5X90G PM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215163748_409_7ae5ed31-26b6-4885-80bf-1cd4bfd4b912.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25914950', '00020', '1246299289', '50398702', 'TODODIA HID DES CORP FRU V LT 400 ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251215163748_409_7ae5ed31-26b6-4885-80bf-1cd4bfd4b912.txt'), ('ZSIEWM_CARTONIZACAO_
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 6/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25921861', '10880279', '1', '14796.000', 'CM3', '4073.000', 'G', None, None, None, None, None, '22.000', '006725867', 'CARTONING_SIMULATION_20251216024747_435_e8fbaf8d-e815-4d33-96e2-15f45a880222.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25921861', '1246363133', 'Z14', '14796.000', 'CM3', '4073.000', 'G', None, '1', None, '22', '920', '2571467006725867001', None, 'CARTONING_SIMULATION_20251216024747_435_e8fbaf8d-e815-4d33-96e2-15f45a880222.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25921861', '00010', '1246363133', '50398702', 'TODODIA HID DES CORP FRU V LT 400 ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216024747_435_e8fbaf8d-e815-4d33-96e2-15f45a880222.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25921861', '00020', '1246363133', '50461857', 'TODODIA DES HID AMEIX BAU 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216024747_435_e8fbaf8d-e815-4d33-96e2-15f45a880222.txt'), ('ZSIEWM_CARTONI
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 7/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25932169', '10914382', '1', '7736.830', 'CM3', '3762.000', 'G', None, None, None, None, None, '14.000', '106309361', 'CARTONING_SIMULATION_20251216061256_455_28767c33-cf48-4bff-b904-ca8ff63a5c6b.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25932169', '1246409107', 'Z07', '7736.830', 'CM3', '3762.000', 'G', None, '1', None, '14', '5330010630936110013201', '1', None, 'CARTONING_SIMULATION_20251216061256_455_28767c33-cf48-4bff-b904-ca8ff63a5c6b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25932169', '00010', '1246409107', '50294005', 'EKOS POLPA CRP CASTANHA 400ML TUT LATAM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216061256_455_28767c33-cf48-4bff-b904-ca8ff63a5c6b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25932169', '00020', '1246409107', '50481922', 'TODODIA COND HIDRATACAO 280ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216061256_455_28767c33-cf48-4bff-b904-ca8ff63a5c6b.txt'), ('ZSIEWM_CARTONIZACA
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 8/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25933891', '833077', '1', '17089.380', 'CM3', '5127.000', 'G', None, None, None, None, None, '25.000', '000000000', 'CARTONING_SIMULATION_20251216133812_506_a3bc8821-7512-46c1-8d90-90dda5733a2a.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25933891', '1246487242', 'Z17', '17089.380', 'CM3', '5127.000', 'G', None, '1', None, '25', '00025933891', None, None, 'CARTONING_SIMULATION_20251216133812_506_a3bc8821-7512-46c1-8d90-90dda5733a2a.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25933891', '00010', '1246487242', '50368441', 'MMBB RF SHAMPOO 200ML', '4.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216133812_506_a3bc8821-7512-46c1-8d90-90dda5733a2a.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25933891', '00020', '1246487242', '50461857', 'TODODIA DES HID AMEIX BAU 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216133812_506_a3bc8821-7512-46c1-8d90-90dda5733a2a.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25933891', '
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 9/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25932452', '10560383', '2', '42982.380', 'CM3', '6458.000', 'G', None, None, None, None, None, '49.000', '106309475', 'CARTONING_SIMULATION_20251216203810_547_9d67919a-e6b0-48f0-86a4-a578e43006a3.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25932452', '1246574027', 'Z25', '25893.000', 'CM3', '2639.000', 'G', None, '1', None, '17', '5330010630947500013201', '1', None, 'CARTONING_SIMULATION_20251216203810_547_9d67919a-e6b0-48f0-86a4-a578e43006a3.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25932452', '1246574034', 'Z17', '17089.380', 'CM3', '3819.000', 'G', None, '2', None, '32', '5330010630947500023201', '1', None, 'CARTONING_SIMULATION_20251216203810_547_9d67919a-e6b0-48f0-86a4-a578e43006a3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25932452', '00010', '1246574027', '50482783', 'DISPENSADOR DE JABON', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251216203810_547_9d67919a-e6b0-48f0-86a4-a578e43006a3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25932452', '0
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 10/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25933874', '11270808', '1', '14796.000', 'CM3', '2407.000', 'G', None, None, None, None, None, '22.000', '006727923', 'CARTONING_SIMULATION_20251217032455_567_847a61a9-484f-4647-89f8-18c0c73749f1.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25933874', '1246607541', 'Z14', '14796.000', 'CM3', '2407.000', 'G', None, '1', None, '22', '920', '2561467006727923001', None, 'CARTONING_SIMULATION_20251217032455_567_847a61a9-484f-4647-89f8-18c0c73749f1.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25933874', '00010', '1246607541', '50525992', 'SET X4 TAZAS COLORES', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217032455_567_847a61a9-484f-4647-89f8-18c0c73749f1.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25933874', '00020', '1246607541', '50396161', 'TODODIA HID DES CORPO ALGODAO 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217032455_567_847a61a9-484f-4647-89f8-18c0c73749f1.txt'), ('ZSIEWM_CARTONIZACAO_ITEM',
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 11/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25941828', '11380209', '1', '14796.000', 'CM3', '2202.000', 'G', None, None, None, None, None, '15.000', '106313053', 'CARTONING_SIMULATION_20251217082807_598_87a0ffd9-194b-4829-8d5b-83d0dd477642.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941828', '1246638941', 'Z14', '14796.000', 'CM3', '2202.000', 'G', None, '1', None, '15', '5330010631305310013201', '1', None, 'CARTONING_SIMULATION_20251217082807_598_87a0ffd9-194b-4829-8d5b-83d0dd477642.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941828', '00010', '1246638941', '50471317', 'EKOS CONJ DES HID CASTANHA CONCENT LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217082807_598_87a0ffd9-194b-4829-8d5b-83d0dd477642.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941828', '00020', '1246638941', '50578946', 'EKOS EDT FRESC CASTAN ANGT 150ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217082807_598_87a0ffd9-194b-4829-8d5b-83d0dd477642.txt'), ('ZSIEWM_CAR
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 12/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25941710', '10233603', '2', '35658.360', 'CM3', '6309.000', 'G', None, None, None, None, None, '31.000', '006729676', 'CARTONING_SIMULATION_20251217093553_620_85dfa3ab-5236-4d1a-b493-3bb7f8812770.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941710', '1246680650', 'Z25', '25893.000', 'CM3', '4442.000', 'G', None, '1', None, '22', '920', '2561467006729676001', None, 'CARTONING_SIMULATION_20251217093553_620_85dfa3ab-5236-4d1a-b493-3bb7f8812770.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941710', '1246680667', 'Z09', '9765.360', 'CM3', '1867.000', 'G', None, '2', None, '9', '920', '2561467006729676002', None, 'CARTONING_SIMULATION_20251217093553_620_85dfa3ab-5236-4d1a-b493-3bb7f8812770.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941710', '00010', '1246680650', '50545002', 'TODODIA SAB BAR SORTIDO ESTRELA 6X50G', '6.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217093553_620_85dfa3ab-5236-4d1a-b493-3bb7f8812770.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 13/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25941722', '10239500', '2', '17268.380', 'CM3', '5249.000', 'G', None, None, None, None, None, '34.000', '000000000', 'CARTONING_SIMULATION_20251217160846_660_dc63b2b6-a272-483a-8f81-1a929c46d840.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941722', '1246768013', 'Z17', '17089.380', 'CM3', '4121.000', 'G', None, '1', None, '33', '00025941722', None, None, 'CARTONING_SIMULATION_20251217160846_660_dc63b2b6-a272-483a-8f81-1a929c46d840.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941722', '1246768167', 'FC', '179.000', 'CM3', '1128.000', 'G', None, '2', None, '1', '00025941722', None, None, 'CARTONING_SIMULATION_20251217160846_660_dc63b2b6-a272-483a-8f81-1a929c46d840.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941722', '00010', '1246768013', '50535546', 'TODODIA RF DES HID CORP NOIT VERAO 400ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217160846_660_dc63b2b6-a272-483a-8f81-1a929c46d840.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941722', '00020
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 14/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25943202', '10709619', '1', '17089.380', 'CM3', '2065.000', 'G', None, None, None, None, None, '16.000', '006729934', 'CARTONING_SIMULATION_20251217214335_683_30a4feea-4ced-4020-85c7-8d42b4d39806.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25943202', '1246840528', 'Z17', '17089.380', 'CM3', '2065.000', 'G', None, '1', None, '16', '920', '2691467006729934001', None, 'CARTONING_SIMULATION_20251217214335_683_30a4feea-4ced-4020-85c7-8d42b4d39806.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25943202', '00010', '1246840528', '50308229', 'KRISKA DRAMA EDT FEM 100ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217214335_683_30a4feea-4ced-4020-85c7-8d42b4d39806.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25943202', '00020', '1246840528', '50320917', 'HUMOR BEIJO FEM EDT 75ML LTM', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251217214335_683_30a4feea-4ced-4020-85c7-8d42b4d39806.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', 
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 15/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25941995', '11380107', '1', '14796.000', 'CM3', '2856.000', 'G', None, None, None, None, None, '27.000', '000000000', 'CARTONING_SIMULATION_20251218055750_704_bab529ec-4248-48d7-8dd3-6ccf3550e6ef.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25941995', '1246879467', 'Z14', '14796.000', 'CM3', '2856.000', 'G', None, '1', None, '27', '00025941995', None, None, 'CARTONING_SIMULATION_20251218055750_704_bab529ec-4248-48d7-8dd3-6ccf3550e6ef.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941995', '00010', '1246879467', '50578946', 'EKOS EDT FRESC CASTAN ANGT 150ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218055750_704_bab529ec-4248-48d7-8dd3-6ccf3550e6ef.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25941995', '00020', '1246879467', '50494973', 'CUADERNO KIT INICIO 2024 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218055750_704_bab529ec-4248-48d7-8dd3-6ccf3550e6ef.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '259
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 16/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25946711', '10390582', '1', '14796.000', 'CM3', '2787.000', 'G', None, None, None, None, None, '25.000', '106314935', 'CARTONING_SIMULATION_20251218080843_723_1d47ed43-46fe-4ce3-ba9d-ac74d8f6b30e.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25946711', '1246932087', 'Z14', '14796.000', 'CM3', '2787.000', 'G', None, '1', None, '25', '5330010631493540013201', '1', None, 'CARTONING_SIMULATION_20251218080843_723_1d47ed43-46fe-4ce3-ba9d-ac74d8f6b30e.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25946711', '00010', '1246932087', '50353527', 'MMBB SABONETE LIQUIDO RELAXANTE 200ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218080843_723_1d47ed43-46fe-4ce3-ba9d-ac74d8f6b30e.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25946711', '00020', '1246932087', '50308643', 'HUMOR PAZ E HUMOR EDT MASC 75ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218080843_723_1d47ed43-46fe-4ce3-ba9d-ac74d8f6b30e.txt'), ('ZSIEWM_CARTO
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 17/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25952581', '11371730', '1', '9765.360', 'CM3', '993.000', 'G', None, None, None, None, None, '3.000', '006732169', 'CARTONING_SIMULATION_20251218142248_777_6ad63ada-ca58-4336-b07c-7725eedfd06b.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25952581', '1247017622', 'Z09', '9765.360', 'CM3', '993.000', 'G', None, '1', None, '3', '920', '1001467006732169001', None, 'CARTONING_SIMULATION_20251218142248_777_6ad63ada-ca58-4336-b07c-7725eedfd06b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952581', '00010', '1247017622', '50308673', 'KRISKA SHOCK EDT FEMININO 100ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218142248_777_6ad63ada-ca58-4336-b07c-7725eedfd06b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952581', '00020', '1247017622', '50399671', 'TODODIA RF HID DES CORP FRAMBOE 400ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218142248_777_6ad63ada-ca58-4336-b07c-7725eedfd06b.txt'), ('ZSIEWM_CARTONIZACAO
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 18/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25958330', '11188441', '1', '9765.360', 'CM3', '968.000', 'G', None, None, None, None, None, '7.000', '006733540', 'CARTONING_SIMULATION_20251218235343_823_5101e186-7ad0-4cf8-ab51-1d323f76932b.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25958330', '1247088462', 'Z09', '9765.360', 'CM3', '968.000', 'G', None, '1', None, '7', '920', '2561467006733540001', None, 'CARTONING_SIMULATION_20251218235343_823_5101e186-7ad0-4cf8-ab51-1d323f76932b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25958330', '00010', '1247088462', '50320917', 'HUMOR BEIJO FEM EDT 75ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218235343_823_5101e186-7ad0-4cf8-ab51-1d323f76932b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25958330', '00020', '1247088462', '50320918', 'HUMOR BEIJO MASC EDT 75ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251218235343_823_5101e186-7ad0-4cf8-ab51-1d323f76932b.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '259583
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 19/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25958455', '10839172', '1', '9765.360', 'CM3', '3199.000', 'G', None, None, None, None, None, '16.000', '006733547', 'CARTONING_SIMULATION_20251219051801_843_15297973-6f5e-475f-bec7-e54b2b99db8a.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25958455', '1247127376', 'Z09', '9765.360', 'CM3', '3199.000', 'G', None, '1', None, '16', '920', '2561467006733547001', None, 'CARTONING_SIMULATION_20251219051801_843_15297973-6f5e-475f-bec7-e54b2b99db8a.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25958455', '00010', '1247127376', '50376188', 'TODODIA SAB LIQ INT SUAVE CONFORTO 200ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219051801_843_15297973-6f5e-475f-bec7-e54b2b99db8a.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25958455', '00020', '1247127376', '50481922', 'TODODIA COND HIDRATACAO 280ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219051801_843_15297973-6f5e-475f-bec7-e54b2b99db8a.txt'), ('ZSIEWM_CARTONIZACA
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 20/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25952805', '10085973', '1', '14796.000', 'CM3', '3653.000', 'G', None, None, None, None, None, '33.000', '000000000', 'CARTONING_SIMULATION_20251219081500_864_782d4ffb-48fd-4364-be5a-f777fd2dcf29.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25952805', '1247170662', 'Z14', '14796.000', 'CM3', '3653.000', 'G', None, '1', None, '33', '00025952805', None, None, 'CARTONING_SIMULATION_20251219081500_864_782d4ffb-48fd-4364-be5a-f777fd2dcf29.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952805', '00010', '1247170662', '50396161', 'TODODIA HID DES CORPO ALGODAO 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219081500_864_782d4ffb-48fd-4364-be5a-f777fd2dcf29.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952805', '00020', '1247170662', '50506695', 'LUMINA COND ALISADOS 300ML PS', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219081500_864_782d4ffb-48fd-4364-be5a-f777fd2dcf29.txt'), ('ZSIEWM_CARTONIZACAO_ITEM',
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 21/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25942285', '11376878', '1', '14796.000', 'CM3', '3043.000', 'G', None, None, None, None, None, '32.000', '106313378', 'CARTONING_SIMULATION_20251219152751_924_a82a6025-ec53-424e-8e19-107ba9f16dc7.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25942285', '1247253235', 'Z14', '14796.000', 'CM3', '3043.000', 'G', None, '1', None, '32', '5330010631337840013201', '1', None, 'CARTONING_SIMULATION_20251219152751_924_a82a6025-ec53-424e-8e19-107ba9f16dc7.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25942285', '00010', '1247253235', '50494973', 'CUADERNO KIT INICIO 2024 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219152751_924_a82a6025-ec53-424e-8e19-107ba9f16dc7.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25942285', '00020', '1247253235', '50492253', 'LOV U EDP DATE NIGHT 75ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219152751_924_a82a6025-ec53-424e-8e19-107ba9f16dc7.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '2594
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 22/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25952533', '10504321', '1', '9765.360', 'CM3', '676.000', 'G', None, None, None, None, None, '19.000', '106317748', 'CARTONING_SIMULATION_20251219200746_970_2d0baf11-5b43-4da5-8d86-ccbc6809ceae.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25952533', '1247292340', 'Z09', '9765.360', 'CM3', '676.000', 'G', None, '1', None, '19', '5330010631774820013201', '1', None, 'CARTONING_SIMULATION_20251219200746_970_2d0baf11-5b43-4da5-8d86-ccbc6809ceae.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952533', '00010', '1247292340', '50545000', 'EKOS SAB LIQ ESF MARACUJA 100ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219200746_970_2d0baf11-5b43-4da5-8d86-ccbc6809ceae.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952533', '00020', '1247292340', '61013904', 'REVISTA 012026 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251219200746_970_2d0baf11-5b43-4da5-8d86-ccbc6809ceae.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952533
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 23/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25952847', '11379942', '1', '9765.360', 'CM3', '1508.000', 'G', None, None, None, None, None, '14.000', '006732262', 'CARTONING_SIMULATION_20251220030758_991_2737d2d5-6b72-4b18-be74-c52c8b7987dc.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25952847', '1247315278', 'Z09', '9765.360', 'CM3', '1508.000', 'G', None, '1', None, '14', '920', '2561467006732262001', None, 'CARTONING_SIMULATION_20251220030758_991_2737d2d5-6b72-4b18-be74-c52c8b7987dc.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952847', '00010', '1247315278', '50494973', 'CUADERNO KIT INICIO 2024 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251220030758_991_2737d2d5-6b72-4b18-be74-c52c8b7987dc.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25952847', '00020', '1247315278', '50502861', 'ANEW RENEWAL POWER TREATMENT CREAM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251220030758_991_2737d2d5-6b72-4b18-be74-c52c8b7987dc.txt'), ('ZSIEWM_CARTONIZACAO_ITEM',
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 24/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25960634', '11270110', '1', '9765.360', 'CM3', '1477.000', 'G', None, None, None, None, None, '13.000', '106323805', 'CARTONING_SIMULATION_20251220073856_011_1c38c248-fe50-47f1-a2fb-2e6d43426c4e.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25960634', '1247361183', 'Z09', '9765.360', 'CM3', '1477.000', 'G', None, '1', None, '13', '5330010632380500013201', '1', None, 'CARTONING_SIMULATION_20251220073856_011_1c38c248-fe50-47f1-a2fb-2e6d43426c4e.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25960634', '00010', '1247361183', '50527966', 'ERVA DOCE DES ROLLON CLASSICO 70ML', '3.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251220073856_011_1c38c248-fe50-47f1-a2fb-2e6d43426c4e.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25960634', '00020', '1247361183', '50527964', 'TODODIA DES ROLLON ALGODAO 70ML', '3.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251220073856_011_1c38c248-fe50-47f1-a2fb-2e6d43426c4e.txt'), ('ZSIEWM_CARTONIZACAO_I
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 25/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25966401', '11305669', '3', '50921.380', 'CM3', '10935.000', 'G', None, None, None, None, None, '58.000', '106323851', 'CARTONING_SIMULATION_20251220145246_071_1aea11c7-8fd7-4a3d-933d-1da28591440d.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25966401', '1247399278', 'OL', '7939.000', 'CM3', '1220.000', 'G', None, '1', 'X', '1', '5330010632385110013201', '1', None, 'CARTONING_SIMULATION_20251220145246_071_1aea11c7-8fd7-4a3d-933d-1da28591440d.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25966401', '1247399285', 'Z25', '25893.000', 'CM3', '5530.000', 'G', None, '2', None, '28', '5330010632385110023201', '1', None, 'CARTONING_SIMULATION_20251220145246_071_1aea11c7-8fd7-4a3d-933d-1da28591440d.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25966401', '1247399292', 'Z17', '17089.380', 'CM3', '4185.000', 'G', None, '3', None, '29', '5330010632385110033201', '1', None, 'CARTONING_SIMULATION_20251220145246_071_1aea11c7-8fd7-4a3d-933d-1da28591440d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25966401', '0
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 26/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25968479', '11382434', '1', '3557.710', 'CM3', '971.000', 'G', None, None, None, None, None, '4.000', '000000000', 'CARTONING_SIMULATION_20251222113245_128_32311618-e542-4cd8-a435-1dd2676db35d.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25968479', '1247459712', 'Z03', '3557.710', 'CM3', '971.000', 'G', None, '1', None, '4', '00025968479', None, None, 'CARTONING_SIMULATION_20251222113245_128_32311618-e542-4cd8-a435-1dd2676db35d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968479', '00010', '1247459712', '50366335', 'BOLSA MEDIANA ICONICA KRAFT 21 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222113245_128_32311618-e542-4cd8-a435-1dd2676db35d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968479', '00020', '1247459712', '50481922', 'TODODIA COND HIDRATACAO 280ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222113245_128_32311618-e542-4cd8-a435-1dd2676db35d.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968479',
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 27/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25968645', '11067100', '1', '9765.360', 'CM3', '2670.000', 'G', None, None, None, None, None, '16.000', '106324862', 'CARTONING_SIMULATION_20251222163751_166_47d72194-a367-4f6b-9f13-76f68535ad1f.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25968645', '1247501152', 'Z09', '9765.360', 'CM3', '2670.000', 'G', None, '1', None, '16', '5330010632486240013201', '1', None, 'CARTONING_SIMULATION_20251222163751_166_47d72194-a367-4f6b-9f13-76f68535ad1f.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968645', '00010', '1247501152', '50535546', 'TODODIA RF DES HID CORP NOIT VERAO 400ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222163751_166_47d72194-a367-4f6b-9f13-76f68535ad1f.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968645', '00020', '1247501152', '50422465', 'TODODIA HID DES CORP ACEROLA 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222163751_166_47d72194-a367-4f6b-9f13-76f68535ad1f.txt'), ('ZSIEWM_C
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 28/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25968530', '10045202', '1', '9765.360', 'CM3', '2844.000', 'G', None, None, None, None, None, '17.000', '006735881', 'CARTONING_SIMULATION_20251222233826_201_eefc1989-708c-43fe-b5a1-4512e91c1069.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25968530', '1247540892', 'Z09', '9765.360', 'CM3', '2844.000', 'G', None, '1', None, '17', '920', '2561467006735881001', None, 'CARTONING_SIMULATION_20251222233826_201_eefc1989-708c-43fe-b5a1-4512e91c1069.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968530', '00010', '1247540892', '50366335', 'BOLSA MEDIANA ICONICA KRAFT 21 CH', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222233826_201_eefc1989-708c-43fe-b5a1-4512e91c1069.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25968530', '00020', '1247540892', '50518843', 'KAIAK SAB LIQ CLASS FEM RAM 200ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251222233826_201_eefc1989-708c-43fe-b5a1-4512e91c1069.txt'), ('ZSIEWM_CARTONIZACAO_I
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 29/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25969304', '526034', '1', '14796.000', 'CM3', '3739.000', 'G', None, None, None, None, None, '32.000', '000000000', 'CARTONING_SIMULATION_20251223040804_221_7c334675-2c30-410c-901f-5b72808229a6.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25969304', '1247570080', 'Z14', '14796.000', 'CM3', '3739.000', 'G', None, '1', None, '32', '00025969304', None, None, 'CARTONING_SIMULATION_20251223040804_221_7c334675-2c30-410c-901f-5b72808229a6.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25969304', '00010', '1247570080', '50518421', 'ANILLO DE YOGA', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223040804_221_7c334675-2c30-410c-901f-5b72808229a6.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25969304', '00020', '1247570080', '50422465', 'TODODIA HID DES CORP ACEROLA 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223040804_221_7c334675-2c30-410c-901f-5b72808229a6.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25969304', '0003
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 30/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25969590', '10895455', '2', '35658.360', 'CM3', '6247.000', 'G', None, None, None, None, None, '40.000', '006736027', 'CARTONING_SIMULATION_20251223071748_241_59f57dd8-2328-43ed-8605-6016e7ee4f55.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25969590', '1247598480', 'Z25', '25893.000', 'CM3', '4280.000', 'G', None, '1', None, '27', '920', '2751467006736027001', None, 'CARTONING_SIMULATION_20251223071748_241_59f57dd8-2328-43ed-8605-6016e7ee4f55.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25969590', '1247598497', 'Z09', '9765.360', 'CM3', '1967.000', 'G', None, '2', None, '13', '920', '2751467006736027002', None, 'CARTONING_SIMULATION_20251223071748_241_59f57dd8-2328-43ed-8605-6016e7ee4f55.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25969590', '00010', '1247598480', '50489115', 'TENAZAS PARA CORTAR', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223071748_241_59f57dd8-2328-43ed-8605-6016e7ee4f55.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25969590', '00020
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 31/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25971938', '10576653', '1', '7736.830', 'CM3', '2467.000', 'G', None, None, None, None, None, '13.000', '106326428', 'CARTONING_SIMULATION_20251223121749_283_67433e04-43fe-4b69-a7ae-847353ed3cfb.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25971938', '1247666042', 'Z07', '7736.830', 'CM3', '2467.000', 'G', None, '1', None, '13', '5330010632642840013201', '1', None, 'CARTONING_SIMULATION_20251223121749_283_67433e04-43fe-4b69-a7ae-847353ed3cfb.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25971938', '00010', '1247666042', '50308141', 'TODODIA RF SAB LIQ FRAMBOESA 300ML', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223121749_283_67433e04-43fe-4b69-a7ae-847353ed3cfb.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25971938', '00020', '1247666042', '50399279', 'TODODIA RF SAB LIQ NEW AVELAC 300ML PM', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223121749_283_67433e04-43fe-4b69-a7ae-847353ed3cfb.txt'), ('ZSIEWM_CARTONI
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 32/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25971845', '11021817', '1', '9765.360', 'CM3', '3159.000', 'G', None, None, None, None, None, '20.000', '000000000', 'CARTONING_SIMULATION_20251223190256_HYrev_327_d4aeb89c-b8ac-4c3a-b7d7-152d69cc51c8_1e0b072c-0af5-4cc5-9631-e9e484bf89c3.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25971845', '1247738947', 'Z09', '9765.360', 'CM3', '3159.000', 'G', None, '1', None, '20', '00025971845', None, None, 'CARTONING_SIMULATION_20251223190256_HYrev_327_d4aeb89c-b8ac-4c3a-b7d7-152d69cc51c8_1e0b072c-0af5-4cc5-9631-e9e484bf89c3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25971845', '00010', '1247738947', '50422465', 'TODODIA HID DES CORP ACEROLA 400ML LTM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251223190256_HYrev_327_d4aeb89c-b8ac-4c3a-b7d7-152d69cc51c8_1e0b072c-0af5-4cc5-9631-e9e484bf89c3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25971845', '00020', '1247738947', '50436710', 'LOV U DEO PARFUM 75 ML LOV U', '1.000', 'PC', None, None, None, None, None, 
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 33/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25975940', '10556898', '1', '9765.360', 'CM3', '926.000', 'G', None, None, None, None, None, '9.000', '000000000', 'CARTONING_SIMULATION_20251224011239_340_574d5f30-58f8-43a6-a8ca-feb18b738558.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25975940', '1247765639', 'Z09', '9765.360', 'CM3', '926.000', 'G', None, '1', None, '9', '00025975940', None, None, 'CARTONING_SIMULATION_20251224011239_340_574d5f30-58f8-43a6-a8ca-feb18b738558.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25975940', '00010', '1247765639', '50534041', 'TODODIA DES HID CORP ILU ACOB ACER 150ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224011239_340_574d5f30-58f8-43a6-a8ca-feb18b738558.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25975940', '00020', '1247765639', '50366334', 'BOLSA PEQUENA ICONICA KRAFT 21 CH', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224011239_340_574d5f30-58f8-43a6-a8ca-feb18b738558.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', 
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 34/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25976106', '10488233', '1', '9765.360', 'CM3', '734.000', 'G', None, None, None, None, None, '6.000', '106327922', 'CARTONING_SIMULATION_20251224045250_351_e5d3de2f-dcfe-42f9-b238-02761a8b25a5.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25976106', '1247786146', 'Z09', '9765.360', 'CM3', '734.000', 'G', None, '1', None, '6', '5330010632792240013201', '1', None, 'CARTONING_SIMULATION_20251224045250_351_e5d3de2f-dcfe-42f9-b238-02761a8b25a5.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25976106', '00010', '1247786146', '50343132', 'ERVA DOCE DES ROLLON ANTIMANCHA 70ML', '3.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224045250_351_e5d3de2f-dcfe-42f9-b238-02761a8b25a5.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25976106', '00020', '1247786146', '50404309', 'TODODIA DEO ROLL ON PREB ALGOD 70ML', '3.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224045250_351_e5d3de2f-dcfe-42f9-b238-02761a8b25a5.txt'), ('ZSIEWM_CARTONIZACAO
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 35/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25976791', '10944359', '1', '9765.360', 'CM3', '2522.000', 'G', None, None, None, None, None, '16.000', '106328241', 'CARTONING_SIMULATION_20251224072942_HYrev_369_bbd4587f-b953-4d4e-b3cf-9e547dc91bd8_b05cb1dd-6c65-4238-8fe4-699ab2fdd5e3.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25976791', '1247812456', 'Z09', '9765.360', 'CM3', '2522.000', 'G', None, '1', None, '16', '5330010632824160013201', '1', None, 'CARTONING_SIMULATION_20251224072942_HYrev_369_bbd4587f-b953-4d4e-b3cf-9e547dc91bd8_b05cb1dd-6c65-4238-8fe4-699ab2fdd5e3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25976791', '00010', '1247812456', '50267839', 'TODODIA SAB BARRA FRUTAS VERM 5X90G PM', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224072942_HYrev_369_bbd4587f-b953-4d4e-b3cf-9e547dc91bd8_b05cb1dd-6c65-4238-8fe4-699ab2fdd5e3.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25976791', '00020', '1247812456', '50366335', 'BOLSA MEDIANA ICONICA KRAFT 21 CH', '2.000', 'PC', None, None, Non
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 36/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25977600', '840451', '2', '35658.360', 'CM3', '5824.000', 'G', None, None, None, None, None, '44.000', '106328572', 'CARTONING_SIMULATION_20251224115755_395_af5e6914-e14f-4a6c-aec1-321a815624b8.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25977600', '1247847922', 'Z25', '25893.000', 'CM3', '3662.000', 'G', None, '1', None, '33', '5330010632857260013201', '1', None, 'CARTONING_SIMULATION_20251224115755_395_af5e6914-e14f-4a6c-aec1-321a815624b8.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25977600', '1247847939', 'Z09', '9765.360', 'CM3', '2162.000', 'G', None, '2', None, '11', '5330010632857260023201', '1', None, 'CARTONING_SIMULATION_20251224115755_395_af5e6914-e14f-4a6c-aec1-321a815624b8.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25977600', '00010', '1247847922', '50487851', 'TODODIA RF HID DES CORP FRU VER 400ML', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251224115755_395_af5e6914-e14f-4a6c-aec1-321a815624b8.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', 
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 37/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25977691', '11361447', '1', '14796.000', 'CM3', '3136.000', 'G', None, None, None, None, None, '22.000', '000000000', 'CARTONING_SIMULATION_20251226121750_455_f8b91b79-9f4e-4884-8483-179ae9504470.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25977691', '1247880127', 'Z14', '14796.000', 'CM3', '3136.000', 'G', None, '1', None, '22', '00025977691', None, None, 'CARTONING_SIMULATION_20251226121750_455_f8b91b79-9f4e-4884-8483-179ae9504470.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25977691', '00010', '1247880127', '50470466', 'MMBB OLEO BANHO HID PSE 200ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251226121750_455_f8b91b79-9f4e-4884-8483-179ae9504470.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25977691', '00020', '1247880127', '50497741', 'TODODIA SAB LIQ MANGA 300ML', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251226121750_455_f8b91b79-9f4e-4884-8483-179ae9504470.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25977691',
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 38/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25978981', '10013146', '2', '40689.000', 'CM3', '10724.000', 'G', None, None, None, None, None, '46.000', '006737558', 'CARTONING_SIMULATION_20251226154254_491_315bbe47-979d-4c83-8fcc-ef4305e72db8.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25978981', '1247904298', 'Z25', '25893.000', 'CM3', '7612.000', 'G', None, '1', None, '31', '920', '2561467006737558001', None, 'CARTONING_SIMULATION_20251226154254_491_315bbe47-979d-4c83-8fcc-ef4305e72db8.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25978981', '1247904304', 'Z14', '14796.000', 'CM3', '3112.000', 'G', None, '2', None, '15', '920', '2561467006737558002', None, 'CARTONING_SIMULATION_20251226154254_491_315bbe47-979d-4c83-8fcc-ef4305e72db8.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25978981', '00010', '1247904298', '50365257', 'TODODIA SAB LIQUID ALECRIM SALVIA 390G', '2.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251226154254_491_315bbe47-979d-4c83-8fcc-ef4305e72db8.txt'), ('ZSIEWM_CARTONIZACAO_ITEM
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 39/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25980784', '10590775', '1', '9765.360', 'CM3', '752.000', 'G', None, None, None, None, None, '3.000', '000000000', 'CARTONING_SIMULATION_20251226201243_522_2300b589-f98f-45cf-9183-8b71120044c2.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25980784', '1247933267', 'Z09', '9765.360', 'CM3', '752.000', 'G', None, '1', None, '3', '00025980784', None, None, 'CARTONING_SIMULATION_20251226201243_522_2300b589-f98f-45cf-9183-8b71120044c2.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25980784', '00010', '1247933267', '50522553', 'TODODIA SAB LIQ INTIM CEREJA AVELA 200ML', '3.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251226201243_522_2300b589-f98f-45cf-9183-8b71120044c2.txt'), ('ZSIEWM_CARTONIZACAO_PEDIDO', '25980797', '10927293', '1', '9765.360', 'CM3', '446.000', 'G', None, None, None, None, None, '4.000', '000000000', 'CARTONING_SIMULATION_20251226201243_522_2300b589-f98f-45cf-9183-8b71120044c2.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25980797', '124793327
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 40/153: 20 archivos...
+      Error Bulk Insert: (pyodbc.ProgrammingError) ('42000', "[42000] [Microsoft][ODBC Driver 17 for SQL Server][SQL Server]The tran***ction log for database 'OPS_OrquestaFact' is full due to 'ACTIVE_TRANSACTION'. (9002) (SQLExecute)")
+[SQL: INSERT INTO [Staging_EWM_Cartoning] ([TipoRegistro], [C1], [C2], [C3], [C4], [C5], [C6], [C7], [C8], [C9], [C10], [C11], [C12], [C13], [C14], [NombreArchivo]) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)]
+[parameters: [('ZSIEWM_CARTONIZACAO_PEDIDO', '25981737', '10231430', '2', '35658.360', 'CM3', '5859.000', 'G', None, None, None, None, None, '44.000', '106330123', 'CARTONING_SIMULATION_20251227020759_542_bbf10854-dfa2-4569-adb0-02a3655a0353.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25981737', '1247948735', 'Z25', '25893.000', 'CM3', '3891.000', 'G', None, '1', None, '29', '5330010633012350013201', '1', None, 'CARTONING_SIMULATION_20251227020759_542_bbf10854-dfa2-4569-adb0-02a3655a0353.txt'), ('ZSIEWM_CARTONIZACAO_CAIXA', '25981737', '1247948742', 'Z09', '9765.360', 'CM3', '1968.000', 'G', None, '2', None, '15', '5330010633012350023201', '1', None, 'CARTONING_SIMULATION_20251227020759_542_bbf10854-dfa2-4569-adb0-02a3655a0353.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '25981737', '00010', '1247948735', '50518445', 'MEGA TAZA 3D CON TAPA FROZEN', '1.000', 'PC', None, None, None, None, None, None, None, 'CARTONING_SIMULATION_20251227020759_542_bbf10854-dfa2-4569-adb0-02a3655a0353.txt'), ('ZSIEWM_CARTONIZACAO_ITEM', '259817
+(Background on this error at: https://sqlalche.me/e/20/f405)
+      ERROR: Fallo bulk insert
+    Lote 41/153: 20 archivos...
