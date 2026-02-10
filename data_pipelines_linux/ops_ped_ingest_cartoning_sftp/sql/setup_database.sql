@@ -23,7 +23,7 @@ IF OBJECT_ID('dbo.Staging_EWM_Cartoning', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Staging_EWM_Cartoning(
         Id BIGINT IDENTITY(1,1) PRIMARY KEY,
-        TipoRegistro VARCHAR(50),
+        TipoRegistro NVARCHAR(50), -- debe soportar valores como ZSIEWM_CARTONIZACAO_*
         C1 VARCHAR(MAX), -- PedidoID / CajaID
         C2 VARCHAR(MAX), -- Entrega / Posicion
         C3 VARCHAR(MAX), -- TipoCaja / CajaID
