@@ -90,6 +90,39 @@ jobs:
 
           Write-Host "[OK] Dependencias instaladas."
 
+      - name: Validar Librerías Instaladas
+        shell: powershell
+        run: |
+          Write-Host "[CI] Verificando librerias requeridas por los bots..."
+          $errores = @()
+          
+          $librerias = @("playwright", "asyncio", "pathlib", "dotenv")
+          
+          foreach ($lib in $librerias) {
+            $result = & "$env:PYTHON_EXE" -c "import $lib; print('  [OK] $lib')" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $errores += $lib
+              Write-Host "  [FAIL] $lib no esta instalada"
+            } else {
+              Write-Host $result
+            }
+          }
+          
+          Write-Host "[CI] Verificando navegador Chromium de Playwright..."
+          $chromiumCheck = & "$env:PYTHON_EXE" -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(headless=True); b.close(); p.stop(); print('  [OK] Chromium funcional')" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $errores += "playwright-chromium"
+            Write-Host "  [FAIL] Chromium no disponible: $chromiumCheck"
+          } else {
+            Write-Host $chromiumCheck
+          }
+          
+          if ($errores.Count -gt 0) {
+            Write-Error "[ERROR] Librerias faltantes: $($errores -join ', ')"
+            exit 1
+          }
+          Write-Host "[OK] Todas las librerias verificadas."
+
       # ──────────────────────────────────────────────
       # FASE 2: CD - Despliegue Continuo
       # ──────────────────────────────────────────────
