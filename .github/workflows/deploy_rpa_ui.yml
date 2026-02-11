@@ -77,15 +77,16 @@ jobs:
       - name: Instalar/Actualizar Librerías Python
         shell: powershell
         run: |
+          $ErrorActionPreference = "Continue"
           Write-Host "[CI] Instalando dependencias..."
-          & "$env:PYTHON_EXE" -m pip install --upgrade pip --quiet
+          & "$env:PYTHON_EXE" -m pip install --upgrade pip --quiet --no-warn-script-location
 
           # Librerías generales del monorepo
-          & "$env:PYTHON_EXE" -m pip install -r requirements.txt --quiet
+          & "$env:PYTHON_EXE" -m pip install -r requirements.txt --quiet --no-warn-script-location
 
           # Dependencias específicas de playwright para gera_bot_cobranza
-          & "$env:PYTHON_EXE" -m pip install playwright --quiet
-          & "$env:PYTHON_EXE" -m playwright install chromium 2>&1 | Out-Null
+          & "$env:PYTHON_EXE" -m pip install playwright --quiet --no-warn-script-location
+          & "$env:PYTHON_EXE" -m playwright install chromium 2>&1 | ForEach-Object { "$_" }
 
           Write-Host "[OK] Dependencias instaladas."
 
