@@ -1,6 +1,9 @@
 name: CD - Deploy RPA UI (Dev)
 
 on:
+  # Ejecución manual desde GitHub Actions
+  workflow_dispatch:
+
   push:
     branches: [ "dev" ]
     paths:
@@ -15,7 +18,7 @@ jobs:
   deploy:
     runs-on: [self-hosted, Windows, X64, rpa_ui_55]
     
-    # Usamos este entorno porque necesitamos las rutas de despliegue (PATH)
+    # Environment de GitHub con variables y secretos configurados
     environment: 10.156.16.55
 
     env:
@@ -23,27 +26,123 @@ jobs:
       PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
 
     steps:
+      # ──────────────────────────────────────────────
+      # FASE 1: CI - Integración Continua y Validación
+      # ──────────────────────────────────────────────
+      - name: Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Validar Variables de Entorno
+        shell: powershell
+        run: |
+          Write-Host "[CI] Validando variables del Environment 10.156.16.55..."
+          $errores = @()
+
+          if ([string]::IsNullOrEmpty("$env:DEPLOY_PATH"))  { $errores += "WIN_DEPLOY_PATH" }
+          if ([string]::IsNullOrEmpty("$env:PYTHON_EXE"))   { $errores += "WIN_PYTHON_EXE" }
+
+          if ($errores.Count -gt 0) {
+            Write-Error "[ERROR] Variables faltantes en Environment: $($errores -join ', ')"
+            exit 1
+          }
+          Write-Host "[OK] Todas las variables estan configuradas."
+
+      - name: Verificar Python y Sintaxis del Código
+        shell: powershell
+        run: |
+          Write-Host "[CI] Verificando Python..."
+          if (!(Test-Path "$env:PYTHON_EXE")) {
+            Write-Error "[ERROR] Python no encontrado en: $env:PYTHON_EXE"
+            exit 1
+          }
+          $ver = & "$env:PYTHON_EXE" --version 2>&1
+          Write-Host "[OK] $ver"
+
+          Write-Host "[CI] Verificando sintaxis de archivos Python..."
+          $archivos = Get-ChildItem -Path ".\rpa_desktop_win" -Filter "*.py" -Recurse
+          $fallos = 0
+          foreach ($f in $archivos) {
+            $result = & "$env:PYTHON_EXE" -m py_compile $f.FullName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[FAIL] $($f.FullName): $result"
+              $fallos++
+            }
+          }
+          if ($fallos -gt 0) {
+            Write-Error "[ERROR] $fallos archivo(s) con errores de sintaxis."
+            exit 1
+          }
+          Write-Host "[OK] Todos los archivos compilan correctamente."
+
+      - name: Instalar/Actualizar Librerías Python
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Continue"
+          Write-Host "[CI] Instalando dependencias..."
+          & "$env:PYTHON_EXE" -m pip install --upgrade pip --quiet --no-warn-script-location
+
+          # Librerías generales del monorepo
+          & "$env:PYTHON_EXE" -m pip install -r requirements.txt --quiet --no-warn-script-location
+
+          # Dependencias específicas de playwright para gera_bot_cobranza
+          & "$env:PYTHON_EXE" -m pip install playwright --quiet --no-warn-script-location
+          & "$env:PYTHON_EXE" -m playwright install chromium 2>&1 | ForEach-Object { "$_" }
+
+          Write-Host "[OK] Dependencias instaladas."
+
+      - name: Validar Librerías Instaladas
+        shell: powershell
+        run: |
+          Write-Host "[CI] Verificando librerias requeridas por los bots..."
+          $errores = @()
+          
+          $librerias = @("playwright", "asyncio", "pathlib", "dotenv")
+          
+          foreach ($lib in $librerias) {
+            $result = & "$env:PYTHON_EXE" -c "import $lib; print('  [OK] $lib')" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              $errores += $lib
+              Write-Host "  [FAIL] $lib no esta instalada"
+            } else {
+              Write-Host $result
+            }
+          }
+          
+          Write-Host "[CI] Verificando navegador Chromium de Playwright..."
+          $chromiumCheck = & "$env:PYTHON_EXE" -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(headless=True); b.close(); p.stop(); print('  [OK] Chromium funcional')" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $errores += "playwright-chromium"
+            Write-Host "  [FAIL] Chromium no disponible: $chromiumCheck"
+          } else {
+            Write-Host $chromiumCheck
+          }
+          
+          if ($errores.Count -gt 0) {
+            Write-Error "[ERROR] Librerias faltantes: $($errores -join ', ')"
+            exit 1
+          }
+          Write-Host "[OK] Todas las librerias verificadas."
+
+      # ──────────────────────────────────────────────
+      # FASE 2: CD - Despliegue Continuo
+      # ──────────────────────────────────────────────
       - name: Detener Bots Activos (Liberar archivos)
         shell: powershell
         run: |
-          Write-Host "[INFO] Intentando detener procesos Python antiguos..."
+          Write-Host "[CD] Intentando detener procesos Python antiguos..."
           try {
-            # Esto es vital para liberar archivos bloqueados durante el despliegue
             Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
             Write-Host "[OK] Procesos Python detenidos."
           } catch {
-            Write-Host "[INFO] No había procesos corriendo."
+            Write-Host "[INFO] No habia procesos corriendo."
           }
           Start-Sleep -Seconds 2
-
-      - name: Descargar Código del Repositorio
-        uses: actions/checkout@v4
 
       - name: Desplegar Archivos en Servidor
         shell: powershell
         run: |
           $dest = "$env:DEPLOY_PATH"
-          Write-Host "[INFO] Iniciando despliegue RPA UI en: $dest"
+          Write-Host "[CD] Iniciando despliegue RPA UI en: $dest"
           
           # 1. Crear directorio base si no existe
           if (!(Test-Path -Path $dest)) { 
@@ -52,19 +151,18 @@ jobs:
           }
           
           # 2. Copiar carpetas (Sobrescribiendo)
-          
-          Write-Host "[INFO] Copiando RPA Desktop..."
+          Write-Host "[CD] Copiando RPA Desktop..."
           Copy-Item -Path ".\rpa_desktop_win" -Destination $dest -Recurse -Force
           
-          Write-Host "[INFO] Copiando Core Shared..."
+          Write-Host "[CD] Copiando Core Shared..."
           Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
           
-          Write-Host "[INFO] Copiando Configuracion..."
+          Write-Host "[CD] Copiando Configuracion..."
           if (Test-Path ".\config") {
             Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
           }
           
-          Write-Host "[INFO] Copiando Requirements..."
+          Write-Host "[CD] Copiando Requirements..."
           Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente."
@@ -72,7 +170,7 @@ jobs:
       - name: Verificar e Instalar ODBC Driver 17
         shell: powershell
         run: |
-          Write-Host "[INFO] Verificando ODBC Driver 17 for SQL Server..."
+          Write-Host "[CD] Verificando ODBC Driver 17 for SQL Server..."
           $driverName = "ODBC Driver 17 for SQL Server"
           $installed = Get-OdbcDriver | Where-Object { $_.Name -eq $driverName }
 
@@ -80,36 +178,33 @@ jobs:
             Write-Host "[OK] El driver ya esta instalado."
           } else {
             Write-Host "[WARN] Driver no encontrado. Iniciando instalacion automatica..."
-            
-            # 1. Descargar el instalador oficial de Microsoft
-            $url = "https://go.microsoft.com/fwlink/?linkid=2137251" # Link directo a ODBC 17.10 (x64)
+            $url = "https://go.microsoft.com/fwlink/?linkid=2137251"
             $out = "$env:TEMP\msodbcsql.msi"
-            
-            Write-Host "[INFO] Descargando MSI desde Microsoft..."
             Invoke-WebRequest -Uri $url -OutFile $out
-            
-            # 2. Instalar silenciosamente (Sin ventanas)
-            Write-Host "[INFO] Instalando..."
             Start-Process msiexec.exe -ArgumentList "/i $out /quiet /norestart IACCEPTMSODBCSQLLICENSETERMS=YES" -Wait
-            
             Write-Host "[OK] Instalacion completada."
           }
 
-      - name: Instalar/Actualizar Librerías Python
+      - name: Validación Post-Despliegue
         shell: powershell
         run: |
-          Write-Host "[INFO] Verificando dependencias..."
-          Set-Location "$env:DEPLOY_PATH"
+          Write-Host "[CD] Verificando despliegue..."
+          $dest = "$env:DEPLOY_PATH"
           
-          if (Test-Path "$env:PYTHON_EXE") {
-              Write-Host "[INFO] Python detectado en: $env:PYTHON_EXE"
-              & "$env:PYTHON_EXE" -m pip install --upgrade pip
-              
-              # 1. Instala librerías generales (raíz)
-              & "$env:PYTHON_EXE" -m pip install -r requirements.txt
-
-              Write-Host "[SUCCESS] Dependencias instaladas."
-          } else {
-              Write-Error "[ERROR] No se encontro Python en la ruta: $env:PYTHON_EXE"
+          $carpetas = @("rpa_desktop_win", "core_shared", "config")
+          foreach ($c in $carpetas) {
+            $ruta = Join-Path $dest $c
+            if (Test-Path $ruta) {
+              Write-Host "[OK] $c desplegado correctamente."
+            } else {
+              Write-Error "[ERROR] $c NO se encontro en $dest"
               exit 1
+            }
           }
+          
+          Write-Host ""
+          Write-Host "========================================="
+          Write-Host "[SUCCESS] Despliegue completado"
+          Write-Host "  Servidor: rpa_ui_55 (10.156.16.55)"
+          Write-Host "  Ruta:     $dest"
+          Write-Host "========================================="
