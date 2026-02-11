@@ -174,4 +174,4 @@ jobs:
           Write-Host "[SUCCESS] Despliegue completado"
           Write-Host "  Servidor: rpa_ui_55 (10.156.16.55)"
           Write-Host "  Ruta:     $dest"
-          Write-Host "=========================================
+          Write-Host "========================================="
