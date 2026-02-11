@@ -17,8 +17,8 @@ async def descargar_reportes_listos():
     # Obtenemos la fecha de hoy en formato DD-MM-YYYY (coincidiendo con tu celda)
     fecha_hoy = datetime.now().strftime("%d-%m-%Y")
     
-    print(f"🚀 Iniciando Descargador...")
-    print(f"🔍 Buscando archivos que comiencen con la fecha: {fecha_hoy}")
+    print(f"[START] Iniciando Descargador...")
+    print(f"[SEARCH] Buscando archivos que comiencen con la fecha: {fecha_hoy}")
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
@@ -31,7 +31,7 @@ async def descargar_reportes_listos():
         await page.click("a#btnLogin_btn")
         
         # 2. Ir a sección de descargas
-        print("📩 Yendo a la sección de descargas...")
+        print("[NAV] Yendo a la seccion de descargas...")
         await page.wait_for_selector('a[href*="8013"].ico_down')
         await page.click('a[href*="8013"].ico_down')
         await page.wait_for_load_state("networkidle")
@@ -59,30 +59,30 @@ async def descargar_reportes_listos():
                     # Validamos si la celda comienza con DD-MM-YYYY
                     if texto_celda.startswith(fecha_hoy):
                         encontrado_hoy = True
-                        print(f"✅ Fila {i+1} coincide: {texto_celda}")
+                        print(f"[OK] Fila {i+1} coincide: {texto_celda}")
                         break
                 
                 if encontrado_hoy:
                     selector_bajar = f"a#ContentPlaceHolder1_exportacoesGrid_baixarButton_{i}_btn_{i}"
                     
                     if await page.query_selector(selector_bajar):
-                        print(f"📥 Descargando reporte de hoy...")
+                        print(f"[DOWNLOAD] Descargando reporte de hoy...")
                         async with page.expect_download() as download_info:
                             await page.click(selector_bajar)
                         
                         download = await download_info.value
                         path_final = RUTA_DESTINO / f"{fecha_hoy.replace('-', '')}_{download.suggested_filename}"
                         await download.save_as(path_final)
-                        print(f"💾 Guardado: {path_final}")
+                        print(f"[SAVED] Guardado: {path_final}")
                     else:
-                        print(f"⏳ El archivo existe pero el botón 'Bajar' no está visible aún.")
+                        print(f"[WAIT] El archivo existe pero el boton 'Bajar' no esta visible aun.")
                 
             except Exception as e:
                 # Si falla al buscar una fila, es que llegamos al final de la lista
                 break
 
         await browser.close()
-        print("🏁 Proceso de descarga finalizado.")
+        print("[END] Proceso de descarga finalizado.")
 
 if __name__ == "__main__":
     asyncio.run(descargar_reportes_listos())

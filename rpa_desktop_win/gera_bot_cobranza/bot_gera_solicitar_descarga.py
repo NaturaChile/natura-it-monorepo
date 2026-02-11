@@ -22,13 +22,13 @@ if not all([URL_SGI, USUARIO, CONTRASENA]):
 RANGOS = [{"inicio": "15", "fin": "180"}, {"inicio": "181", "fin": "9000"}]
 
 async def solicitar_reportes():
-    print("🚀 Iniciando Bot Solicitador...")
+    print("[START] Iniciando Bot Solicitador...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=800)
         page = await browser.new_page()
         
         try:
-            print(f"🔗 Conectando a {URL_SGI}...")
+            print(f"[CONNECT] Conectando a {URL_SGI}...")
             await page.goto(URL_SGI, timeout=60000)
             
             # Login
@@ -36,10 +36,10 @@ async def solicitar_reportes():
             await page.fill("input#txtSenha_T2", CONTRASENA)
             await page.click("a#btnLogin_btn")
             await page.wait_for_load_state("networkidle")
-            print("✅ Sesión iniciada.")
+            print("[OK] Sesion iniciada.")
 
             for rango in RANGOS:
-                print(f"\n📂 Procesando rango {rango['inicio']} a {rango['fin']}...")
+                print(f"\n[RANGO] Procesando rango {rango['inicio']} a {rango['fin']}...")
                 
                 # Navegación
                 await page.click('a:has-text("Recibir")')
@@ -62,22 +62,22 @@ async def solicitar_reportes():
                     try:
                         await page.wait_for_selector(sel, timeout=1500)
                         await page.click(sel, force=True)
-                        print("🔔 Selección 'Pendientes' aplicada.")
+                        print("[OK] Seleccion 'Pendientes' aplicada.")
                         break
                     except:
                         pass  # seguir intentos con otros selectores o continuar si no existe
 
-                print("🔎 Consultando...")
+                print("[SEARCH] Consultando...")
                 await page.click("a#ContentPlaceHolder1_ControleBuscaTitulo_btnBuscar_btn")
                 
-                # Esperar botón Exportar visible
+                # Esperar boton Exportar visible
                 selector_exportar = "a#ContentPlaceHolder1_ControleBuscaTitulo_btnExportar_btn"
-                print("⏳ Esperando que el servidor habilite el botón de Exportar...")
+                print("[WAIT] Esperando que el servidor habilite el boton de Exportar...")
                 await page.wait_for_selector(selector_exportar, state="visible", timeout=600000)
                 
                 # Clic en Exportar
                 await page.click(selector_exportar)
-                print("⚙️ Abriendo configuración de agenda...")
+                print("[EXPORT] Abriendo configuracion de agenda...")
 
                 # Esperar popup/agendamiento
                 # Radio para seleccionar exportación asincrónica (si aplica)
@@ -88,7 +88,7 @@ async def solicitar_reportes():
                 except:
                     pass
 
-                print("🔘 Seleccionando opciones de agendamiento...")
+                print("[SCHEDULE] Seleccionando opciones de agendamiento...")
 
                 # Seleccionar ejecución agendada (usar el ID que indicaste)
                 selector_exec_agendar = "input#agendamentoExportacao_rbnExecucaoExcelAgendar"
@@ -105,7 +105,7 @@ async def solicitar_reportes():
                 await page.fill(selector_hora, "04:00")
 
                 await page.wait_for_timeout(500)  # pequeña espera para asegurar inputs
-                print(f"📅 Agendado para {fecha_mañana} a las 04:00")
+                print(f"[SCHEDULED] Agendado para {fecha_mañana} a las 04:00")
 
                 # Confirmar agendamiento
                 await page.click("a#agendamentoExportacao_okButton_btn")
@@ -114,18 +114,18 @@ async def solicitar_reportes():
                 try:
                     await page.wait_for_selector("a#popupOkButton", state="visible", timeout=15000)
                     await page.click("a#popupOkButton", force=True)
-                    print(f"✔️ Rango {rango['inicio']}-{rango['fin']} solicitado.")
+                    print(f"[OK] Rango {rango['inicio']}-{rango['fin']} solicitado.")
                 except:
-                    print("⚠️ No apareció el botón OK final, pero se asume éxito.")
+                    print("[WARN] No aparecio el boton OK final, pero se asume exito.")
                 
                 # Volver a Home para resetear estado
                 await page.goto(URL_SGI)
                 await page.wait_for_load_state("networkidle")
 
         except Exception as e:
-            print(f"❌ Error durante la solicitud: {e}")
+            print(f"[ERROR] Error durante la solicitud: {e}")
         finally:
-            print("🏁 Finalizando...")
+            print("[END] Finalizando...")
             await browser.close()
 
 if __name__ == "__main__":
