@@ -1,0 +1,51 @@
+name: RPA - Buscar Descarga SGI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: [self-hosted, Windows, X64, rpa_ui_55]
+    environment: 10.156.16.55
+
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+      URL_SGI: ${{ vars.URL_SGI }}
+      USUARIO: ${{ vars.USUARIO }}
+      CONTRASENA: ${{ secrets.CONTRASENA }}
+
+    steps:
+      - name: Validar Variables de Entorno
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Validando variables del Environment..."
+          $errores = @()
+
+          if ([string]::IsNullOrEmpty("$env:DEPLOY_PATH"))  { $errores += "WIN_DEPLOY_PATH" }
+          if ([string]::IsNullOrEmpty("$env:PYTHON_EXE"))   { $errores += "WIN_PYTHON_EXE" }
+          if ([string]::IsNullOrEmpty("$env:URL_SGI"))      { $errores += "URL_SGI" }
+          if ([string]::IsNullOrEmpty("$env:USUARIO"))      { $errores += "USUARIO" }
+          if ([string]::IsNullOrEmpty("$env:CONTRASENA"))   { $errores += "CONTRASENA" }
+
+          if ($errores.Count -gt 0) {
+            Write-Error "[ERROR] Variables faltantes: $($errores -join ', ')"
+            exit 1
+          }
+          Write-Host "[OK] Todas las variables configuradas."
+
+      - name: Ejecutar Bot Buscar Descarga
+        shell: powershell
+        run: |
+          Set-Location "$env:DEPLOY_PATH"
+          Write-Host "[RUN] Ejecutando bot_gera_buscar_descarga.py..."
+          Write-Host "[INFO] URL_SGI: $env:URL_SGI"
+          Write-Host "[INFO] USUARIO: $env:USUARIO"
+          
+          & "$env:PYTHON_EXE" -u "rpa_desktop_win\gera_bot_cobranza\bot_gera_buscar_descarga.py"
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] El bot termino con codigo de error: $LASTEXITCODE"
+            exit 1
+          }
+          Write-Host "[SUCCESS] Bot finalizado correctamente."
