@@ -1,23 +1,14 @@
 import os
 import asyncio
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Carga .env local si existe (desarrollo), en servidor usa env vars del sistema
-except ImportError:
-    pass  # En producción no se requiere python-dotenv
+load_dotenv()
 
 URL_SGI = os.getenv("URL_SGI")
 USUARIO = os.getenv("USUARIO")
 CONTRASENA = os.getenv("CONTRASENA")
-
-if not all([URL_SGI, USUARIO, CONTRASENA]):
-    raise EnvironmentError(
-        "Faltan variables de entorno requeridas: URL_SGI, USUARIO, CONTRASENA. "
-        "Configuralas en el GitHub Environment o en un archivo .env local."
-    )
 
 RANGOS = [{"inicio": "15", "fin": "180"}, {"inicio": "181", "fin": "9000"}]
 
@@ -80,13 +71,9 @@ async def solicitar_reportes():
                 print("[EXPORT] Abriendo configuracion de agenda...")
 
                 # Esperar popup/agendamiento
-                # Radio para seleccionar exportación asincrónica (si aplica)
                 selector_radio_async = "input#agendamentoExportacao_rbnExcelAssincrono"
-                try:
-                    await page.wait_for_selector(selector_radio_async, state="visible", timeout=30000)
-                    await page.click(selector_radio_async, force=True)
-                except:
-                    pass
+                await page.wait_for_selector(selector_radio_async, state="visible", timeout=30000)
+                await page.click(selector_radio_async, force=True)
 
                 print("[SCHEDULE] Seleccionando opciones de agendamiento...")
 
@@ -95,14 +82,14 @@ async def solicitar_reportes():
                 await page.wait_for_selector(selector_exec_agendar, state="visible", timeout=15000)
                 await page.click(selector_exec_agendar, force=True)
 
-                # Calcular fecha de mañana y formatear (día/mes/año)
+                # Calcular fecha de mañana
                 fecha_mañana = (datetime.now() + timedelta(days=1)).strftime("%d%m%Y")
                 selector_fecha = "input#agendamentoExportacao_dataAgendamentoExcelAssincrono_T2"
                 selector_hora = "input#agendamentoExportacao_horarioAgendamentoExcelAssincrono_T2"
 
-                # Rellenar fecha y hora
+                # Rellenar fecha y LA NUEVA HORA DINÁMICA
                 await page.fill(selector_fecha, fecha_mañana)
-                await page.fill(selector_hora, "04:00")
+                await page.fill(selector_hora, hora_agendada) # <--- Aquí usa 04:00 o 04:05
 
                 await page.wait_for_timeout(500)  # pequeña espera para asegurar inputs
                 print(f"[SCHEDULED] Agendado para {fecha_mañana} a las 04:00")
@@ -118,9 +105,11 @@ async def solicitar_reportes():
                 except:
                     print("[WARN] No aparecio el boton OK final, pero se asume exito.")
                 
-                # Volver a Home para resetear estado
+                # Volver a Home
                 await page.goto(URL_SGI)
                 await page.wait_for_load_state("networkidle")
+
+            print("\n🎉 Proceso terminado. Los archivos aparecerán escalonados mañana.")
 
         except Exception as e:
             print(f"[ERROR] Error durante la solicitud: {e}")
