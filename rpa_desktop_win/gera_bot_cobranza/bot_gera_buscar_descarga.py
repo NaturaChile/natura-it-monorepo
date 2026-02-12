@@ -2,23 +2,19 @@ import os
 import asyncio
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Carga .env local si existe (desarrollo), en servidor usa env vars del sistema
-except ImportError:
-    pass  # En producción no se requiere python-dotenv
+load_dotenv()
+RUTA_DESTINO = Path(os.getenv("RUTA_DESTINO"))
 
-RUTA_DESTINO = Path(os.getenv("RUTA_DESTINO", str(Path(__file__).resolve().parent / "Descarga")))
-RUTA_DESTINO.mkdir(parents=True, exist_ok=True)
-
-async def descargar_reportes_listos():
-    # Obtenemos la fecha de hoy en formato DD-MM-YYYY (coincidiendo con tu celda)
+async def descargar_reportes_dia_presente():
     fecha_hoy = datetime.now().strftime("%d-%m-%Y")
+    archivos_descargados = 0
+    ids_descargados = set() # Aquí guardaremos los IDs para no repetir
     
     print(f"🚀 Iniciando Descargador...")
-    print(f"🔍 Buscando archivos que comiencen con la fecha: {fecha_hoy}")
+    print(f"📅 Buscando los 2 reportes más recientes de hoy: {fecha_hoy}")
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False)
@@ -30,59 +26,68 @@ async def descargar_reportes_listos():
         await page.fill("input#txtSenha_T2", os.getenv("CONTRASENA"))
         await page.click("a#btnLogin_btn")
         
-        # 2. Ir a sección de descargas
-        print("📩 Yendo a la sección de descargas...")
+        # 2. Navegar a Descargas
+        print("📩 Accediendo a la bandeja de descargas...")
         await page.wait_for_selector('a[href*="8013"].ico_down')
         await page.click('a[href*="8013"].ico_down')
-        await page.wait_for_load_state("networkidle")
-
-        # 3. Validar y Descargar
-        # Revisamos las filas de la tabla (SGI usa tablas estándar de ASP.NET)
-        for i in range(10): # Aumentamos rango para asegurar
-            try:
-                # Localizamos la fila i (sumamos 2 por el encabezado y el índice 1)
+        
+        while archivos_descargados < 2:
+            await page.wait_for_load_state("networkidle")
+            
+            # Escaneamos las filas (i=0 es la primera, i=1 es la segunda)
+            for i in range(5): 
                 fila_selector = f"#ContentPlaceHolder1_exportacoesGrid tr:nth-child({i+2})"
-                
-                # Buscamos la celda de fecha con la clase 'grid_celula' y alineación 'right'
-                # Según tu HTML, buscaremos el texto directamente en las celdas de esa fila
                 celdas = await page.query_selector_all(f"{fila_selector} td.grid_celula")
                 
-                if not celdas:
-                    continue
+                if not celdas: continue
 
-                # Usualmente la fecha es la última o penúltima celda con esa clase
-                # Vamos a recorrer las celdas de la fila para encontrar la que tiene la fecha
-                encontrado_hoy = False
+                es_de_hoy = False
                 for celda in celdas:
                     texto_celda = (await celda.inner_text()).strip()
-                    
-                    # Validamos si la celda comienza con DD-MM-YYYY
                     if texto_celda.startswith(fecha_hoy):
-                        encontrado_hoy = True
-                        print(f"✅ Fila {i+1} coincide: {texto_celda}")
+                        es_de_hoy = True
                         break
                 
-                if encontrado_hoy:
-                    selector_bajar = f"a#ContentPlaceHolder1_exportacoesGrid_baixarButton_{i}_btn_{i}"
+                if es_de_hoy:
+                    id_boton = f"ContentPlaceHolder1_exportacoesGrid_baixarButton_{i}_btn_{i}"
                     
-                    if await page.query_selector(selector_bajar):
-                        print(f"📥 Descargando reporte de hoy...")
+                    # VALIDACIÓN CRÍTICA: ¿Ya descargamos este ID antes?
+                    if id_boton in ids_descargados:
+                        continue # Si ya lo bajamos, pasamos a la siguiente fila
+
+                    botón_bajar = await page.query_selector(f"a#{id_boton}")
+                    
+                    if botón_bajar:
+                        print(f"✅ Nuevo reporte detectado en fila {i+1} (ID: {id_boton}). Bajando...")
+                        
                         async with page.expect_download() as download_info:
-                            await page.click(selector_bajar)
+                            await botón_bajar.click()
                         
                         download = await download_info.value
-                        path_final = RUTA_DESTINO / f"{fecha_hoy.replace('-', '')}_{download.suggested_filename}"
-                        await download.save_as(path_final)
-                        print(f"💾 Guardado: {path_final}")
+                        nombre_final = f"{fecha_hoy.replace('-', '')}_Fila{i+1}_{download.suggested_filename}"
+                        
+                        await download.save_as(RUTA_DESTINO / nombre_final)
+                        print(f"💾 Guardado: {nombre_final}")
+                        
+                        # Marcamos como descargado
+                        ids_descargados.add(id_boton)
+                        archivos_descargados += 1
+                        
+                        if archivos_descargados >= 2: break
                     else:
-                        print(f"⏳ El archivo existe pero el botón 'Bajar' no está visible aún.")
-                
-            except Exception as e:
-                # Si falla al buscar una fila, es que llegamos al final de la lista
-                break
+                        print(f"⏳ Archivo en fila {i+1} encontrado, pero el botón 'Bajar' aún no está listo...")
 
+            if archivos_descargados < 2:
+                print(f"🔄 Llevamos {archivos_descargados}/2 archivos. Refrescando en 30 segundos...")
+                await asyncio.sleep(30)
+                # Intentamos usar el botón actualizar del SGI si existe, o recargar página
+                try:
+                    await page.click("a#ContentPlaceHolder1_atualizarButton_btn", timeout=5000)
+                except:
+                    await page.reload()
+            
         await browser.close()
-        print("🏁 Proceso de descarga finalizado.")
+        print(f"🏁 Finalizado. Se descargaron {archivos_descargados} archivos únicos.")
 
 if __name__ == "__main__":
-    asyncio.run(descargar_reportes_listos())
+    asyncio.run(descargar_reportes_dia_presente())

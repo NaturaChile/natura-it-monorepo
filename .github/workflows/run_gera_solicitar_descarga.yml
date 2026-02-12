@@ -14,6 +14,7 @@ jobs:
       URL_SGI: ${{ vars.URL_SGI }}
       USUARIO: ${{ vars.USUARIO }}
       CONTRASENA: ${{ secrets.CONTRASENA }}
+      PYTHONIOENCODING: utf-8
 
     steps:
       - name: Validar Variables de Entorno
