@@ -1,28 +1,19 @@
 import os
 import asyncio
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()  # Carga .env local si existe (desarrollo), en servidor usa env vars del sistema
-except ImportError:
-    pass  # En producción no se requiere python-dotenv
+load_dotenv()
 
 URL_SGI = os.getenv("URL_SGI")
 USUARIO = os.getenv("USUARIO")
 CONTRASENA = os.getenv("CONTRASENA")
 
-if not all([URL_SGI, USUARIO, CONTRASENA]):
-    raise EnvironmentError(
-        "Faltan variables de entorno requeridas: URL_SGI, USUARIO, CONTRASENA. "
-        "Configuralas en el GitHub Environment o en un archivo .env local."
-    )
-
 RANGOS = [{"inicio": "15", "fin": "180"}, {"inicio": "181", "fin": "9000"}]
 
 async def solicitar_reportes():
-    print("🚀 Iniciando Bot Solicitador...")
+    print("🚀 Iniciando Bot Solicitador con Horarios Escalonados...")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=800)
         page = await browser.new_page()
@@ -38,8 +29,16 @@ async def solicitar_reportes():
             await page.wait_for_load_state("networkidle")
             print("✅ Sesión iniciada.")
 
-            for rango in RANGOS:
+            # --- LÓGICA DE HORA ESCALONADA ---
+            # Empezamos a las 04:00
+            hora_base = datetime.strptime("04:00", "%H:%M")
+
+            for index, rango in enumerate(RANGOS):
+                # Calculamos la hora para este rango: el primero 04:00, el segundo 04:05
+                hora_agendada = (hora_base + timedelta(minutes=5 * index)).strftime("%H:%M")
+                
                 print(f"\n📂 Procesando rango {rango['inicio']} a {rango['fin']}...")
+                print(f"⏰ Horario asignado para este reporte: {hora_agendada}")
                 
                 # Navegación
                 await page.click('a:has-text("Recibir")')
@@ -53,19 +52,13 @@ async def solicitar_reportes():
                 await page.fill("input#ContentPlaceHolder1_ControleBuscaTitulo_txtDiasAtrasoInicio_T2", rango['inicio'])
                 await page.fill("input#ContentPlaceHolder1_ControleBuscaTitulo_txtDiasAtrasoFim_T2", rango['fin'])
                 
-                # Mantener selección de deudas pendientes (si existe el selector)
-                pending_selectors = [
-                    "input#ContentPlaceHolder1_ControleBuscaTitulo_rbnPendentes",
-                    "input#ContentPlaceHolder1_ControleBuscaTitulo_chkPendentes_T2",
-                ]
-                for sel in pending_selectors:
-                    try:
-                        await page.wait_for_selector(sel, timeout=1500)
-                        await page.click(sel, force=True)
-                        print("🔔 Selección 'Pendientes' aplicada.")
-                        break
-                    except:
-                        pass  # seguir intentos con otros selectores o continuar si no existe
+                # Selección 'Pendientes'
+                try:
+                    # Usando el selector select_option que definimos anteriormente para Situación de Pago
+                    await page.select_option("select#ContentPlaceHolder1_ControleBuscaTitulo_ddlSituacaoPagamento_d1", "1")
+                    print("🔔 Selección 'Pendientes' aplicada.")
+                except:
+                    pass
 
                 print("🔎 Consultando...")
                 await page.click("a#ContentPlaceHolder1_ControleBuscaTitulo_btnBuscar_btn")
@@ -80,32 +73,26 @@ async def solicitar_reportes():
                 print("⚙️ Abriendo configuración de agenda...")
 
                 # Esperar popup/agendamiento
-                # Radio para seleccionar exportación asincrónica (si aplica)
                 selector_radio_async = "input#agendamentoExportacao_rbnExcelAssincrono"
-                try:
-                    await page.wait_for_selector(selector_radio_async, state="visible", timeout=30000)
-                    await page.click(selector_radio_async, force=True)
-                except:
-                    pass
+                await page.wait_for_selector(selector_radio_async, state="visible", timeout=30000)
+                await page.click(selector_radio_async, force=True)
 
-                print("🔘 Seleccionando opciones de agendamiento...")
-
-                # Seleccionar ejecución agendada (usar el ID que indicaste)
+                # Seleccionar ejecución agendada
                 selector_exec_agendar = "input#agendamentoExportacao_rbnExecucaoExcelAgendar"
                 await page.wait_for_selector(selector_exec_agendar, state="visible", timeout=15000)
                 await page.click(selector_exec_agendar, force=True)
 
-                # Calcular fecha de mañana y formatear (día/mes/año)
+                # Calcular fecha de mañana
                 fecha_mañana = (datetime.now() + timedelta(days=1)).strftime("%d%m%Y")
                 selector_fecha = "input#agendamentoExportacao_dataAgendamentoExcelAssincrono_T2"
                 selector_hora = "input#agendamentoExportacao_horarioAgendamentoExcelAssincrono_T2"
 
-                # Rellenar fecha y hora
+                # Rellenar fecha y LA NUEVA HORA DINÁMICA
                 await page.fill(selector_fecha, fecha_mañana)
-                await page.fill(selector_hora, "04:00")
+                await page.fill(selector_hora, hora_agendada) # <--- Aquí usa 04:00 o 04:05
 
-                await page.wait_for_timeout(500)  # pequeña espera para asegurar inputs
-                print(f"📅 Agendado para {fecha_mañana} a las 04:00")
+                await page.wait_for_timeout(500)
+                print(f"📅 Agendado para {fecha_mañana} a las {hora_agendada}")
 
                 # Confirmar agendamiento
                 await page.click("a#agendamentoExportacao_okButton_btn")
@@ -114,18 +101,19 @@ async def solicitar_reportes():
                 try:
                     await page.wait_for_selector("a#popupOkButton", state="visible", timeout=15000)
                     await page.click("a#popupOkButton", force=True)
-                    print(f"✔️ Rango {rango['inicio']}-{rango['fin']} solicitado.")
+                    print(f"✔️ Solicitud exitosa para las {hora_agendada}.")
                 except:
-                    print("⚠️ No apareció el botón OK final, pero se asume éxito.")
+                    print("⚠️ No apareció el botón OK final.")
                 
-                # Volver a Home para resetear estado
+                # Volver a Home
                 await page.goto(URL_SGI)
                 await page.wait_for_load_state("networkidle")
+
+            print("\n🎉 Proceso terminado. Los archivos aparecerán escalonados mañana.")
 
         except Exception as e:
             print(f"❌ Error durante la solicitud: {e}")
         finally:
-            print("🏁 Finalizando...")
             await browser.close()
 
 if __name__ == "__main__":
