@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 load_dotenv()
-RUTA_DESTINO = Path(os.getenv("RUTA_DESTINO"))
+RUTA_DESTINO = Path(__file__).resolve().parent / "descargas"
+RUTA_DESTINO.mkdir(exist_ok=True)
 
 DOWNLOAD_TIMEOUT = 60_000        # ms para esperar el evento download
 MAX_REINTENTOS_DESCARGA = 3      # reintentos por archivo
