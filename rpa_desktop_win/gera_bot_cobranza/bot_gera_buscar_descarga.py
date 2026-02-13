@@ -39,6 +39,7 @@ async def descargar_reportes_dia_presente():
     print(f"📅 Buscando los 2 reportes más recientes de hoy: {fecha_hoy}")
 
     async with async_playwright() as p:
+        # Lanzamos el navegador
         browser = await p.chromium.launch(headless=False)
         context = await browser.new_context(accept_downloads=True)
         page = await context.new_page()
@@ -66,6 +67,7 @@ async def descargar_reportes_dia_presente():
                 if not celdas:
                     continue
 
+                # Validar fecha
                 es_de_hoy = False
                 for celda in celdas:
                     texto_celda = (await celda.inner_text()).strip()
@@ -111,17 +113,17 @@ async def descargar_reportes_dia_presente():
                 else:
                     continue
 
+            # Si aún no tenemos los 2 archivos, esperamos y refrescamos
             if archivos_descargados < 2:
-                print(f"🔄 Llevamos {archivos_descargados}/2 archivos. Refrescando en 30 segundos...")
+                print(f"🔄 Progreso: {archivos_descargados}/2. Esperando 30s para refrescar...")
                 await asyncio.sleep(30)
-                # Intentamos usar el botón actualizar del SGI si existe, o recargar página
                 try:
                     await page.click("a#ContentPlaceHolder1_atualizarButton_btn", timeout=5000)
                 except Exception:
                     await page.reload()
 
         await browser.close()
-        print(f"🏁 Finalizado. Se descargaron {archivos_descargados} archivos únicos.")
+        print(f"🏁 Proceso Finalizado. Se descargaron {archivos_descargados} archivos.")
 
 if __name__ == "__main__":
     asyncio.run(descargar_reportes_dia_presente())
