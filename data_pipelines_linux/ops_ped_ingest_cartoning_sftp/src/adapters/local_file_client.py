@@ -67,16 +67,49 @@ class LocalFileClient:
         moved: List[FileInfo] = []
         for fi in source_files:
             dest = os.path.join(self.processing_path, fi.filename)
-            try:
-                shutil.move(fi.full_path, dest)
+            # Intentos con retry para errores temporales (locks/antivirus)
+            success = False
+            for attempt in range(1, 4):
+                try:
+                    # Intentar rename/move atómico
+                    shutil.move(fi.full_path, dest)
+                    success = True
+                    break
+                except PermissionError as e:
+                    _log('FILE-IO', f'Permiso denegado moviendo {fi.filename} (intento {attempt}): {e}')
+                except OSError as e:
+                    # Windows puede devolver errno 13 / WinError 5
+                    _log('FILE-IO', f'Error OS moviendo {fi.filename} (intento {attempt}): {e}')
+                # Intentar relajar permisos y reintentar
+                try:
+                    os.chmod(fi.full_path, 0o666)
+                except Exception:
+                    pass
+                import time
+                time.sleep(0.5 * attempt)
+
+            # Fallback: intentar copy2 + remove (útil si el archivo está en otro volumen)
+            if not success:
+                try:
+                    _log('FILE-IO', f'Intentando fallback copy para {fi.filename}')
+                    shutil.copy2(fi.full_path, dest)
+                    try:
+                        os.remove(fi.full_path)
+                    except Exception as e_rm:
+                        _log('FILE-IO', f'Warning: no se pudo borrar original {fi.filename} tras copy: {e_rm}')
+                    success = True
+                except Exception as e2:
+                    _log('FILE-IO', f'Error moviendo {fi.filename} a _processing (fallback falló): {e2}')
+
+            if success:
                 moved.append(FileInfo(
                     filename=fi.filename,
                     full_path=dest,
                     mtime=fi.mtime,
                     size=fi.size
                 ))
-            except Exception as e:
-                _log('FILE-IO', f'Error moviendo {fi.filename} a _processing: {e}')
+            else:
+                _log('FILE-IO', f'Fallo definitivo moviendo {fi.filename}; se omite por ahora')
         
         _log('FILE-IO', f'Movidos {len(moved)}/{len(source_files)} archivos a _processing/')
         return moved
@@ -95,11 +128,22 @@ class LocalFileClient:
         for fname in filenames:
             src = os.path.join(self.processing_path, fname)
             if os.path.exists(src):
+                dest = os.path.join(dest_dir, fname)
                 try:
-                    shutil.move(src, os.path.join(dest_dir, fname))
+                    shutil.move(src, dest)
                     archived += 1
                 except Exception as e:
                     _log('FILE-IO', f'Error archivando {fname}: {e}')
+                    # Intentar fallback copy
+                    try:
+                        shutil.copy2(src, dest)
+                        try:
+                            os.remove(src)
+                            archived += 1
+                        except Exception:
+                            _log('FILE-IO', f'Warning: no se pudo borrar origen {fname} tras copy a archive')
+                    except Exception as e2:
+                        _log('FILE-IO', f'Fallback archivado falló para {fname}: {e2}')
         
         _log('FILE-IO', f'Archivados {archived}/{len(filenames)} -> {dest_dir}')
     
@@ -113,7 +157,10 @@ class LocalFileClient:
             for f in os.listdir(self.processing_path):
                 fp = os.path.join(self.processing_path, f)
                 if os.path.isfile(fp):
-                    os.remove(fp)
+                    try:
+                        os.remove(fp)
+                    except Exception as e:
+                        _log('FILE-IO', f'No se pudo limpiar {fp}: {e}')
     
     # ── Internos ──────────────────────────────────────────────────
     
