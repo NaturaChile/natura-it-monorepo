@@ -119,46 +119,84 @@ class DuckDBBatchProcessor:
 
     def batch_waveconfirm(self, processing_dir: str) -> dict:
         """Lee y limpia todos los archivos de WaveConfirm.
-        
+
+        Usa lectura Python (tolerante a encodings y columnas variables)
+        + limpieza vectorizada DuckDB.
+
         Returns:
             {'Staging_EWM_WaveConfirm': pyarrow.Table} o {} si vacío
         """
         tag = 'DUCK-WAVE'
         t0 = time.time()
-        glob_pattern = os.path.join(processing_dir, '*.txt').replace('\\', '/')
 
         try:
-            result = self.con.execute(f"""
-                SELECT 
-                    TRIM(column0)  AS WaveID,
-                    TRIM(column1)  AS PedidoID,
-                    TRIM(column2)  AS columna0,
-                    TRIM(column3)  AS CajaID,
-                    TRIM(column4)  AS columna_extra,
-                    filename       AS NombreArchivo
-                FROM read_csv(
-                    '{glob_pattern}',
-                    delim = ';',
-                    header = false,
-                    columns = {{
-                        'column0': 'VARCHAR',
-                        'column1': 'VARCHAR',
-                        'column2': 'VARCHAR',
-                        'column3': 'VARCHAR',
-                        'column4': 'VARCHAR'
-                    }},
-                    filename = true,
-                    encoding = 'latin1',
-                    ignore_errors = true,
-                    null_padding = true
+            all_rows = []
+            file_count = 0
+            skipped = 0
+
+            for fname in sorted(os.listdir(processing_dir)):
+                if not fname.lower().endswith('.txt'):
+                    continue
+                fpath = os.path.join(processing_dir, fname)
+                try:
+                    with open(fpath, 'r', encoding='latin-1', errors='replace') as f:
+                        lines = f.readlines()
+                except Exception as e:
+                    _log(tag, f'  WARN: No se pudo leer {fname}: {e}')
+                    skipped += 1
+                    continue
+
+                file_lines = 0
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(';')
+                    # Normalizar a 5 columnas (algunos archivos traen menos)
+                    while len(parts) < 5:
+                        parts.append(None)
+                    row = parts[:5] + [fname]
+                    all_rows.append(row)
+                    file_lines += 1
+
+                if file_lines == 0:
+                    _log(tag, f'  WARN: {fname} vacío o sin datos válidos')
+                    skipped += 1
+                else:
+                    file_count += 1
+
+            if not all_rows:
+                _log(tag, f'Sin datos. {skipped} archivos omitidos.')
+                return {}
+
+            # Cargar en DuckDB para limpieza vectorizada
+            self.con.execute("DROP TABLE IF EXISTS raw_wave")
+            self.con.execute("""
+                CREATE TABLE raw_wave (
+                    col0 VARCHAR, col1 VARCHAR, col2 VARCHAR,
+                    col3 VARCHAR, col4 VARCHAR, archivo VARCHAR
                 )
-                WHERE TRIM(COALESCE(column0, '')) <> ''
+            """)
+            self.con.executemany(
+                "INSERT INTO raw_wave VALUES (?, ?, ?, ?, ?, ?)",
+                all_rows
+            )
+
+            result = self.con.execute("""
+                SELECT
+                    TRIM(col0) AS WaveID,
+                    TRIM(col1) AS PedidoID,
+                    TRIM(col2) AS columna0,
+                    TRIM(col3) AS CajaID,
+                    TRIM(col4) AS columna_extra,
+                    archivo    AS NombreArchivo
+                FROM raw_wave
+                WHERE TRIM(COALESCE(col0, '')) <> ''
             """).arrow()
 
-            # Extraer solo basename del filename
-            result = self._fix_filename_column(result)
-
-            _log(tag, f'OK: {result.num_rows} filas en {time.time()-t0:.2f}s')
+            if skipped > 0:
+                _log(tag, f'  {skipped} archivos omitidos (vacíos/error)')
+            _log(tag, f'OK: {file_count} archivos → {result.num_rows} filas en {time.time()-t0:.2f}s')
             return {'Staging_EWM_WaveConfirm': result}
 
         except Exception as e:
