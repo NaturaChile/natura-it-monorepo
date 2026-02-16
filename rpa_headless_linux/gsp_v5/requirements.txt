@@ -1,0 +1,29 @@
+# Core
+playwright==1.49.1
+celery[redis]==5.4.0
+redis==5.2.1
+
+# Database
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+alembic==1.14.0
+
+# API & Monitoring
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+flower==2.0.1
+
+# Data validation
+pydantic==2.10.3
+pydantic-settings==2.7.0
+
+# Logging
+structlog==24.4.0
+python-json-logger==2.0.7
+
+# Utilities
+pandas==2.2.3
+openpyxl==3.1.5
+tenacity==9.0.0
+httpx==0.28.1
+python-dotenv==1.0.1

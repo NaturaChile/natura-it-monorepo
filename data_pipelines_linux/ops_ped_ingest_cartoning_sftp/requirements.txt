@@ -1,4 +1,6 @@
 pandas>=2.0.0
 sqlalchemy>=2.0.0
 pyodbc
+duckdb>=1.0.0
+pyarrow>=14.0.0
 # paramiko y cryptography ya NO necesarios (migrado de SFTP a carpetas locales)

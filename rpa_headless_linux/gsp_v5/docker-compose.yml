@@ -1,0 +1,202 @@
+# ──────────────────────────────────────────────────────────
+# GSP Bot v5 – Docker Compose
+# ──────────────────────────────────────────────────────────
+# Services:
+#   - postgres     : Persistent state & audit logs
+#   - redis        : Celery broker + result backend
+#   - master       : FastAPI control API
+#   - dispatcher   : Celery worker for batch dispatch
+#   - worker-1..N  : Celery workers with Playwright
+#   - flower       : Celery monitoring dashboard
+# ──────────────────────────────────────────────────────────
+
+version: "3.9"
+
+# Todas las variables se inyectan desde el env: block del workflow de GitHub Actions.
+# Docker Compose las hereda del environment del proceso padre (el runner).
+# Formato: ${VARIABLE:-valor_por_defecto}
+x-common-env: &common-env
+  APP_ENV: ${APP_ENV:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: gsp_bot
+  POSTGRES_USER: gsp
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_strong_password}
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-}@redis:6379/1
+  CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-3}
+  CELERY_MAX_RETRIES: ${CELERY_MAX_RETRIES:-3}
+  CELERY_RETRY_DELAY: ${CELERY_RETRY_DELAY:-30}
+  GSP_LOGIN_URL: "https://natura-auth.prd.naturacloud.com/?company=natura&client_id=3ec6rhfe52b2k78h32kv7ml6ti&redirect_uri=https://gsp.natura.com&country=CL&language=es"
+  GSP_USER_CODE: ${GSP_USER_CODE:-CHANGE_ME}
+  GSP_PASSWORD: ${GSP_PASSWORD:-CHANGE_ME}
+  PLAYWRIGHT_HEADLESS: ${PLAYWRIGHT_HEADLESS:-true}
+  PLAYWRIGHT_TIMEOUT: ${PLAYWRIGHT_TIMEOUT:-60000}
+  PLAYWRIGHT_SLOW_MO: ${PLAYWRIGHT_SLOW_MO:-100}
+  SCREENSHOT_ON_ERROR: ${SCREENSHOT_ON_ERROR:-true}
+  SCREENSHOT_DIR: /app/screenshots
+
+services:
+  # ── PostgreSQL ────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: gsp_bot
+      POSTGRES_USER: gsp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_strong_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gsp -d gsp_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Redis ─────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-clave}
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-clave}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Master API ────────────────────────────
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+    environment:
+      <<: *common-env
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - screenshots:/app/screenshots
+      - uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Batch Dispatcher ─────────────────────
+  dispatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile.dispatcher
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Worker 1 ──────────────────────────────
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      <<: *common-env
+      CELERY_CONCURRENCY: 3
+    volumes:
+      - screenshots:/app/screenshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2"
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  # ── Worker 2 ──────────────────────────────
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      <<: *common-env
+      CELERY_CONCURRENCY: 3
+    volumes:
+      - screenshots:/app/screenshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2"
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  # ── Worker 3 ──────────────────────────────
+  worker-3:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      <<: *common-env
+      CELERY_CONCURRENCY: 3
+    volumes:
+      - screenshots:/app/screenshots
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2"
+    shm_size: "2gb"
+    restart: unless-stopped
+
+  # ── Flower (Celery Dashboard) ─────────────
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile.master
+    command: celery -A worker.celery_app:app flower --port=5555 --broker=redis://redis:6379/0
+    environment:
+      <<: *common-env
+      FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-admin:changeme}
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  screenshots:
+  uploads:

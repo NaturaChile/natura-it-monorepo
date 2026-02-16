@@ -1,0 +1,104 @@
+# ──────────────────────────────────────────────
+# GitHub Actions – Build, Test & Deploy GSP Bot v5
+# ──────────────────────────────────────────────
+# Secrets required in GitHub repo settings:
+#   GSP_USER_CODE       → Código de supervisor GSP
+#   GSP_PASSWORD         → Password de supervisor GSP
+#   POSTGRES_PASSWORD    → Password para PostgreSQL
+#   DEPLOY_HOST          → IP/hostname del servidor (opcional, solo para deploy remoto)
+#   DEPLOY_USER          → Usuario SSH del servidor (opcional)
+#   DEPLOY_SSH_KEY       → Llave SSH privada (opcional)
+# ──────────────────────────────────────────────
+
+name: Deploy GSP Bot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Permite ejecutar manualmente desde GitHub
+
+jobs:
+  # ── Build & Validate ──────────────────────
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env from GitHub Secrets
+        run: |
+          cat > .env << EOF
+          APP_ENV=production
+          LOG_LEVEL=INFO
+          LOG_FORMAT=json
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          REDIS_DB=0
+          REDIS_PASSWORD=
+          POSTGRES_HOST=postgres
+          POSTGRES_PORT=5432
+          POSTGRES_DB=gsp_bot
+          POSTGRES_USER=gsp
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          CELERY_BROKER_URL=redis://redis:6379/0
+          CELERY_RESULT_BACKEND=redis://redis:6379/1
+          CELERY_CONCURRENCY=3
+          CELERY_MAX_RETRIES=3
+          CELERY_RETRY_DELAY=30
+          GSP_LOGIN_URL=https://natura-auth.prd.naturacloud.com/?company=natura&client_id=3ec6rhfe52b2k78h32kv7ml6ti&redirect_uri=https://gsp.natura.com&country=CL&language=es
+          GSP_USER_CODE=${{ secrets.GSP_USER_CODE }}
+          GSP_PASSWORD=${{ secrets.GSP_PASSWORD }}
+          PLAYWRIGHT_HEADLESS=true
+          PLAYWRIGHT_TIMEOUT=60000
+          PLAYWRIGHT_SLOW_MO=100
+          SCREENSHOT_ON_ERROR=true
+          SCREENSHOT_DIR=/app/screenshots
+          API_HOST=0.0.0.0
+          API_PORT=8000
+          FLOWER_PORT=5555
+          FLOWER_BASIC_AUTH=admin:changeme
+          EOF
+
+      - name: Build Docker images
+        run: docker-compose build
+
+      - name: Verify images built
+        run: docker images | grep gsp
+
+  # ── Deploy (opcional - solo si configuras servidor) ──
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to server via SSH
+        if: ${{ secrets.DEPLOY_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd ~/gsp_v5 || git clone ${{ github.server_url }}/${{ github.repository }}.git ~/gsp_v5
+            cd ~/gsp_v5
+            git pull origin main
+
+            # Crear .env con secretos
+            cat > .env << 'ENVEOF'
+            APP_ENV=production
+            LOG_LEVEL=INFO
+            LOG_FORMAT=json
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            GSP_USER_CODE=${{ secrets.GSP_USER_CODE }}
+            GSP_PASSWORD=${{ secrets.GSP_PASSWORD }}
+            PLAYWRIGHT_HEADLESS=true
+            FLOWER_BASIC_AUTH=admin:changeme
+            ENVEOF
+
+            # Levantar servicios
+            docker-compose down
+            docker-compose up -d --build
+            docker-compose ps

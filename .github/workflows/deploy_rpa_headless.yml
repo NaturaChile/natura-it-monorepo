@@ -1,0 +1,75 @@
+name: CD - Deploy RPA Headless Linux (Dev)
+
+# ──────────────────────────────────────────────────────────
+# Despliega automáticamente los cambios de rpa_headless_linux
+# en la máquina 10.224.6.16 cuando se hace push a dev.
+# Patrón idéntico a deploy_windows_bots.yml pero para la
+# máquina de Machine Learning con Docker.
+# ──────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [ "dev" ]
+    paths:
+      - 'rpa_headless_linux/**'
+      - 'core_shared/**'
+      - 'config/**'
+      - 'requirements.txt'
+      - '.github/workflows/deploy_rpa_headless.yml'
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Windows, X64, self-hosted-ml]
+
+    environment: Machine_Learning_10.224.6.16
+
+    env:
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+
+    steps:
+      - name: Descargar Código del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Desplegar Archivos en Servidor
+        shell: powershell
+        run: |
+          $dest = "$env:DEPLOY_PATH"
+          Write-Host "[INFO] Iniciando despliegue RPA Headless Linux en: $dest"
+          
+          # 1. Crear directorio base si no existe
+          if (!(Test-Path -Path $dest)) { 
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+            Write-Host "[OK] Directorio base creado."
+          }
+          
+          # 2. Copiar carpetas (Sobrescribiendo)
+          Write-Host "[INFO] Copiando RPA Headless Linux..."
+          if (Test-Path ".\rpa_headless_linux") {
+              Copy-Item -Path ".\rpa_headless_linux" -Destination $dest -Recurse -Force
+          }
+
+          Write-Host "[INFO] Copiando Core Shared..."
+          Copy-Item -Path ".\core_shared" -Destination $dest -Recurse -Force
+          
+          Write-Host "[INFO] Copiando Configuracion..."
+          if (Test-Path ".\config") {
+            Copy-Item -Path ".\config" -Destination $dest -Recurse -Force
+          }
+          
+          Write-Host "[INFO] Copiando Requirements..."
+          Copy-Item -Path ".\requirements.txt" -Destination $dest -Force
+          
+          Write-Host "[SUCCESS] Archivos copiados exitosamente en $dest"
+
+      - name: Verificar Docker Desktop
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando Docker Desktop..."
+          try {
+            $version = docker version --format '{{.Server.Version}}' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Docker no responde" }
+            Write-Host "[OK] Docker Engine version: $version"
+          } catch {
+            Write-Host "[WARN] Docker Desktop no esta corriendo. El deploy de archivos fue exitoso pero Docker no esta disponible."
+            Write-Host "[WARN] Para levantar GSP Bot v5 ejecuta el workflow manual: GSP Bot v5 - Deploy Docker"
+          }
