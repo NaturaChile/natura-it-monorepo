@@ -22,16 +22,16 @@ on:
 jobs:
   gsp-docker:
     name: "GSP v5 - ${{ github.event.inputs.action }}"
-    runs-on: [self-hosted, Windows, X64, self-hosted-windows]
-    environment: 10.156.16.48_WINDOWS
+    runs-on: [self-hosted, Windows, X64, self-hosted-ml]
+    environment: Machine_Learning_10.224.6.16
 
     # ══════════════════════════════════════════════════════════
     # Patrón estándar del monorepo: TODAS las variables se 
-    # inyectan via env: block. NUNCA se genera un .env en disco.
-    # Docker Compose las recibe via --env-file temporal seguro.
+    # inyectan via env: block. Docker Compose las hereda del
+    # environment del proceso padre (el runner).
     # ══════════════════════════════════════════════════════════
     env:
-      COMPOSE_DIR: data_pipelines_linux/gsp_v5
+      COMPOSE_DIR: rpa_headless_linux/gsp_v5
 
       # --- Credenciales GSP (SECRETS) ---
       GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
@@ -43,7 +43,7 @@ jobs:
       # --- Flower Dashboard (SECRET) ---
       FLOWER_BASIC_AUTH: ${{ secrets.FLOWER_BASIC_AUTH }}
 
-      # --- Redis (SECRET opcional) ---
+      # --- Redis (SECRET) ---
       REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
 
       # --- Celery (VARIABLES) ---
