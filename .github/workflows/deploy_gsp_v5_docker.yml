@@ -1,0 +1,310 @@
+name: GSP Bot v5 - Deploy Docker (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Acción a ejecutar'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - stop
+          - restart
+          - status
+          - logs
+      scale_workers:
+        description: 'Cantidad de workers Playwright (solo deploy/restart)'
+        required: false
+        default: '3'
+        type: string
+
+jobs:
+  gsp-docker:
+    name: "GSP v5 - ${{ github.event.inputs.action }}"
+    runs-on: [self-hosted, Windows, X64, self-hosted-windows]
+    environment: 10.156.16.48_WINDOWS
+
+    # ══════════════════════════════════════════════════════════
+    # Patrón estándar del monorepo: TODAS las variables se 
+    # inyectan via env: block. NUNCA se genera un .env en disco.
+    # Docker Compose las recibe via --env-file temporal seguro.
+    # ══════════════════════════════════════════════════════════
+    env:
+      COMPOSE_DIR: data_pipelines_linux/gsp_v5
+
+      # --- Credenciales GSP (SECRETS) ---
+      GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
+      GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
+
+      # --- PostgreSQL (SECRET) ---
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
+      # --- Flower Dashboard (SECRET) ---
+      FLOWER_BASIC_AUTH: ${{ secrets.FLOWER_BASIC_AUTH }}
+
+      # --- Redis (SECRET opcional) ---
+      REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+
+      # --- Celery (VARIABLES) ---
+      CELERY_CONCURRENCY: ${{ vars.CELERY_CONCURRENCY || '3' }}
+      CELERY_MAX_RETRIES: ${{ vars.CELERY_MAX_RETRIES || '3' }}
+      CELERY_RETRY_DELAY: ${{ vars.CELERY_RETRY_DELAY || '30' }}
+
+      # --- Playwright (VARIABLES) ---
+      PLAYWRIGHT_HEADLESS: ${{ vars.PLAYWRIGHT_HEADLESS || 'true' }}
+      PLAYWRIGHT_TIMEOUT: ${{ vars.PLAYWRIGHT_TIMEOUT || '60000' }}
+      PLAYWRIGHT_SLOW_MO: ${{ vars.PLAYWRIGHT_SLOW_MO || '100' }}
+
+      # --- App (VARIABLES) ---
+      APP_ENV: ${{ vars.APP_ENV || 'production' }}
+      LOG_LEVEL: ${{ vars.LOG_LEVEL || 'INFO' }}
+      LOG_FORMAT: ${{ vars.LOG_FORMAT || 'json' }}
+
+    steps:
+      # ── 1. Checkout ────────────────────────────
+      - name: Descargar código del repositorio
+        uses: actions/checkout@v4
+
+      # ── 2. Verificar Docker ────────────────────
+      - name: Verificar que Docker está corriendo
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando Docker Desktop..."
+          try {
+            $version = docker version --format '{{.Server.Version}}' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "Docker no responde" }
+            Write-Host "[OK] Docker Engine version: $version"
+            
+            $composeVersion = docker compose version --short 2>&1
+            Write-Host "[OK] Docker Compose version: $composeVersion"
+          } catch {
+            Write-Error "[ERROR] Docker Desktop no esta corriendo. Inicialo antes de ejecutar este workflow."
+            exit 1
+          }
+
+      # ══════════════════════════════════════════════
+      # ACCION: DEPLOY (build + levantar todo)
+      # ══════════════════════════════════════════════
+      - name: "DEPLOY - Build de imagenes Docker"
+        if: github.event.inputs.action == 'deploy'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - DEPLOY"
+          Write-Host "  Workers: ${{ github.event.inputs.scale_workers }}"
+          Write-Host "════════════════════════════════════════"
+          
+          Write-Host ""
+          Write-Host "[1/5] Deteniendo servicios anteriores si existen..."
+          docker compose down --remove-orphans 2>$null
+          
+          Write-Host ""
+          Write-Host "[2/5] Construyendo imagenes Docker..."
+          docker compose build
+
+      - name: "DEPLOY - Levantar infraestructura (PostgreSQL + Redis)"
+        if: github.event.inputs.action == 'deploy'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          # Docker Compose hereda las env vars del proceso padre (el runner).
+          # Las variables definidas en el bloque env: del job YA están disponibles.
+          Write-Host "[3/5] Levantando PostgreSQL y Redis..."
+          docker compose up -d postgres redis
+          
+          Write-Host "[INFO] Esperando que los servicios esten saludables..."
+          $maxWait = 60
+          $elapsed = 0
+          
+          while ($elapsed -lt $maxWait) {
+            $pgHealthy = docker inspect --format='{{.State.Health.Status}}' gsp_v5-postgres-1 2>$null
+            $redisHealthy = docker inspect --format='{{.State.Health.Status}}' gsp_v5-redis-1 2>$null
+            
+            if ($pgHealthy -eq "healthy" -and $redisHealthy -eq "healthy") {
+              Write-Host "[OK] PostgreSQL y Redis estan listos."
+              break
+            }
+            
+            Write-Host "[INFO] Esperando... (${elapsed}s) PG=$pgHealthy REDIS=$redisHealthy"
+            Start-Sleep -Seconds 5
+            $elapsed += 5
+          }
+          
+          if ($elapsed -ge $maxWait) {
+            Write-Host "[WARN] Timeout esperando servicios, continuando de todos modos..."
+          }
+
+      - name: "DEPLOY - Levantar servicios de aplicacion"
+        if: github.event.inputs.action == 'deploy'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          $workers = [int]"${{ github.event.inputs.scale_workers }}"
+          
+          Write-Host "[4/5] Levantando Master API, Dispatcher, Flower y $workers worker(s)..."
+          
+          # docker compose hereda las env vars del runner automaticamente.
+          # El docker-compose.yml usa ${GSP_USER_CODE}, ${POSTGRES_PASSWORD}, etc.
+          # que ya estan en el environment del proceso.
+          docker compose up -d master dispatcher flower
+          
+          if ($workers -ge 1) { docker compose up -d worker-1 }
+          if ($workers -ge 2) { docker compose up -d worker-2 }
+          if ($workers -ge 3) { docker compose up -d worker-3 }
+          
+          Write-Host ""
+          Write-Host "[5/5] Verificando estado de servicios..."
+          Start-Sleep -Seconds 10
+          docker compose ps
+
+      - name: "DEPLOY - Verificar salud de la API"
+        if: github.event.inputs.action == 'deploy'
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando que la API responde..."
+          $maxRetries = 12
+          $retry = 0
+          
+          while ($retry -lt $maxRetries) {
+            try {
+              $response = Invoke-RestMethod -Uri "http://localhost:8000/health" -TimeoutSec 5 -ErrorAction Stop
+              Write-Host "[OK] API respondiendo: $($response | ConvertTo-Json -Compress)"
+              
+              Write-Host ""
+              Write-Host "════════════════════════════════════════"
+              Write-Host "  DEPLOY EXITOSO"
+              Write-Host "════════════════════════════════════════"
+              Write-Host ""
+              Write-Host "  API REST:    http://localhost:8000"
+              Write-Host "  Swagger UI:  http://localhost:8000/docs"
+              Write-Host "  Flower:      http://localhost:5555"
+              Write-Host "  PostgreSQL:  localhost:5432"
+              Write-Host "  Redis:       localhost:6379"
+              Write-Host ""
+              Write-Host "  Workers:     ${{ github.event.inputs.scale_workers }}"
+              Write-Host ""
+              exit 0
+            } catch {
+              $retry++
+              Write-Host "[INFO] API no responde aun... intento $retry/$maxRetries"
+              Start-Sleep -Seconds 5
+            }
+          }
+          
+          Write-Host "[WARN] La API no respondio al health check, pero los contenedores pueden estar arrancando."
+          Write-Host "[INFO] Verifica manualmente en http://localhost:8000/health"
+
+      # ══════════════════════════════════════════════
+      # ACCION: STOP
+      # ══════════════════════════════════════════════
+      - name: "STOP - Detener todos los servicios"
+        if: github.event.inputs.action == 'stop'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - STOP"
+          Write-Host "════════════════════════════════════════"
+          
+          Write-Host "[INFO] Deteniendo todos los contenedores..."
+          docker compose down --remove-orphans
+          
+          Write-Host ""
+          Write-Host "[OK] Todos los servicios detenidos."
+          Write-Host "[INFO] Los datos de PostgreSQL y Redis persisten en Docker volumes."
+          Write-Host "[INFO] Para eliminar datos: docker compose down -v"
+
+      # ══════════════════════════════════════════════
+      # ACCION: RESTART
+      # ══════════════════════════════════════════════
+      - name: "RESTART - Reiniciar servicios"
+        if: github.event.inputs.action == 'restart'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          $workers = [int]"${{ github.event.inputs.scale_workers }}"
+          
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - RESTART"
+          Write-Host "  Workers: $workers"
+          Write-Host "════════════════════════════════════════"
+          
+          Write-Host "[INFO] Deteniendo servicios..."
+          docker compose down --remove-orphans
+          
+          Write-Host "[INFO] Levantando servicios..."
+          docker compose up -d postgres redis
+          Start-Sleep -Seconds 15
+          
+          docker compose up -d master dispatcher flower
+          if ($workers -ge 1) { docker compose up -d worker-1 }
+          if ($workers -ge 2) { docker compose up -d worker-2 }
+          if ($workers -ge 3) { docker compose up -d worker-3 }
+          
+          Start-Sleep -Seconds 10
+          Write-Host ""
+          Write-Host "[OK] Servicios reiniciados:"
+          docker compose ps
+
+      # ══════════════════════════════════════════════
+      # ACCION: STATUS
+      # ══════════════════════════════════════════════
+      - name: "STATUS - Estado de servicios"
+        if: github.event.inputs.action == 'status'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - STATUS"
+          Write-Host "════════════════════════════════════════"
+          
+          Write-Host ""
+          Write-Host "--- Contenedores ---"
+          docker compose ps -a
+          
+          Write-Host ""
+          Write-Host "--- Uso de Recursos ---"
+          docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}" 2>$null
+          
+          Write-Host ""
+          Write-Host "--- Volumes ---"
+          docker volume ls --filter "name=gsp" 2>$null
+          
+          Write-Host ""
+          Write-Host "--- Health Check API ---"
+          try {
+            $response = Invoke-RestMethod -Uri "http://localhost:8000/health" -TimeoutSec 5 -ErrorAction Stop
+            Write-Host "[OK] API: $($response | ConvertTo-Json -Compress)"
+          } catch {
+            Write-Host "[WARN] API no responde en http://localhost:8000/health"
+          }
+
+      # ══════════════════════════════════════════════
+      # ACCION: LOGS
+      # ══════════════════════════════════════════════
+      - name: "LOGS - Ver logs recientes"
+        if: github.event.inputs.action == 'logs'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - LOGS (ultimos 150 por servicio)"
+          Write-Host "════════════════════════════════════════"
+          
+          Write-Host ""
+          Write-Host "=== MASTER API ==="
+          docker compose logs --tail=50 --timestamps master 2>$null
+          
+          Write-Host ""
+          Write-Host "=== DISPATCHER ==="
+          docker compose logs --tail=30 --timestamps dispatcher 2>$null
+          
+          Write-Host ""
+          Write-Host "=== WORKERS ==="
+          docker compose logs --tail=50 --timestamps worker-1 worker-2 worker-3 2>$null
+          
+          Write-Host ""
+          Write-Host "=== FLOWER ==="
+          docker compose logs --tail=20 --timestamps flower 2>$null

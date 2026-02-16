@@ -1,18 +1,52 @@
 # ──────────────────────────────────────────────
 # GSP Bot v5 - Configuration Settings
 # ──────────────────────────────────────────────
+# Usa el mismo patrón de seguridad que el resto del monorepo:
+#   GitHub Secrets/Vars → env: block en workflow → os.getenv() → Vault.get_secret()
+# Nunca se genera un .env en disco. Dentro de Docker las variables
+# se inyectan vía docker-compose environment / --env-file.
+# ──────────────────────────────────────────────
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
+# ── Integración con Vault del monorepo ────────
+# Intentamos importar Vault; si no está disponible (ej. dentro de Docker
+# sin acceso al path del monorepo), usamos os.getenv directo.
+try:
+    from core_shared.security.vault import Vault
+    _USE_VAULT = True
+except ImportError:
+    _USE_VAULT = False
+
+
+def _secret(key: str, default: str = "") -> str:
+    """
+    Lee un secreto usando el patrón estándar del monorepo:
+      1. Vault.get_secret() (= os.getenv con logging)
+      2. Fallback a os.getenv directo
+    Compatible con ejecución dentro y fuera de Docker.
+    """
+    if _USE_VAULT:
+        val = Vault.get_secret(key)
+        if val:
+            return val
+    return os.getenv(key, default)
+
 
 class Settings(BaseSettings):
-    """Centralized application configuration loaded from env vars / .env file."""
+    """
+    Configuración centralizada.
+    - Dentro de Docker: lee de environment vars inyectadas por docker-compose.
+    - Fuera de Docker (CLI/tests): lee de os.getenv, que viene del env: block
+      del workflow o del shell local. Vault.get_secret() como wrapper.
+    """
 
     # ── General ───────────────────────────────
     app_env: str = Field("production", alias="APP_ENV")
@@ -40,15 +74,15 @@ class Settings(BaseSettings):
     celery_max_retries: int = Field(3, alias="CELERY_MAX_RETRIES")
     celery_retry_delay: int = Field(30, alias="CELERY_RETRY_DELAY")
 
-    # ── GSP ───────────────────────────────────
+    # ── GSP (credenciales sensibles via Vault) ─
     gsp_login_url: str = Field(
         "https://natura-auth.prd.naturacloud.com/?company=natura"
         "&client_id=3ec6rhfe52b2k78h32kv7ml6ti"
         "&redirect_uri=https://gsp.natura.com&country=CL&language=es",
         alias="GSP_LOGIN_URL",
     )
-    gsp_user_code: str = Field("", alias="GSP_USER_CODE")
-    gsp_password: str = Field("", alias="GSP_PASSWORD")
+    gsp_user_code: str = Field(default_factory=lambda: _secret("GSP_USER_CODE"), alias="GSP_USER_CODE")
+    gsp_password: str = Field(default_factory=lambda: _secret("GSP_PASSWORD"), alias="GSP_PASSWORD")
 
     # ── Playwright ────────────────────────────
     playwright_headless: bool = Field(True, alias="PLAYWRIGHT_HEADLESS")
@@ -66,8 +100,10 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
+        # Contraseña sensible: Vault-first
+        pw = _secret("POSTGRES_PASSWORD", self.postgres_password)
         return (
-            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql://{self.postgres_user}:{pw}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
@@ -81,7 +117,8 @@ class Settings(BaseSettings):
         return f"redis://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     class Config:
-        env_file = ".env"
+        # Sin env_file: las variables se inyectan via env: block (workflow)
+        # o via docker-compose environment:
         env_file_encoding = "utf-8"
         populate_by_name = True
 
