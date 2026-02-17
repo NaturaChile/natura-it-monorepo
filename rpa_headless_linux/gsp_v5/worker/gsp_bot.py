@@ -30,99 +30,206 @@ from shared.exceptions import (
     SessionExpiredError,
 )
 
+logger = get_logger("gsp_bot")
+
 
 class GSPBot:
-    """Context manager wrapper for the module-level bot step implementations.
+    """Stateful Playwright bot that executes the full GSP order flow."""
 
-    The concrete step implementations are defined as module-level functions
-    that expect a `self` object with attributes like `page`, `settings`, and
-    helper methods (`_take_screenshot`, `_log_step`, etc.). To avoid moving
-    all code, this lightweight class provides those attributes and forwards
-    method calls to the module-level implementations.
-    """
+    # ── Lifecycle ─────────────────────────────
 
     def __init__(
         self,
         supervisor_code: str,
         supervisor_password: str,
-        order_id: int,
-        worker_id: str,
-    ) -> None:
+        order_id: int | None = None,
+        worker_id: str | None = None,
+    ):
+        self.settings = get_settings()
         self.supervisor_code = supervisor_code
         self.supervisor_password = supervisor_password
         self.order_id = order_id
-        self.worker_id = worker_id
-        self.settings = get_settings()
-        self._playwright = None
-        self.browser: Browser | None = None
-        self.context: BrowserContext | None = None
-        self.page: Page | None = None
+        self.worker_id = worker_id or f"worker-{os.getpid()}"
+
+        self._pw = None
+        self._browser: Optional[Browser] = None
+        self._context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
+
         self._step_log: list[dict] = []
-        self.logger = get_logger(__name__)
+
+    # ── Context manager ───────────────────────
 
     def __enter__(self):
-        # Start Playwright and open a browser + context + page
-        try:
-            self._playwright = sync_playwright().start()
-            headless = bool(getattr(self.settings, "playwright_headless", True))
-            args = [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-            ]
-            self.browser = self._playwright.chromium.launch(headless=headless, args=args)
-            self.context = self.browser.new_context()
-            self.page = self.context.new_page()
-        except Exception as e:
-            self.logger.error("failed_start_browser", error=str(e))
-            raise
+        self.start_browser()
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    def start_browser(self) -> None:
+        """Launch Chromium via Playwright."""
+        logger.info("launching_browser", headless=self.settings.playwright_headless, worker=self.worker_id)
+        self._pw = sync_playwright().start()
+
+        # Build Chromium args dynamically
+        chrome_args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-http2",
+            "--disable-quic",
+            "--disable-blink-features=AutomationControlled",
+            "--dns-prefetch-disable",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--ignore-certificate-errors",
+        ]
+
+        # Proxy support: use corporate proxy if configured in env
+        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+        pw_proxy = None
+        if proxy_url:
+            logger.info("proxy_detected", proxy=proxy_url, worker=self.worker_id)
+            pw_proxy = {"server": proxy_url}
+        else:
+            # Only disable proxy when we know there isn't one
+            chrome_args.append("--no-proxy-server")
+
+        self._browser = self._pw.chromium.launch(
+            headless=self.settings.playwright_headless,
+            slow_mo=self.settings.playwright_slow_mo,
+            args=chrome_args,
+            proxy=pw_proxy,
+        )
+        # Anti-detection headers used in troubleshooting runs
+        extra_headers = {
+            "sec-ch-ua": '"Chromium";v="121", "Not_A Brand";v="8"',
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-mobile": "?0",
+        }
+
+        self._context = self._browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            locale="es-CL",
+            timezone_id="America/Santiago",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            extra_http_headers=extra_headers,
+            ignore_https_errors=True,
+        )
+
+        # Hide automation flag to reduce bot detection
         try:
-            if self.context:
-                try:
-                    self.context.close()
-                except Exception:
-                    pass
-            if self.browser:
-                try:
-                    self.browser.close()
-                except Exception:
-                    pass
-            if self._playwright:
-                try:
-                    self._playwright.stop()
-                except Exception:
-                    pass
-        finally:
-            # Swallow exceptions on cleanup; errors are surfaced elsewhere
-            return False
+            self._context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
+        except Exception:
+            # Non-fatal: if add_init_script fails for some reason, continue
+            logger.info("add_init_script_failed", worker=self.worker_id)
+        self._context.set_default_timeout(self.settings.playwright_timeout)
+        self.page = self._context.new_page()
+
+    def close(self) -> None:
+        """Clean up browser resources."""
+        try:
+            if self._context:
+                self._context.close()
+            if self._browser:
+                self._browser.close()
+            if self._pw:
+                self._pw.stop()
+        except Exception as e:
+            logger.warning("browser_close_error", error=str(e))
+
+    # ── Helpers ───────────────────────────────
 
     def _log_step(self, step: str, message: str, level: str = "INFO", details: dict | None = None) -> None:
-        entry = {"timestamp": datetime.now(timezone.utc).isoformat(), "step": step, "message": message, "level": level, "details": details}
+        """Record a step in the internal log and emit structured log."""
+        entry = {
+            "step": step,
+            "message": message,
+            "level": level,
+            "details": details or {},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "order_id": self.order_id,
+            "worker_id": self.worker_id,
+        }
         self._step_log.append(entry)
-        # Also emit to module logger for realtime visibility
-        if level == "ERROR":
-            self.logger.error(message, extra={"step": step, "details": details})
-        elif level == "WARNING":
-            self.logger.warning(message, extra={"step": step, "details": details})
-        else:
-            self.logger.info(message, extra={"step": step, "details": details})
+        log_fn = getattr(logger, level.lower(), logger.info)
+        log_fn(message, **{k: v for k, v in entry.items() if k not in ("message", "level")})
 
     def get_step_log(self) -> list[dict]:
-        return self._step_log
+        return list(self._step_log)
 
-    def __getattr__(self, name: str):
-        # Forward unknown attribute access to module-level functions that accept
-        # `self` as the first parameter (e.g., login(self), open_cart(self), etc.)
-        fn = globals().get(name)
-        if callable(fn):
-            return lambda *args, **kwargs: fn(self, *args, **kwargs)
-        raise AttributeError(name)
+    def _preflight_check(self, url: str, step: str = "preflight") -> None:
+        """Verify network connectivity from the container before Playwright navigates.
 
+        Uses Python's urllib (not Chromium) so we can distinguish between
+        a Docker networking issue and a Playwright/Chromium issue.
+        Tests: DNS -> TCP -> TLS -> HTTP, with proxy support.
+        """
+        import socket
+        from urllib.parse import urlparse
 
+        parsed = urlparse(url)
+        host = parsed.netloc
+        base = f"{parsed.scheme}://{host}"
+
+        # Log proxy configuration
+        proxy_env = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+        self._log_step(step, f"Preflight target: {base} | proxy: {proxy_env or 'none'}")
+
+        # --- Step 1: DNS resolution ---
+        try:
+            ip = socket.getaddrinfo(host, 443)[0][4][0]
+            self._log_step(step, f"DNS OK: {host} -> {ip}")
+            dns_ok = True
+        except Exception as e:
+            self._log_step(step, f"DNS FAILED for {host}: {e}", level="ERROR")
+            dns_ok = False
+            raise LoginError(
+                f"DNS resolution failed for {host}: {e}. "
+                f"Check container DNS config (dns: in docker-compose).",
+                step=step,
+            )
+
+        # --- Step 2: TCP connection ---
+        try:
+            s = socket.create_connection((host, 443), timeout=10)
+            s.close()
+            self._log_step(step, f"TCP OK: connected to {host}:443")
+            tcp_ok = True
+        except Exception as e:
+            self._log_step(step, f"TCP FAILED to {host}:443: {e}", level="ERROR")
+            tcp_ok = False
+            # If TCP fails, it's a firewall/routing issue.
+            # If there's a proxy, urllib might still work via the proxy.
+            self._log_step(step, "TCP direct failed. Will try HTTP with proxy if configured.", level="WARNING")
+
+        # --- Step 3: HTTP request (urllib, respects proxy env vars) ---
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        for attempt in range(1, 4):
+            try:
+                req = urllib.request.Request(base, method="HEAD")
+                req.add_header("User-Agent", "GSPBot-preflight/1.0")
+                resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+                self._log_step(step, f"Preflight OK: {base} -> HTTP {resp.status}")
+                return
+            except Exception as e:
+                self._log_step(step, f"Preflight attempt {attempt}/3 failed: {e}", level="WARNING")
+                if attempt < 3:
+                    time.sleep(3)
+
+        # All 3 preflight attempts failed
+        # If DNS/TCP checks passed but urllib failed, continue with a warning
+        # because the issue may be specific to urllib (or intermittent). Let
+        # Playwright attempt the navigation and capture browser-level errors.
+        if dns_ok and tcp_ok:
+            self._log_step(
+                step,
                 f"Preflight urllib failed but DNS/TCP checks passed. Proceeding to Playwright. Proxy={proxy_env or 'none'}",
                 level="WARNING",
             )
@@ -420,13 +527,6 @@ class GSPBot:
         except PWTimeout:
             ss = self._take_screenshot("cart_wait")
             raise CartError("Shopping bag icon not found", step=step, details=f"screenshot={ss}")
-        # Buen indicio de que la página principal cargó: el atajo NATURA
-        try:
-            self.page.wait_for_selector('button[data-testid="category-shortcut-NATURA"]', state="visible", timeout=20000)
-            self._log_step(step, "Category shortcut NATURA visible — page appears loaded")
-        except PWTimeout:
-            # No fatal: avisamos y seguimos, pero es útil para diagnóstico
-            self._log_step(step, "Warning: Category shortcut NATURA not visible before opening cart", level="WARNING")
 
         self._log_step(step, "Clicking shopping bag")
         self.page.click('[data-testid="icon-bag"]')
