@@ -637,6 +637,8 @@ class GSPBot:
                     code_input.fill("")
                     code_input.fill(product_code)
                     self.page.keyboard.press("Tab")
+                    # Give the app small time to render any validation overlay (race fix)
+                    self.page.wait_for_timeout(2000)
                     wait_for_loading_gone()
                 except PWTimeout:
                     ss = self._take_screenshot(f"product_code_{product_code}")
@@ -661,6 +663,8 @@ class GSPBot:
                     qty_input.click(click_count=3)
                     qty_input.fill(str(quantity))
                     self.page.keyboard.press("Tab")
+                    # Give the app small time to render any validation overlay (race fix)
+                    self.page.wait_for_timeout(2000)
                     wait_for_loading_gone()
                 except Exception as e:
                     raise ProductAddError(f"Error entering quantity: {e}", step=step)
