@@ -10,7 +10,7 @@
 #   - flower       : Celery monitoring dashboard
 # ──────────────────────────────────────────────────────────
 
-version: "3.9"
+
 
 # Todas las variables se inyectan desde el env: block del workflow de GitHub Actions.
 # Docker Compose las hereda del environment del proceso padre (el runner).
