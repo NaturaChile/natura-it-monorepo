@@ -78,12 +78,15 @@ class GSPBot:
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-http2",
             ],
         )
         self._context = self._browser.new_context(
             viewport={"width": 1366, "height": 768},
             locale="es-CL",
             timezone_id="America/Santiago",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            ignore_https_errors=True,
         )
         self._context.set_default_timeout(self.settings.playwright_timeout)
         self.page = self._context.new_page()
