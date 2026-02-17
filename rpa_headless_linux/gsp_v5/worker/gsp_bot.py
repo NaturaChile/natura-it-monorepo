@@ -523,6 +523,10 @@ class GSPBot:
         self._log_step(step, "Waiting for main page to load")
 
         try:
+            # NEW: Wait for a reliable dashboard load indicator (category shortcut)
+            self._log_step(step, "Waiting for Dashboard load (Category Shortcut)")
+            self.page.wait_for_selector('[data-testid="category-shortcut-NATURA"]', state="visible", timeout=self.settings.playwright_timeout)
+
             self.page.wait_for_selector('[data-testid="icon-bag"]', state="visible", timeout=60000)
         except PWTimeout:
             ss = self._take_screenshot("cart_wait")
