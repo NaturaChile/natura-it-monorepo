@@ -264,70 +264,28 @@ jobs:
           Write-Host ""
           Write-Host "--- Test desde CONTENEDOR worker-1 ---"
           
-          # 1. DNS Resolution
           Write-Host "[1] DNS Resolution:"
-          docker compose exec -T worker-1 python -c "
-import socket
-try:
-    ip = socket.getaddrinfo('$target', 443)[0][4][0]
-    print(f'  [OK] DNS: $target -> {ip}')
-except Exception as e:
-    print(f'  [FAIL] DNS: {e}')
-" 2>$null
+          docker compose exec -T worker-1 python -c "import socket; ip=socket.getaddrinfo('$target',443)[0][4][0]; print(f'  [OK] DNS: $target -> '+ip)" 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] DNS resolution failed" }
           
-          # 2. TCP Connection
           Write-Host "[2] TCP Connection (port 443):"
-          docker compose exec -T worker-1 python -c "
-import socket
-try:
-    s = socket.create_connection(('$target', 443), timeout=10)
-    s.close()
-    print('  [OK] TCP: connected to $target:443')
-except Exception as e:
-    print(f'  [FAIL] TCP: {e}')
-" 2>$null
+          docker compose exec -T worker-1 python -c "import socket; s=socket.create_connection(('$target',443),timeout=10); s.close(); print('  [OK] TCP: connected to $target`:443')" 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] TCP connection failed" }
           
-          # 3. TLS Handshake
           Write-Host "[3] TLS Handshake:"
-          docker compose exec -T worker-1 python -c "
-import socket, ssl
-try:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    s = socket.create_connection(('$target', 443), timeout=10)
-    ss = ctx.wrap_socket(s, server_hostname='$target')
-    print(f'  [OK] TLS: {ss.version()}')
-    ss.close()
-except Exception as e:
-    print(f'  [FAIL] TLS: {e}')
-" 2>$null
+          docker compose exec -T worker-1 python -c "import socket,ssl; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; s=socket.create_connection(('$target',443),timeout=10); ss=ctx.wrap_socket(s,server_hostname='$target'); print('  [OK] TLS: '+ss.version()); ss.close()" 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] TLS handshake failed" }
           
-          # 4. HTTP Request (urllib)
           Write-Host "[4] HTTP Request (urllib):"
-          docker compose exec -T worker-1 python -c "
-import urllib.request, ssl, os
-proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'none'
-print(f'  Proxy in env: {proxy}')
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-try:
-    req = urllib.request.Request('https://$target', method='HEAD')
-    resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-    print(f'  [OK] HTTP: {resp.status}')
-except Exception as e:
-    print(f'  [FAIL] HTTP: {e}')
-" 2>$null
+          docker compose exec -T worker-1 python -c "import urllib.request,ssl,os; proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'none'; print('  Proxy in env: '+proxy); ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; req=urllib.request.Request('https://$target',method='HEAD'); resp=urllib.request.urlopen(req,timeout=15,context=ctx); print('  [OK] HTTP: '+str(resp.status))" 2>$null
+          if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] HTTP request failed" }
           
-          # 5. HTTP via curl (supports proxy auto-detection)
           Write-Host "[5] curl test:"
-          docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s\n" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+          docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
           
-          # 6. curl with explicit proxy if detected
           if ($env:PROXY_DETECTED -eq "true") {
             Write-Host "[6] curl with proxy ($env:HTTPS_PROXY):"
-            docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s\n" --proxy "$env:HTTPS_PROXY" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+            docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --proxy "$env:HTTPS_PROXY" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
           }
           
           Write-Host ""
