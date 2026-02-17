@@ -11,6 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     gnupg \
+    iproute2 \
+    dnsutils \
     libnss3 \
     libatk-bridge2.0-0 \
     libdrm2 \

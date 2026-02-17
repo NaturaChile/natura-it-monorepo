@@ -72,22 +72,36 @@ class GSPBot:
         """Launch Chromium via Playwright."""
         logger.info("launching_browser", headless=self.settings.playwright_headless, worker=self.worker_id)
         self._pw = sync_playwright().start()
+
+        # Build Chromium args dynamically
+        chrome_args = [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-http2",
+            "--disable-quic",
+            "--dns-prefetch-disable",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--ignore-certificate-errors",
+        ]
+
+        # Proxy support: use corporate proxy if configured in env
+        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+        pw_proxy = None
+        if proxy_url:
+            logger.info("proxy_detected", proxy=proxy_url, worker=self.worker_id)
+            pw_proxy = {"server": proxy_url}
+        else:
+            # Only disable proxy when we know there isn't one
+            chrome_args.append("--no-proxy-server")
+
         self._browser = self._pw.chromium.launch(
             headless=self.settings.playwright_headless,
             slow_mo=self.settings.playwright_slow_mo,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-http2",
-                "--disable-quic",
-                "--no-proxy-server",
-                "--dns-prefetch-disable",
-                "--disable-features=IsolateOrigins,site-per-process,NetworkService",
-                "--disable-site-isolation-trials",
-                "--ignore-certificate-errors",
-            ],
+            args=chrome_args,
+            proxy=pw_proxy,
         )
         self._context = self._browser.new_context(
             viewport={"width": 1366, "height": 768},
@@ -136,9 +150,43 @@ class GSPBot:
 
         Uses Python's urllib (not Chromium) so we can distinguish between
         a Docker networking issue and a Playwright/Chromium issue.
+        Tests: DNS -> TCP -> TLS -> HTTP, with proxy support.
         """
+        import socket
         from urllib.parse import urlparse
-        base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+
+        parsed = urlparse(url)
+        host = parsed.netloc
+        base = f"{parsed.scheme}://{host}"
+
+        # Log proxy configuration
+        proxy_env = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+        self._log_step(step, f"Preflight target: {base} | proxy: {proxy_env or 'none'}")
+
+        # --- Step 1: DNS resolution ---
+        try:
+            ip = socket.getaddrinfo(host, 443)[0][4][0]
+            self._log_step(step, f"DNS OK: {host} -> {ip}")
+        except Exception as e:
+            self._log_step(step, f"DNS FAILED for {host}: {e}", level="ERROR")
+            raise LoginError(
+                f"DNS resolution failed for {host}: {e}. "
+                f"Check container DNS config (dns: in docker-compose).",
+                step=step,
+            )
+
+        # --- Step 2: TCP connection ---
+        try:
+            s = socket.create_connection((host, 443), timeout=10)
+            s.close()
+            self._log_step(step, f"TCP OK: connected to {host}:443")
+        except Exception as e:
+            self._log_step(step, f"TCP FAILED to {host}:443: {e}", level="ERROR")
+            # If TCP fails, it's a firewall/routing issue.
+            # If there's a proxy, urllib might still work via the proxy.
+            self._log_step(step, "TCP direct failed. Will try HTTP with proxy if configured.", level="WARNING")
+
+        # --- Step 3: HTTP request (urllib, respects proxy env vars) ---
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -155,11 +203,11 @@ class GSPBot:
                 if attempt < 3:
                     time.sleep(3)
 
-        # All 3 preflight attempts failed - network is unreachable from container
+        # All 3 preflight attempts failed
         raise LoginError(
             f"Network unreachable from container: could not reach {base} "
-            f"after 3 attempts (urllib). This is a Docker networking issue, "
-            f"not a Playwright issue.",
+            f"after 3 attempts (urllib). Proxy={proxy_env or 'none'}. "
+            f"If proxy is required, set HTTP_PROXY/HTTPS_PROXY env vars in the workflow.",
             step=step,
         )
 

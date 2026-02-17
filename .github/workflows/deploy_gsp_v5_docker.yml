@@ -47,7 +47,7 @@ jobs:
       REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
 
       # --- Celery (VARIABLES) ---
-      CELERY_CONCURRENCY: ${{ vars.CELERY_CONCURRENCY || '3' }}
+      CELERY_CONCURRENCY: ${{ vars.CELERY_CONCURRENCY || '1' }}
       CELERY_MAX_RETRIES: ${{ vars.CELERY_MAX_RETRIES || '3' }}
       CELERY_RETRY_DELAY: ${{ vars.CELERY_RETRY_DELAY || '30' }}
 
@@ -81,6 +81,78 @@ jobs:
           } catch {
             Write-Error "[ERROR] Docker Desktop no esta corriendo. Inicialo antes de ejecutar este workflow."
             exit 1
+          }
+
+      # ══════════════════════════════════════════════
+      # DETECCION DE PROXY (antes de build)
+      # ══════════════════════════════════════════════
+      - name: "Detectar proxy corporativo del host"
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'restart'
+        id: proxy
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Detectando configuracion de proxy del host..."
+          
+          # 1. Buscar en variables de entorno
+          $httpProxy  = $env:HTTP_PROXY
+          $httpsProxy = $env:HTTPS_PROXY
+          $noProxy    = $env:NO_PROXY
+          
+          # 2. Si no hay env vars, buscar en registro de Windows (IE/System proxy)
+          if (-not $httpsProxy) {
+            try {
+              $reg = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+              if ($reg.ProxyEnable -eq 1 -and $reg.ProxyServer) {
+                $proxyServer = $reg.ProxyServer
+                Write-Host "[INFO] Proxy detectado en registro de Windows: $proxyServer"
+                if ($proxyServer -notmatch '^https?://') {
+                  $proxyServer = "http://$proxyServer"
+                }
+                $httpProxy  = $proxyServer
+                $httpsProxy = $proxyServer
+              }
+            } catch {
+              Write-Host "[INFO] No se pudo leer proxy del registro."
+            }
+          }
+          
+          # 3. Tambien buscar via netsh
+          if (-not $httpsProxy) {
+            try {
+              $netshOutput = netsh winhttp show proxy 2>$null
+              $match = [regex]::Match($netshOutput, 'Proxy Server\(s\)\s*:\s*(\S+)')
+              if ($match.Success) {
+                $proxyAddr = $match.Groups[1].Value
+                Write-Host "[INFO] Proxy detectado via netsh: $proxyAddr"
+                if ($proxyAddr -notmatch '^https?://') {
+                  $proxyAddr = "http://$proxyAddr"
+                }
+                $httpProxy  = $proxyAddr
+                $httpsProxy = $proxyAddr
+              }
+            } catch {
+              Write-Host "[INFO] No se pudo leer proxy via netsh."
+            }
+          }
+          
+          if ($httpsProxy) {
+            Write-Host "[OK] Proxy configurado: $httpsProxy"
+            # Exportar para pasos siguientes
+            echo "HTTP_PROXY=$httpProxy" >> $env:GITHUB_ENV
+            echo "HTTPS_PROXY=$httpsProxy" >> $env:GITHUB_ENV
+            echo "http_proxy=$httpProxy" >> $env:GITHUB_ENV
+            echo "https_proxy=$httpsProxy" >> $env:GITHUB_ENV
+            if ($noProxy) {
+              echo "NO_PROXY=$noProxy" >> $env:GITHUB_ENV
+              echo "no_proxy=$noProxy" >> $env:GITHUB_ENV
+            } else {
+              echo "NO_PROXY=localhost,127.0.0.1,postgres,redis,master,dispatcher" >> $env:GITHUB_ENV
+              echo "no_proxy=localhost,127.0.0.1,postgres,redis,master,dispatcher" >> $env:GITHUB_ENV
+            }
+            echo "PROXY_DETECTED=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "[INFO] No se detecto proxy corporativo."
+            echo "PROXY_DETECTED=false" >> $env:GITHUB_ENV
           }
 
       # ══════════════════════════════════════════════
@@ -159,6 +231,112 @@ jobs:
           Write-Host "[5/5] Verificando estado de servicios..."
           Start-Sleep -Seconds 10
           docker compose ps
+
+      # ── Diagnostic: Network connectivity from inside a worker container ──
+      - name: "DEPLOY - Diagnostico de red desde contenedor"
+        if: github.event.inputs.action == 'deploy'
+        shell: powershell
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  DIAGNOSTICO DE RED DESDE CONTENEDOR"
+          Write-Host "════════════════════════════════════════"
+          
+          $target = "natura-auth.prd.naturacloud.com"
+          
+          Write-Host ""
+          Write-Host "--- Proxy detectado: $env:PROXY_DETECTED ---"
+          if ($env:PROXY_DETECTED -eq "true") {
+            Write-Host "  HTTP_PROXY  = $env:HTTP_PROXY"
+            Write-Host "  HTTPS_PROXY = $env:HTTPS_PROXY"
+            Write-Host "  NO_PROXY    = $env:NO_PROXY"
+          }
+          
+          Write-Host ""
+          Write-Host "--- Test desde HOST (PowerShell) ---"
+          try {
+            $hostTest = Invoke-WebRequest -Uri "https://$target" -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop
+            Write-Host "[OK] Host puede alcanzar $target -> HTTP $($hostTest.StatusCode)"
+          } catch {
+            Write-Host "[WARN] Host no puede alcanzar $target : $($_.Exception.Message)"
+          }
+          
+          Write-Host ""
+          Write-Host "--- Test desde CONTENEDOR worker-1 ---"
+          
+          # 1. DNS Resolution
+          Write-Host "[1] DNS Resolution:"
+          docker compose exec -T worker-1 python -c "
+import socket
+try:
+    ip = socket.getaddrinfo('$target', 443)[0][4][0]
+    print(f'  [OK] DNS: $target -> {ip}')
+except Exception as e:
+    print(f'  [FAIL] DNS: {e}')
+" 2>$null
+          
+          # 2. TCP Connection
+          Write-Host "[2] TCP Connection (port 443):"
+          docker compose exec -T worker-1 python -c "
+import socket
+try:
+    s = socket.create_connection(('$target', 443), timeout=10)
+    s.close()
+    print('  [OK] TCP: connected to $target:443')
+except Exception as e:
+    print(f'  [FAIL] TCP: {e}')
+" 2>$null
+          
+          # 3. TLS Handshake
+          Write-Host "[3] TLS Handshake:"
+          docker compose exec -T worker-1 python -c "
+import socket, ssl
+try:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    s = socket.create_connection(('$target', 443), timeout=10)
+    ss = ctx.wrap_socket(s, server_hostname='$target')
+    print(f'  [OK] TLS: {ss.version()}')
+    ss.close()
+except Exception as e:
+    print(f'  [FAIL] TLS: {e}')
+" 2>$null
+          
+          # 4. HTTP Request (urllib)
+          Write-Host "[4] HTTP Request (urllib):"
+          docker compose exec -T worker-1 python -c "
+import urllib.request, ssl, os
+proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'none'
+print(f'  Proxy in env: {proxy}')
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+try:
+    req = urllib.request.Request('https://$target', method='HEAD')
+    resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+    print(f'  [OK] HTTP: {resp.status}')
+except Exception as e:
+    print(f'  [FAIL] HTTP: {e}')
+" 2>$null
+          
+          # 5. HTTP via curl (supports proxy auto-detection)
+          Write-Host "[5] curl test:"
+          docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s\n" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+          
+          # 6. curl with explicit proxy if detected
+          if ($env:PROXY_DETECTED -eq "true") {
+            Write-Host "[6] curl with proxy ($env:HTTPS_PROXY):"
+            docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s\n" --proxy "$env:HTTPS_PROXY" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+          }
+          
+          Write-Host ""
+          Write-Host "--- Informacion de red del contenedor ---"
+          docker compose exec -T worker-1 cat /etc/resolv.conf 2>$null
+          Write-Host ""
+          docker compose exec -T worker-1 ip route 2>$null
+          Write-Host ""
+          Write-Host "════════════════════════════════════════"
 
       - name: "DEPLOY - Verificar salud de la API"
         if: github.event.inputs.action == 'deploy'
