@@ -527,6 +527,13 @@ class GSPBot:
         except PWTimeout:
             ss = self._take_screenshot("cart_wait")
             raise CartError("Shopping bag icon not found", step=step, details=f"screenshot={ss}")
+        # Buen indicio de que la página principal cargó: el atajo NATURA
+        try:
+            self.page.wait_for_selector('button[data-testid="category-shortcut-NATURA"]', state="visible", timeout=20000)
+            self._log_step(step, "Category shortcut NATURA visible — page appears loaded")
+        except PWTimeout:
+            # No fatal: avisamos y seguimos, pero es útil para diagnóstico
+            self._log_step(step, "Warning: Category shortcut NATURA not visible before opening cart", level="WARNING")
 
         self._log_step(step, "Clicking shopping bag")
         self.page.click('[data-testid="icon-bag"]')
@@ -543,11 +550,10 @@ class GSPBot:
     # ── STEP 6b: Clear cart ─────────────────────
 
     def clear_cart(self) -> int:
-        """Remove all products currently in the cart. Returns count of removed items."""
+        """Remove all products checking for the confirmation toast."""
         step = "clear_cart"
         self._log_step(step, "Checking for existing products in cart")
 
-        # Find all delete buttons matching data-testid="remove-product-*"
         delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
 
         if not delete_buttons:
@@ -557,8 +563,8 @@ class GSPBot:
         removed_count = 0
         removed_codes: list[str] = []
 
+        # Recopilar códigos para el log
         for btn in delete_buttons:
-            # Extract product code from data-testid="remove-product-XXXXX"
             testid = btn.get_attribute("data-testid") or ""
             product_code = testid.replace("remove-product-", "") if testid else "unknown"
             removed_codes.append(product_code)
@@ -569,8 +575,9 @@ class GSPBot:
             details={"products_in_cart": removed_codes},
         )
 
-        # Delete one by one (DOM refreshes after each removal)
+        # Borrar uno por uno verificando el Toast
         while True:
+            # Re-consultar el botón porque el DOM cambia tras cada borrado
             btn = self.page.query_selector('a[data-testid^="remove-product-"]')
             if not btn:
                 break
@@ -580,148 +587,137 @@ class GSPBot:
 
             try:
                 btn.click()
-                self.page.wait_for_timeout(1500)  # Wait for DOM to update
+
+                # NUEVO: Esperar explícitamente al Toast de confirmación
+                # Usamos el texto exacto que nos diste
+                try:
+                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
+                    self._log_step(step, f"Confirmed removal toast for {product_code}")
+
+                    # Esperar a que el toast desaparezca para no tapar otros elementos (opcional pero recomendado)
+                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
+
+                except PWTimeout:
+                    self._log_step(step, f"Warning: Removal toast not detected for {product_code}", level="WARNING")
+
                 removed_count += 1
-                self._log_step(
-                    step,
-                    f"Removed product {product_code} from cart ({removed_count}/{len(removed_codes)})",
-                    details={"removed_product": product_code},
-                )
+
             except Exception as e:
-                self._log_step(
-                    step,
-                    f"Failed to remove product {product_code}: {e}",
-                    level="WARNING",
-                    details={"product_code": product_code, "error": str(e)},
-                )
+                self._log_step(step, f"Failed to remove {product_code}: {e}", level="WARNING")
                 break
 
-        self._log_step(
-            step,
-            f"Cart cleared: {removed_count} product(s) removed ✓",
-            details={"removed_count": removed_count, "removed_codes": removed_codes},
-        )
+        self._log_step(step, f"Cart cleared: {removed_count} items removed ✓")
         return removed_count
 
     # ── STEP 7: Add product to cart ───────────
 
     def add_product(self, product_code: str, quantity: int) -> None:
-        """Enter a product code, trigger validation, enter quantity, ensure button enabled, and click."""
+        """Enter product/qty using Tab for validation and wait for success Toast."""
         step = "add_product"
         self._log_step(step, f"Adding product {product_code} x{quantity}")
 
-        # 1. Ingresar Código de Producto
+        # Helper para esperar que se vayan los spinners/overlays
+        def wait_for_loading_gone():
+            try:
+                self.page.wait_for_selector('div[class*="overlayContainer"]', state="hidden", timeout=3000)
+            except Exception:
+                pass
+
+        # 1. Ingresar Código y Validar con TAB
         try:
+            wait_for_loading_gone()
             code_input = self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=15000)
             code_input.click()
             code_input.fill("")
             code_input.fill(product_code)
-
-            # PRIMER TAB: Validar código para que aparezca la cantidad
+            
+            # Validar código
             self.page.keyboard.press("Tab")
-            self.page.wait_for_timeout(500)
-
+            wait_for_loading_gone()
+            
         except PWTimeout:
             ss = self._take_screenshot(f"product_code_{product_code}")
-            raise ProductAddError(
-                f"Product code input not found for {product_code}",
-                step=step,
-                details=f"screenshot={ss}",
-            )
+            raise ProductAddError(f"Product input not found/interactable", step=step, details=f"screenshot={ss}")
 
-        # 2. Ingresar Cantidad (Búsqueda Robusta)
-        qty_selectors = [
-            '#code-and-quantity-quantity',
-            'input[inputmode="numeric"]',
-            '[data-testid="quantity-input"]',
-            'input[name="quantity"]',
-            '.quantity-input input'
-        ]
-        
+        # 2. Ingresar Cantidad
         qty_input = None
-        for selector in qty_selectors:
-            if self.page.is_visible(selector):
-                qty_input = self.page.query_selector(selector)
+        qty_selectors = ['#code-and-quantity-quantity', 'input[inputmode="numeric"]', '[data-testid="quantity-input"]']
+        
+        for sel in qty_selectors:
+            if self.page.is_visible(sel):
+                qty_input = self.page.query_selector(sel)
                 break
         
         if not qty_input:
-            # Reintento con espera si no apareció inmediato
-            try:
-                qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=5000)
-            except PWTimeout:
-                ss = self._take_screenshot(f"product_qty_{product_code}")
-                raise ProductAddError(
-                    f"Quantity input not found for {product_code}",
-                    step=step,
-                    details=f"screenshot={ss}",
-                )
+             # Si no apareció rápido, damos un margen de espera
+             try:
+                 qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=5000)
+             except PWTimeout:
+                 ss = self._take_screenshot(f"product_qty_{product_code}")
+                 raise ProductAddError(f"Quantity input not found", step=step, details=f"screenshot={ss}")
 
         try:
             qty_input.click(click_count=3)
             qty_input.fill(str(quantity))
-            
-            # SEGUNDO TAB: Validar la cantidad para habilitar el botón "Añadir"
+            # Validar cantidad con TAB para habilitar botón
             self.page.keyboard.press("Tab")
-            self.page.wait_for_timeout(500)
-            
+            wait_for_loading_gone()
         except Exception as e:
-             raise ProductAddError(f"Error interacting with quantity input: {e}", step=step)
+             raise ProductAddError(f"Error entering quantity: {e}", step=step)
 
-        # 3. Click Añadir (Esperando a que se HABILITE)
-        self._log_step(step, f"Waiting for Añadir button to enable for {product_code}")
+        # 3. Clic en Añadir (Esperando que se habilite)
+        self._log_step(step, f"Clicking Añadir for {product_code}")
         try:
-            # Selector inteligente: Espera a que el botón NO tenga el atributo 'disabled'
-            # [data-testid="button-add-to-basket"]:not([disabled])
-            btn_selector = '[data-testid="button-add-to-basket"]'
+            btn_sel = '[data-testid="button-add-to-basket"]'
+            self.page.wait_for_selector(f'{btn_sel}:not([disabled])', state="visible", timeout=5000)
+            self.page.click(btn_sel)
+        except PWTimeout:
+            ss = self._take_screenshot(f"add_btn_error_{product_code}")
+            raise ProductAddError(f"Añadir button never enabled", step=step, details=f"screenshot={ss}")
+
+        # 4. VERIFICACIÓN FINAL: Toast vs Error Modal
+        # Aquí es donde confirmamos si realmente se agregó
+        try:
+            # Esperamos el Toast de éxito
+            self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="visible", timeout=5000)
+            self._log_step(step, f"Success detected: Toast '¡Producto agregado con éxito!' appeared")
             
-            # Esperamos a que sea visible Y accionable (enabled)
-            self.page.wait_for_selector(f'{btn_selector}:not([disabled])', state="visible", timeout=10000)
-            
-            # Clic final
-            self.page.click(btn_selector)
+            # Esperamos a que se vaya para limpiar la pantalla para el siguiente producto
+            try:
+                self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="hidden", timeout=3000)
+            except:
+                pass # Si no se va rápido, seguimos igual
+                
+            return # ¡Éxito confirmado! Salimos de la función.
             
         except PWTimeout:
-            # Diagnóstico: ¿Estaba visible pero deshabilitado?
-            is_disabled = self.page.is_disabled('[data-testid="button-add-to-basket"]')
-            status = "DISABLED" if is_disabled else "NOT_FOUND/TIMEOUT"
+            # Si no salió el Toast, buscamos el Modal de Error/Stock
+            self._log_step(step, "Success toast not seen, checking for error modals...", level="WARNING")
             
-            ss = self._take_screenshot(f"product_add_btn_{product_code}")
-            raise ProductAddError(
-                f"Añadir button failed (Status: {status})",
-                step=step,
-                details=f"screenshot={ss}",
-            )
-
-        # 4. Manejo de Stock (Modal "Opciones Disponibles")
-        self.page.wait_for_timeout(2000)
-
-        out_of_stock_modal = self.page.query_selector('#dialog-title')
-        if out_of_stock_modal:
-            modal_text = out_of_stock_modal.inner_text()
-            if "Opciones Disponibles" in modal_text:
-                self._log_step(
-                    step,
-                    f"OUT OF STOCK: Product {product_code}",
-                    level="WARNING",
-                    details={"product_code": product_code, "reason": "no_stock"},
-                )
+            if self.page.is_visible("text=Opciones Disponibles") or self.page.is_visible('#dialog-title'):
+                # Es un error de stock
+                self._take_screenshot(f"stock_error_{product_code}")
+                
+                # Intentar cerrar el modal
                 try:
-                    # Intentar cerrar modal
                     if self.page.is_visible('[data-testid="icon-outlined-navigation-close"]'):
                         self.page.click('[data-testid="icon-outlined-navigation-close"]')
                     else:
                         self.page.keyboard.press("Escape")
                     self.page.wait_for_timeout(1000)
-                except Exception:
-                    self._take_screenshot(f"modal_close_fail_{product_code}")
+                except:
+                    pass
 
                 raise ProductAddError(
-                    f"Product {product_code} out of stock",
+                    f"Product {product_code} out of stock (Modal detected)",
                     step=step,
-                    details=f"product={product_code}, qty={quantity}, reason=no_stock",
+                    details="reason=no_stock"
                 )
-
-        self._log_step(step, f"Product {product_code} x{quantity} added ✓")
+            else:
+                # Ni toast ni modal... algo raro pasó
+                ss = self._take_screenshot(f"unknown_add_result_{product_code}")
+                # Podríamos lanzar error o asumir éxito silencioso, pero mejor ser estrictos:
+                raise ProductAddError(f"No confirmation toast nor error modal appeared", step=step, details=f"screenshot={ss}")
 
     # ── Full Flow Orchestration ───────────────
 
