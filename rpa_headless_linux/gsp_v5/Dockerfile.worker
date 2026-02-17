@@ -43,9 +43,10 @@ COPY . .
 RUN mkdir -p /app/screenshots /app/logs
 
 # Run Celery worker
-CMD ["celery", "-A", "worker.celery_app:app", "worker", \
-     "--loglevel=info", \
-     "--queues=orders,default", \
-     "--concurrency=3", \
-     "--hostname=worker@%h", \
-     "--max-tasks-per-child=10"]
+# CELERY_CONCURRENCY is set via docker-compose environment (default 1)
+CMD celery -A worker.celery_app:app worker \
+    --loglevel=info \
+    --queues=orders,default \
+    --concurrency=${CELERY_CONCURRENCY:-1} \
+    --hostname=worker@%h \
+    --max-tasks-per-child=10
