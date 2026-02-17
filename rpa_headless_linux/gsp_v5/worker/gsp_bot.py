@@ -708,7 +708,12 @@ class GSPBot:
                     try:
                         self.page.goto("https://gsp.natura.com/showcase/natura", wait_until="domcontentloaded")
                         wait_for_loading_gone()
-                        self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=30000)
+                        # REOPEN CART: the quick-order input lives inside the cart sidebar
+                        try:
+                            self.open_cart()
+                        except Exception as open_ex:
+                            self._log_step(step, f"Recovery open_cart failed: {open_ex}", level="ERROR")
+                            raise open_ex
                     except Exception as nav_ex:
                         self._log_step(step, f"Recovery navigation failed: {nav_ex}", level="ERROR")
                     continue
