@@ -41,6 +41,15 @@ x-common-env: &common-env
   SCREENSHOT_ON_ERROR: ${SCREENSHOT_ON_ERROR:-true}
   SCREENSHOT_DIR: /app/screenshots
 
+# Workers usan network_mode: host → conectan a postgres/redis via localhost
+x-worker-env: &worker-env
+  <<: *common-env
+  REDIS_HOST: "127.0.0.1"
+  POSTGRES_HOST: "127.0.0.1"
+  CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-}@127.0.0.1:6379/0
+  CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-}@127.0.0.1:6379/1
+  CELERY_CONCURRENCY: 1
+
 services:
   # ── PostgreSQL ────────────────────────────
   postgres:
@@ -116,8 +125,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      <<: *common-env
-      CELERY_CONCURRENCY: 1
+      <<: *worker-env
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -125,15 +133,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: "2"
+    network_mode: host
     shm_size: "2gb"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     restart: unless-stopped
 
   # ── Worker 2 ──────────────────────────────
@@ -142,8 +143,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      <<: *common-env
-      CELERY_CONCURRENCY: 1
+      <<: *worker-env
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -151,15 +151,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: "2"
+    network_mode: host
     shm_size: "2gb"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     restart: unless-stopped
 
   # ── Worker 3 ──────────────────────────────
@@ -168,8 +161,7 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      <<: *common-env
-      CELERY_CONCURRENCY: 1
+      <<: *worker-env
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -177,15 +169,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: "2"
+    network_mode: host
     shm_size: "2gb"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     restart: unless-stopped
 
   # ── Flower (Celery Dashboard) ─────────────
