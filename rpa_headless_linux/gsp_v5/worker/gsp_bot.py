@@ -360,28 +360,43 @@ class GSPBot:
     # ── STEP 2: Select "Para otra Consultora" ─
 
     def select_otra_consultora(self) -> None:
-        """Click 'Para otra Consultora' radio button and ensure input appears."""
+        """Click 'Para otra Consultora', accept impersonation and ensure input appears."""
         step = "select_otra_consultora"
         self._log_step(step, "Clicking 'Para otra Consultora'")
 
         try:
-            # 1. Primary attempt: click the label
+            # 1. Click the label to select the radio
             self.page.click('label[for="otherCn"]')
 
-            # 2. Quick verification: did the input appear?
+            # 2. Click the impersonation confirm button (Aceptar) if present
             try:
-                self.page.wait_for_selector('#naturaCode', state="visible", timeout=2000)
-            except PWTimeout:
-                self._log_step(step, "Input not visible yet, forcing click via JS...", level="WARNING")
+                # Wait briefly for the accept button to appear, then click it
+                if self.page.is_visible('[data-testid="impersonation-accept-button"]'):
+                    self.page.click('[data-testid="impersonation-accept-button"]')
+                else:
+                    # give it a short chance to appear
+                    try:
+                        self.page.wait_for_selector('[data-testid="impersonation-accept-button"]', state="visible", timeout=2000)
+                        self.page.click('[data-testid="impersonation-accept-button"]')
+                    except PWTimeout:
+                        # Button not present — continue, maybe not required in this flow
+                        self._log_step(step, "Impersonation accept button not present; continuing", level="DEBUG")
+            except Exception as ex:
+                self._log_step(step, f"Error clicking impersonation accept button: {ex}", level="WARNING")
 
-                # 3. Plan B: force click on radio via DOM (more reliable)
+            # 3. Now wait for the consultora input to appear (this appears after Accept)
+            try:
+                self.page.wait_for_selector('#naturaCode', state="visible", timeout=30000)
+            except PWTimeout:
+                # Last resort: force the radio click via DOM and wait a bit
+                self._log_step(step, "Input not visible after accept; forcing radio via JS", level="WARNING")
                 try:
                     self.page.evaluate("document.getElementById('otherCn').click()")
-                    self.page.wait_for_timeout(1000)
-                except Exception as ex:
-                    ss = self._take_screenshot("otra_consultora_force")
+                    self.page.wait_for_selector('#naturaCode', state="visible", timeout=5000)
+                except Exception as ex2:
+                    ss = self._take_screenshot("otra_consultora_no_input")
                     raise ConsultoraSearchError(
-                        f"Failed forcing 'Para otra Consultora' click: {ex}",
+                        f"Consultora input did not appear: {ex2}",
                         step=step,
                         details=f"screenshot={ss}",
                     )
@@ -394,7 +409,7 @@ class GSPBot:
                 details=f"screenshot={ss}",
             )
 
-        self._log_step(step, "Selected 'Para otra Consultora' ✓")
+        self._log_step(step, "Selected 'Para otra Consultora' and accepted impersonation ✓")
 
     # ── STEP 3: Search consultora by code ─────
 
