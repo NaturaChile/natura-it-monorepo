@@ -27,7 +27,7 @@ jobs:
 
     # ══════════════════════════════════════════════════════════
     # Patrón estándar del monorepo: TODAS las variables se 
-    # inyectan via env: block. Docker Compose las hereda del
+    #inyectan via env: block. Docker Compose las hereda del
     # environment del proceso padre (el runner).
     # ══════════════════════════════════════════════════════════
     env:
