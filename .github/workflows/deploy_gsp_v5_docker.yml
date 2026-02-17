@@ -101,9 +101,9 @@ jobs:
           cmd /c "docker compose down --remove-orphans 2>NUL"
           
           Write-Host ""
-          Write-Host "[2/5] Construyendo imagenes Docker..."
+          Write-Host "[2/5] Construyendo imagenes Docker (sin cache)..."
           $env:DOCKER_CLI_HINTS="false"
-          cmd /c "docker compose build"
+          cmd /c "docker compose build --no-cache"
 
       - name: "DEPLOY - Levantar infraestructura (PostgreSQL + Redis)"
         if: github.event.inputs.action == 'deploy'
