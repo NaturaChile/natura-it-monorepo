@@ -19,6 +19,13 @@ x-common-env: &common-env
   APP_ENV: ${APP_ENV:-production}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_FORMAT: ${LOG_FORMAT:-json}
+  # Proxy corporativo (detectado automaticamente por el workflow)
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  http_proxy: ${http_proxy:-}
+  https_proxy: ${https_proxy:-}
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres,redis,master,dispatcher}
+  no_proxy: ${no_proxy:-localhost,127.0.0.1,postgres,redis,master,dispatcher}
   REDIS_HOST: redis
   REDIS_PORT: 6379
   REDIS_PASSWORD: ${REDIS_PASSWORD:-}
