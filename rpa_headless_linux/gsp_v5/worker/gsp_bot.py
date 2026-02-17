@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 import time
+import urllib.request
+import ssl
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -80,6 +82,11 @@ class GSPBot:
                 "--disable-gpu",
                 "--disable-http2",
                 "--disable-quic",
+                "--no-proxy-server",
+                "--dns-prefetch-disable",
+                "--disable-features=IsolateOrigins,site-per-process,NetworkService",
+                "--disable-site-isolation-trials",
+                "--ignore-certificate-errors",
             ],
         )
         self._context = self._browser.new_context(
@@ -123,6 +130,38 @@ class GSPBot:
 
     def get_step_log(self) -> list[dict]:
         return list(self._step_log)
+
+    def _preflight_check(self, url: str, step: str = "preflight") -> None:
+        """Verify network connectivity from the container before Playwright navigates.
+
+        Uses Python's urllib (not Chromium) so we can distinguish between
+        a Docker networking issue and a Playwright/Chromium issue.
+        """
+        from urllib.parse import urlparse
+        base = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        for attempt in range(1, 4):
+            try:
+                req = urllib.request.Request(base, method="HEAD")
+                req.add_header("User-Agent", "GSPBot-preflight/1.0")
+                resp = urllib.request.urlopen(req, timeout=15, context=ctx)
+                self._log_step(step, f"Preflight OK: {base} -> HTTP {resp.status}")
+                return
+            except Exception as e:
+                self._log_step(step, f"Preflight attempt {attempt}/3 failed: {e}", level="WARNING")
+                if attempt < 3:
+                    time.sleep(3)
+
+        # All 3 preflight attempts failed - network is unreachable from container
+        raise LoginError(
+            f"Network unreachable from container: could not reach {base} "
+            f"after 3 attempts (urllib). This is a Docker networking issue, "
+            f"not a Playwright issue.",
+            step=step,
+        )
 
     def _take_screenshot(self, name: str) -> str | None:
         """Save a screenshot and return the file path."""
@@ -173,6 +212,9 @@ class GSPBot:
         """Navigate to GSP login and authenticate as supervisor."""
         step = "login"
         self._log_step(step, "Navigating to login page")
+
+        # ── Pre-flight: verify network connectivity from container ──
+        self._preflight_check(self.settings.gsp_login_url, step)
 
         max_nav_retries = 3
         for attempt in range(1, max_nav_retries + 1):
