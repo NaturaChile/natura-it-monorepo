@@ -81,6 +81,7 @@ class GSPBot:
             "--disable-gpu",
             "--disable-http2",
             "--disable-quic",
+            "--disable-blink-features=AutomationControlled",
             "--dns-prefetch-disable",
             "--disable-features=IsolateOrigins,site-per-process",
             "--disable-site-isolation-trials",
@@ -103,13 +104,28 @@ class GSPBot:
             args=chrome_args,
             proxy=pw_proxy,
         )
+        # Anti-detection headers used in troubleshooting runs
+        extra_headers = {
+            "sec-ch-ua": '"Chromium";v="121", "Not_A Brand";v="8"',
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-mobile": "?0",
+        }
+
         self._context = self._browser.new_context(
             viewport={"width": 1366, "height": 768},
             locale="es-CL",
             timezone_id="America/Santiago",
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            extra_http_headers=extra_headers,
             ignore_https_errors=True,
         )
+
+        # Hide automation flag to reduce bot detection
+        try:
+            self._context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
+        except Exception:
+            # Non-fatal: if add_init_script fails for some reason, continue
+            logger.info("add_init_script_failed", worker=self.worker_id)
         self._context.set_default_timeout(self.settings.playwright_timeout)
         self.page = self._context.new_page()
 
@@ -167,8 +183,10 @@ class GSPBot:
         try:
             ip = socket.getaddrinfo(host, 443)[0][4][0]
             self._log_step(step, f"DNS OK: {host} -> {ip}")
+            dns_ok = True
         except Exception as e:
             self._log_step(step, f"DNS FAILED for {host}: {e}", level="ERROR")
+            dns_ok = False
             raise LoginError(
                 f"DNS resolution failed for {host}: {e}. "
                 f"Check container DNS config (dns: in docker-compose).",
@@ -180,8 +198,10 @@ class GSPBot:
             s = socket.create_connection((host, 443), timeout=10)
             s.close()
             self._log_step(step, f"TCP OK: connected to {host}:443")
+            tcp_ok = True
         except Exception as e:
             self._log_step(step, f"TCP FAILED to {host}:443: {e}", level="ERROR")
+            tcp_ok = False
             # If TCP fails, it's a firewall/routing issue.
             # If there's a proxy, urllib might still work via the proxy.
             self._log_step(step, "TCP direct failed. Will try HTTP with proxy if configured.", level="WARNING")
@@ -204,6 +224,18 @@ class GSPBot:
                     time.sleep(3)
 
         # All 3 preflight attempts failed
+        # If DNS/TCP checks passed but urllib failed, continue with a warning
+        # because the issue may be specific to urllib (or intermittent). Let
+        # Playwright attempt the navigation and capture browser-level errors.
+        if dns_ok and tcp_ok:
+            self._log_step(
+                step,
+                f"Preflight urllib failed but DNS/TCP checks passed. Proceeding to Playwright. Proxy={proxy_env or 'none'}",
+                level="WARNING",
+            )
+            return
+
+        # Otherwise, raise an error to trigger retry
         raise LoginError(
             f"Network unreachable from container: could not reach {base} "
             f"after 3 attempts (urllib). Proxy={proxy_env or 'none'}. "
@@ -262,7 +294,11 @@ class GSPBot:
         self._log_step(step, "Navigating to login page")
 
         # ── Pre-flight: verify network connectivity from container ──
-        self._preflight_check(self.settings.gsp_login_url, step)
+        # Disabled preflight check: some servers/WAFs block requests that
+        # identify as bots (e.g. our urllib preflight used a GSPBot user-agent).
+        # The container network was validated separately; allow Playwright
+        # (with a human-like user-agent) to perform the navigation directly.
+        # self._preflight_check(self.settings.gsp_login_url, step)
 
         max_nav_retries = 3
         for attempt in range(1, max_nav_retries + 1):
