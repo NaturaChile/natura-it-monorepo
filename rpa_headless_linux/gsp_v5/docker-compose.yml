@@ -117,7 +117,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       <<: *common-env
-      CELERY_CONCURRENCY: 3
+      CELERY_CONCURRENCY: 1
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -131,6 +131,9 @@ services:
           memory: 4G
           cpus: "2"
     shm_size: "2gb"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
 
   # ── Worker 2 ──────────────────────────────
@@ -140,7 +143,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       <<: *common-env
-      CELERY_CONCURRENCY: 3
+      CELERY_CONCURRENCY: 1
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -154,6 +157,9 @@ services:
           memory: 4G
           cpus: "2"
     shm_size: "2gb"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
 
   # ── Worker 3 ──────────────────────────────
@@ -163,7 +169,7 @@ services:
       dockerfile: Dockerfile.worker
     environment:
       <<: *common-env
-      CELERY_CONCURRENCY: 3
+      CELERY_CONCURRENCY: 1
     volumes:
       - screenshots:/app/screenshots
     depends_on:
@@ -177,6 +183,9 @@ services:
           memory: 4G
           cpus: "2"
     shm_size: "2gb"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     restart: unless-stopped
 
   # ── Flower (Celery Dashboard) ─────────────
