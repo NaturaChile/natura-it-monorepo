@@ -19,7 +19,7 @@ async def _intentar_descarga(page, id_boton, intento=1):
     # Re-buscar el botón en el DOM actual (puede haber cambiado tras postback)
     boton = await page.query_selector(f"a#{id_boton}")
     if not boton:
-        print(f"   ⚠️  Botón {id_boton} no encontrado en intento {intento}.")
+        print(f"    Botón {id_boton} no encontrado en intento {intento}.")
         return None
     try:
         async with page.expect_download(timeout=DOWNLOAD_TIMEOUT) as download_info:
@@ -127,3 +127,4 @@ async def descargar_reportes_dia_presente():
 
 if __name__ == "__main__":
     asyncio.run(descargar_reportes_dia_presente())
+
