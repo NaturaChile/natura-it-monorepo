@@ -360,17 +360,36 @@ class GSPBot:
     # ── STEP 2: Select "Para otra Consultora" ─
 
     def select_otra_consultora(self) -> None:
-        """Click 'Para otra Consultora' radio button."""
+        """Click 'Para otra Consultora' radio button and ensure input appears."""
         step = "select_otra_consultora"
         self._log_step(step, "Clicking 'Para otra Consultora'")
 
         try:
-            # Click the label or its parent container
+            # 1. Primary attempt: click the label
             self.page.click('label[for="otherCn"]')
-        except PWTimeout:
-            ss = self._take_screenshot("otra_consultora")
+
+            # 2. Quick verification: did the input appear?
+            try:
+                self.page.wait_for_selector('#naturaCode', state="visible", timeout=2000)
+            except PWTimeout:
+                self._log_step(step, "Input not visible yet, forcing click via JS...", level="WARNING")
+
+                # 3. Plan B: force click on radio via DOM (more reliable)
+                try:
+                    self.page.evaluate("document.getElementById('otherCn').click()")
+                    self.page.wait_for_timeout(1000)
+                except Exception as ex:
+                    ss = self._take_screenshot("otra_consultora_force")
+                    raise ConsultoraSearchError(
+                        f"Failed forcing 'Para otra Consultora' click: {ex}",
+                        step=step,
+                        details=f"screenshot={ss}",
+                    )
+
+        except Exception as e:
+            ss = self._take_screenshot("otra_consultora_error")
             raise ConsultoraSearchError(
-                "'Para otra Consultora' not clickable",
+                f"Failed to select consultant option: {e}",
                 step=step,
                 details=f"screenshot={ss}",
             )
@@ -384,8 +403,22 @@ class GSPBot:
         step = "search_consultora"
         self._log_step(step, f"Searching consultora: {consultora_code}")
 
-        # Wait for the consultora input
-        self._safe_fill('#naturaCode', consultora_code, timeout=30000, step=step)
+        # Use the confirmed ID (#naturaCode) or fallback to data-testid
+        try:
+            self.page.wait_for_selector('#naturaCode, [data-testid="ds-input"]', state="visible", timeout=30000)
+
+            if self.page.is_visible('#naturaCode'):
+                self.page.fill('#naturaCode', consultora_code)
+            else:
+                self.page.fill('[data-testid="ds-input"]', consultora_code)
+
+        except PWTimeout:
+            ss = self._take_screenshot("search_input_timeout")
+            raise NavigationError(
+                "Timeout waiting for consultora input (#naturaCode)",
+                step=step,
+                details=f"screenshot={ss}",
+            )
 
         # Click "Buscar"
         self._log_step(step, "Clicking Buscar")
@@ -393,7 +426,6 @@ class GSPBot:
             self.page.wait_for_selector('span.label-0-2-82:has-text("Buscar")', state="visible", timeout=15000)
             self.page.click('button:has(span:has-text("Buscar"))')
         except PWTimeout:
-            # Fallback: try icon-based search button
             try:
                 self.page.click('[data-testid="icon-outlined-action-search"]')
             except Exception:
