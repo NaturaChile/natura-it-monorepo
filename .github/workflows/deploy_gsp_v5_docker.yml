@@ -98,11 +98,12 @@ jobs:
           
           Write-Host ""
           Write-Host "[1/5] Deteniendo servicios anteriores si existen..."
-          docker compose down --remove-orphans 2>$null
+          cmd /c "docker compose down --remove-orphans 2>NUL"
           
           Write-Host ""
           Write-Host "[2/5] Construyendo imagenes Docker..."
-          docker compose build
+          $env:DOCKER_CLI_HINTS="false"
+          cmd /c "docker compose build"
 
       - name: "DEPLOY - Levantar infraestructura (PostgreSQL + Redis)"
         if: github.event.inputs.action == 'deploy'
@@ -209,7 +210,7 @@ jobs:
           Write-Host "════════════════════════════════════════"
           
           Write-Host "[INFO] Deteniendo todos los contenedores..."
-          docker compose down --remove-orphans
+          cmd /c "docker compose down --remove-orphans 2>NUL"
           
           Write-Host ""
           Write-Host "[OK] Todos los servicios detenidos."
@@ -232,7 +233,7 @@ jobs:
           Write-Host "════════════════════════════════════════"
           
           Write-Host "[INFO] Deteniendo servicios..."
-          docker compose down --remove-orphans
+          cmd /c "docker compose down --remove-orphans 2>NUL"
           
           Write-Host "[INFO] Levantando servicios..."
           docker compose up -d postgres redis
