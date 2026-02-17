@@ -3,6 +3,8 @@
 # ──────────────────────────────────────────────
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase
 
@@ -14,8 +16,8 @@ class Base(DeclarativeBase):
     pass
 
 
-_engine = None
-_SessionLocal = None
+_engine: Optional[object] = None
+_SessionLocal: Optional[sessionmaker] = None
 
 
 def get_engine():
@@ -26,16 +28,34 @@ def get_engine():
             settings.database_url,
             pool_size=20,
             max_overflow=10,
-            pool_pre_ping=True,
+            pool_pre_ping=True,  # ensure dead connections are detected and replaced
+            pool_recycle=1800,   # recycle long-lived connections (optional)
             echo=False,
         )
     return _engine
 
 
+def dispose_engine() -> None:
+    """Dispose the current engine so child processes recreate connections.
+
+    Call this from worker process init (e.g. Celery worker_process_init) so
+    each worker process builds its own engine instead of sharing a forked one.
+    """
+    global _engine, _SessionLocal
+    if _engine is not None:
+        try:
+            _engine.dispose()
+        except Exception:
+            pass
+        _engine = None
+    _SessionLocal = None
+
+
 def get_session_factory() -> sessionmaker:
     global _SessionLocal
     if _SessionLocal is None:
-        _SessionLocal = sessionmaker(bind=get_engine(), autocommit=False, autoflush=False)
+        # create factory lazily so it is created in the worker process after dispose_engine
+        _SessionLocal = sessionmaker(bind=get_engine(), autocommit=False, autoflush=False, expire_on_commit=False)
     return _SessionLocal
 
 
