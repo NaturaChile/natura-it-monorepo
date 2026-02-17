@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from celery import Celery
-from celery.signals import worker_init
+from celery.signals import worker_init, worker_process_init
 
 from config.settings import get_settings
 from shared.logging_config import setup_logging
@@ -66,3 +66,11 @@ def init_worker(**kwargs):
     setup_logging()
     from shared.database import init_db
     init_db()
+
+
+@worker_process_init.connect
+def on_worker_process_init(**kwargs):
+    """Run in each worker process after fork: dispose engine so connections are recreated."""
+    # Import here to avoid circular imports at module import time
+    from shared.database import dispose_engine
+    dispose_engine()
