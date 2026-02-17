@@ -30,206 +30,224 @@ from shared.exceptions import (
     SessionExpiredError,
 )
 
-logger = get_logger("gsp_bot")
+    # ── STEP 6: Open cart ─────────────────────
 
+    def open_cart(self) -> None:
+        """Wait for the dashboard to load fully and click the shopping bag."""
+        step = "open_cart"
+        self._log_step(step, "Waiting for main page (Dashboard) to load")
 
-class GSPBot:
-    """Stateful Playwright bot that executes the full GSP order flow."""
-
-    # ── Lifecycle ─────────────────────────────
-
-    def __init__(
-        self,
-        supervisor_code: str,
-        supervisor_password: str,
-        order_id: int | None = None,
-        worker_id: str | None = None,
-    ):
-        self.settings = get_settings()
-        self.supervisor_code = supervisor_code
-        self.supervisor_password = supervisor_password
-        self.order_id = order_id
-        self.worker_id = worker_id or f"worker-{os.getpid()}"
-
-        self._pw = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
-
-        self._step_log: list[dict] = []
-
-    # ── Context manager ───────────────────────
-
-    def __enter__(self):
-        self.start_browser()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-        return False
-
-    def start_browser(self) -> None:
-        """Launch Chromium via Playwright."""
-        logger.info("launching_browser", headless=self.settings.playwright_headless, worker=self.worker_id)
-        self._pw = sync_playwright().start()
-
-        # Build Chromium args dynamically
-        chrome_args = [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-http2",
-            "--disable-quic",
-            "--disable-blink-features=AutomationControlled",
-            "--dns-prefetch-disable",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-site-isolation-trials",
-            "--ignore-certificate-errors",
-        ]
-
-        # Proxy support: use corporate proxy if configured in env
-        proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
-        pw_proxy = None
-        if proxy_url:
-            logger.info("proxy_detected", proxy=proxy_url, worker=self.worker_id)
-            pw_proxy = {"server": proxy_url}
-        else:
-            # Only disable proxy when we know there isn't one
-            chrome_args.append("--no-proxy-server")
-
-        self._browser = self._pw.chromium.launch(
-            headless=self.settings.playwright_headless,
-            slow_mo=self.settings.playwright_slow_mo,
-            args=chrome_args,
-            proxy=pw_proxy,
-        )
-        # Anti-detection headers used in troubleshooting runs
-        extra_headers = {
-            "sec-ch-ua": '"Chromium";v="121", "Not_A Brand";v="8"',
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-ch-ua-mobile": "?0",
-        }
-
-        self._context = self._browser.new_context(
-            viewport={"width": 1366, "height": 768},
-            locale="es-CL",
-            timezone_id="America/Santiago",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            extra_http_headers=extra_headers,
-            ignore_https_errors=True,
-        )
-
-        # Hide automation flag to reduce bot detection
+        # 1. ESPERA DE CARGA (Vital para evitar overlays)
+        # Esperamos a que aparezca el botón de "Productos de ciclo".
+        # Esto confirma que el login/selección terminó y el dashboard es interactuable.
         try:
-            self._context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
-        except Exception:
-            # Non-fatal: if add_init_script fails for some reason, continue
-            logger.info("add_init_script_failed", worker=self.worker_id)
-        self._context.set_default_timeout(self.settings.playwright_timeout)
-        self.page = self._context.new_page()
+            dashboard_signal = '[data-testid="category-shortcut-NATURA"]'
+            self.page.wait_for_selector(dashboard_signal, state="visible", timeout=60000)
+            self._log_step(step, "Dashboard loaded (Shortcut button visible)")
+        except PWTimeout:
+            self._log_step(step, "Warning: Dashboard shortcut did not appear, trying bag anyway...", level="WARNING")
+        
+        # Pausa de seguridad para animaciones finales
+        self.page.wait_for_timeout(2000)
 
-    def close(self) -> None:
-        """Clean up browser resources."""
+        # 2. Clic en la Bolsa
         try:
-            if self._context:
-                self._context.close()
-            if self._browser:
-                self._browser.close()
-            if self._pw:
-                self._pw.stop()
-        except Exception as e:
-            logger.warning("browser_close_error", error=str(e))
+            self.page.wait_for_selector('[data-testid="icon-bag"]', state="visible", timeout=30000)
+            self.page.click('[data-testid="icon-bag"]')
+        except PWTimeout:
+            ss = self._take_screenshot("cart_wait")
+            raise CartError("Shopping bag icon not found", step=step, details=f"screenshot={ss}")
 
-    # ── Helpers ───────────────────────────────
-
-    def _log_step(self, step: str, message: str, level: str = "INFO", details: dict | None = None) -> None:
-        """Record a step in the internal log and emit structured log."""
-        entry = {
-            "step": step,
-            "message": message,
-            "level": level,
-            "details": details or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "order_id": self.order_id,
-            "worker_id": self.worker_id,
-        }
-        self._step_log.append(entry)
-        log_fn = getattr(logger, level.lower(), logger.info)
-        log_fn(message, **{k: v for k, v in entry.items() if k not in ("message", "level")})
-
-    def get_step_log(self) -> list[dict]:
-        return list(self._step_log)
-
-    def _preflight_check(self, url: str, step: str = "preflight") -> None:
-        """Verify network connectivity from the container before Playwright navigates.
-
-        Uses Python's urllib (not Chromium) so we can distinguish between
-        a Docker networking issue and a Playwright/Chromium issue.
-        Tests: DNS -> TCP -> TLS -> HTTP, with proxy support.
-        """
-        import socket
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url)
-        host = parsed.netloc
-        base = f"{parsed.scheme}://{host}"
-
-        # Log proxy configuration
-        proxy_env = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
-        self._log_step(step, f"Preflight target: {base} | proxy: {proxy_env or 'none'}")
-
-        # --- Step 1: DNS resolution ---
+        # 3. Esperar Input del Carrito
         try:
-            ip = socket.getaddrinfo(host, 443)[0][4][0]
-            self._log_step(step, f"DNS OK: {host} -> {ip}")
-            dns_ok = True
-        except Exception as e:
-            self._log_step(step, f"DNS FAILED for {host}: {e}", level="ERROR")
-            dns_ok = False
-            raise LoginError(
-                f"DNS resolution failed for {host}: {e}. "
-                f"Check container DNS config (dns: in docker-compose).",
-                step=step,
-            )
+            self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=30000)
+        except PWTimeout:
+            ss = self._take_screenshot("cart_input_wait")
+            raise CartError("Cart input did not appear after clicking bag", step=step, details=f"screenshot={ss}")
 
-        # --- Step 2: TCP connection ---
-        try:
-            s = socket.create_connection((host, 443), timeout=10)
-            s.close()
-            self._log_step(step, f"TCP OK: connected to {host}:443")
-            tcp_ok = True
-        except Exception as e:
-            self._log_step(step, f"TCP FAILED to {host}:443: {e}", level="ERROR")
-            tcp_ok = False
-            # If TCP fails, it's a firewall/routing issue.
-            # If there's a proxy, urllib might still work via the proxy.
-            self._log_step(step, "TCP direct failed. Will try HTTP with proxy if configured.", level="WARNING")
+        self._log_step(step, "Cart opened ✓")
 
-        # --- Step 3: HTTP request (urllib, respects proxy env vars) ---
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+    # ── STEP 6b: Clear cart ─────────────────────
 
-        for attempt in range(1, 4):
+    def clear_cart(self) -> int:
+        """Remove all products checking for the confirmation toast."""
+        step = "clear_cart"
+        self._log_step(step, "Checking for existing products in cart")
+
+        # Helper para esperar que se vayan los overlays de carga
+        def wait_for_loading_gone():
             try:
-                req = urllib.request.Request(base, method="HEAD")
-                req.add_header("User-Agent", "GSPBot-preflight/1.0")
-                resp = urllib.request.urlopen(req, timeout=15, context=ctx)
-                self._log_step(step, f"Preflight OK: {base} -> HTTP {resp.status}")
-                return
-            except Exception as e:
-                self._log_step(step, f"Preflight attempt {attempt}/3 failed: {e}", level="WARNING")
-                if attempt < 3:
-                    time.sleep(3)
+                # Damos un momento para que aparezca si es que va a aparecer
+                self.page.wait_for_timeout(500)
+                if self.page.is_visible('div[class*="overlayContainer"]'):
+                    self.page.wait_for_selector('div[class*="overlayContainer"]', state="hidden", timeout=10000)
+            except Exception:
+                pass
 
-        # All 3 preflight attempts failed
-        # If DNS/TCP checks passed but urllib failed, continue with a warning
-        # because the issue may be specific to urllib (or intermittent). Let
-        # Playwright attempt the navigation and capture browser-level errors.
-        if dns_ok and tcp_ok:
-            self._log_step(
-                step,
+        delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
+
+        if not delete_buttons:
+            self._log_step(step, "Cart is empty, nothing to clear")
+            return 0
+
+        removed_count = 0
+        removed_codes: list[str] = []
+
+        # Recopilar códigos para el log
+        for btn in delete_buttons:
+            testid = btn.get_attribute("data-testid") or ""
+            product_code = testid.replace("remove-product-", "") if testid else "unknown"
+            removed_codes.append(product_code)
+
+        self._log_step(
+            step,
+            f"Found {len(delete_buttons)} product(s) in cart to remove: {removed_codes}",
+            details={"products_in_cart": removed_codes},
+        )
+
+        while True:
+            wait_for_loading_gone() # Asegurar pantalla limpia
+            btn = self.page.query_selector('a[data-testid^="remove-product-"]')
+            if not btn:
+                break
+
+            testid = btn.get_attribute("data-testid") or ""
+            product_code = testid.replace("remove-product-", "") if testid else "unknown"
+
+            try:
+                btn.click()
+                
+                # Esperar Toast de confirmación
+                try:
+                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
+                    self._log_step(step, f"Confirmed removal toast for {product_code}")
+                    # Esperar a que desaparezca para no estorbar
+                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
+                except PWTimeout:
+                    self._log_step(step, f"Warning: Removal toast not detected for {product_code}", level="WARNING")
+
+                removed_count += 1
+            except Exception as e:
+                self._log_step(step, f"Failed to remove {product_code}: {e}", level="WARNING")
+                break
+
+        self._log_step(step, f"Cart cleared: {removed_count} items removed ✓")
+        return removed_count
+
+    # ── STEP 7: Add product to cart ───────────
+
+    def add_product(self, product_code: str, quantity: int) -> None:
+        """Enter product/qty using Tab for validation and wait for success Toast."""
+        step = "add_product"
+        self._log_step(step, f"Adding product {product_code} x{quantity}")
+
+        # Helper mejorado para detectar y esperar overlays
+        def wait_for_loading_gone():
+            try:
+                # Breve pausa para dar tiempo a que el JS active el overlay
+                self.page.wait_for_timeout(300)
+                # Si aparece, esperamos hasta que se oculte
+                if self.page.is_visible('div[class*="overlayContainer"]'):
+                    self.page.wait_for_selector('div[class*="overlayContainer"]', state="hidden", timeout=15000)
+            except Exception:
+                pass
+
+        # 1. Ingresar Código y Validar con TAB
+        try:
+            wait_for_loading_gone()
+            code_input = self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=15000)
+            code_input.click()
+            code_input.fill("")
+            code_input.fill(product_code)
+            
+            # TAB para validar el código
+            self.page.keyboard.press("Tab")
+            
+            # Esperar a que el sistema procese (y quite el overlay si aparece)
+            wait_for_loading_gone()
+            
+        except PWTimeout:
+            ss = self._take_screenshot(f"product_code_{product_code}")
+            raise ProductAddError(f"Product input not found/interactable", step=step, details=f"screenshot={ss}")
+
+        # 2. Ingresar Cantidad
+        qty_input = None
+        qty_selectors = ['#code-and-quantity-quantity', 'input[inputmode="numeric"]', '[data-testid="quantity-input"]']
+        
+        # Búsqueda rápida
+        for sel in qty_selectors:
+            if self.page.is_visible(sel):
+                qty_input = self.page.query_selector(sel)
+                break
+        
+        if not qty_input:
+             # Búsqueda con espera si no apareció inmediato
+             try:
+                 qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=5000)
+             except PWTimeout:
+                 ss = self._take_screenshot(f"product_qty_{product_code}")
+                 raise ProductAddError(f"Quantity input not found (blocked by overlay?)", step=step, details=f"screenshot={ss}")
+
+        try:
+            qty_input.click(click_count=3)
+            qty_input.fill(str(quantity))
+            
+            # TAB para validar cantidad y habilitar botón Añadir
+            self.page.keyboard.press("Tab")
+            wait_for_loading_gone()
+            
+        except Exception as e:
+             raise ProductAddError(f"Error entering quantity: {e}", step=step)
+
+        # 3. Clic en Añadir
+        self._log_step(step, f"Clicking Añadir for {product_code}")
+        try:
+            btn_sel = '[data-testid="button-add-to-basket"]'
+            # Esperar que esté habilitado
+            self.page.wait_for_selector(f'{btn_sel}:not([disabled])', state="visible", timeout=5000)
+            
+            wait_for_loading_gone() # Último chequeo de limpieza
+            self.page.click(btn_sel)
+            
+        except PWTimeout:
+            ss = self._take_screenshot(f"add_btn_error_{product_code}")
+            raise ProductAddError(f"Añadir button never enabled", step=step, details=f"screenshot={ss}")
+
+        # 4. Confirmación con Toast
+        try:
+            self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="visible", timeout=8000)
+            self._log_step(step, f"Success detected: Toast appeared")
+            
+            # Esperar limpieza
+            try:
+                self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="hidden", timeout=3000)
+            except:
+                pass
+            return 
+            
+        except PWTimeout:
+            self._log_step(step, "Success toast not seen, checking for error modals...", level="WARNING")
+            
+            if self.page.is_visible("text=Opciones Disponibles") or self.page.is_visible('#dialog-title'):
+                # Es stock insuficiente
+                try:
+                    if self.page.is_visible('[data-testid="icon-outlined-navigation-close"]'):
+                        self.page.click('[data-testid="icon-outlined-navigation-close"]')
+                    else:
+                        self.page.keyboard.press("Escape")
+                    self.page.wait_for_timeout(1000)
+                except:
+                    pass
+
+                raise ProductAddError(
+                    f"Product {product_code} out of stock (Modal detected)",
+                    step=step,
+                    details="reason=no_stock"
+                )
+            
+            # Si no hay toast ni modal de stock, asumimos falla
+            ss = self._take_screenshot(f"unknown_add_result_{product_code}")
+            raise ProductAddError(f"No confirmation toast nor error modal appeared", step=step, details=f"screenshot={ss}")
                 f"Preflight urllib failed but DNS/TCP checks passed. Proceeding to Playwright. Proxy={proxy_env or 'none'}",
                 level="WARNING",
             )
