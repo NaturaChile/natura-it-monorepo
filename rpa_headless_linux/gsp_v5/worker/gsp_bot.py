@@ -606,16 +606,21 @@ class GSPBot:
     # ── STEP 7: Add product to cart ───────────
 
     def add_product(self, product_code: str, quantity: int) -> None:
-        """Enter a product code and quantity, then click Añadir."""
+        """Enter a product code, trigger validation, enter quantity, ensure button enabled, and click."""
         step = "add_product"
         self._log_step(step, f"Adding product {product_code} x{quantity}")
 
-        # Clear and fill the product code input
+        # 1. Ingresar Código de Producto
         try:
             code_input = self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=15000)
             code_input.click()
             code_input.fill("")
             code_input.fill(product_code)
+
+            # PRIMER TAB: Validar código para que aparezca la cantidad
+            self.page.keyboard.press("Tab")
+            self.page.wait_for_timeout(500)
+
         except PWTimeout:
             ss = self._take_screenshot(f"product_code_{product_code}")
             raise ProductAddError(
@@ -624,33 +629,70 @@ class GSPBot:
                 details=f"screenshot={ss}",
             )
 
-        # Fill quantity
-        try:
-            qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=10000)
-            qty_input.click(click_count=3)  # select all
-            qty_input.fill(str(quantity))
-        except PWTimeout:
-            ss = self._take_screenshot(f"product_qty_{product_code}")
-            raise ProductAddError(
-                f"Quantity input not found for {product_code}",
-                step=step,
-                details=f"screenshot={ss}",
-            )
+        # 2. Ingresar Cantidad (Búsqueda Robusta)
+        qty_selectors = [
+            '#code-and-quantity-quantity',
+            'input[inputmode="numeric"]',
+            '[data-testid="quantity-input"]',
+            'input[name="quantity"]',
+            '.quantity-input input'
+        ]
+        
+        qty_input = None
+        for selector in qty_selectors:
+            if self.page.is_visible(selector):
+                qty_input = self.page.query_selector(selector)
+                break
+        
+        if not qty_input:
+            # Reintento con espera si no apareció inmediato
+            try:
+                qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=5000)
+            except PWTimeout:
+                ss = self._take_screenshot(f"product_qty_{product_code}")
+                raise ProductAddError(
+                    f"Quantity input not found for {product_code}",
+                    step=step,
+                    details=f"screenshot={ss}",
+                )
 
-        # Click Añadir
-        self._log_step(step, f"Clicking Añadir for {product_code}")
         try:
-            self.page.wait_for_selector('[data-testid="button-add-to-basket"]', state="visible", timeout=10000)
-            self.page.click('[data-testid="button-add-to-basket"]')
+            qty_input.click(click_count=3)
+            qty_input.fill(str(quantity))
+            
+            # SEGUNDO TAB: Validar la cantidad para habilitar el botón "Añadir"
+            self.page.keyboard.press("Tab")
+            self.page.wait_for_timeout(500)
+            
+        except Exception as e:
+             raise ProductAddError(f"Error interacting with quantity input: {e}", step=step)
+
+        # 3. Click Añadir (Esperando a que se HABILITE)
+        self._log_step(step, f"Waiting for Añadir button to enable for {product_code}")
+        try:
+            # Selector inteligente: Espera a que el botón NO tenga el atributo 'disabled'
+            # [data-testid="button-add-to-basket"]:not([disabled])
+            btn_selector = '[data-testid="button-add-to-basket"]'
+            
+            # Esperamos a que sea visible Y accionable (enabled)
+            self.page.wait_for_selector(f'{btn_selector}:not([disabled])', state="visible", timeout=10000)
+            
+            # Clic final
+            self.page.click(btn_selector)
+            
         except PWTimeout:
+            # Diagnóstico: ¿Estaba visible pero deshabilitado?
+            is_disabled = self.page.is_disabled('[data-testid="button-add-to-basket"]')
+            status = "DISABLED" if is_disabled else "NOT_FOUND/TIMEOUT"
+            
             ss = self._take_screenshot(f"product_add_btn_{product_code}")
             raise ProductAddError(
-                f"Añadir button not found for {product_code}",
+                f"Añadir button failed (Status: {status})",
                 step=step,
                 details=f"screenshot={ss}",
             )
 
-        # Wait for cart update and check for "Opciones Disponibles" (out of stock) modal
+        # 4. Manejo de Stock (Modal "Opciones Disponibles")
         self.page.wait_for_timeout(2000)
 
         out_of_stock_modal = self.page.query_selector('#dialog-title')
@@ -659,28 +701,22 @@ class GSPBot:
             if "Opciones Disponibles" in modal_text:
                 self._log_step(
                     step,
-                    f"OUT OF STOCK: Product {product_code} has no available stock. Modal 'Opciones Disponibles' detected.",
+                    f"OUT OF STOCK: Product {product_code}",
                     level="WARNING",
-                    details={"product_code": product_code, "quantity": quantity, "reason": "no_stock"},
+                    details={"product_code": product_code, "reason": "no_stock"},
                 )
-                # Close the modal
                 try:
-                    close_btn = self.page.query_selector('[data-testid="icon-outlined-navigation-close"]')
-                    if close_btn:
-                        close_btn.click()
-                        self.page.wait_for_timeout(1000)
-                        self._log_step(step, f"Closed 'Opciones Disponibles' modal for {product_code}")
+                    # Intentar cerrar modal
+                    if self.page.is_visible('[data-testid="icon-outlined-navigation-close"]'):
+                        self.page.click('[data-testid="icon-outlined-navigation-close"]')
                     else:
-                        # Fallback: try the parent button
-                        self.page.click('button:has([data-testid="icon-outlined-navigation-close"])')
-                        self.page.wait_for_timeout(1000)
-                        self._log_step(step, f"Closed modal via fallback for {product_code}")
-                except Exception as e:
-                    self._log_step(step, f"Could not close modal for {product_code}: {e}", level="WARNING")
+                        self.page.keyboard.press("Escape")
+                    self.page.wait_for_timeout(1000)
+                except Exception:
                     self._take_screenshot(f"modal_close_fail_{product_code}")
 
                 raise ProductAddError(
-                    f"Product {product_code} out of stock (Opciones Disponibles modal)",
+                    f"Product {product_code} out of stock",
                     step=step,
                     details=f"product={product_code}, qty={quantity}, reason=no_stock",
                 )
