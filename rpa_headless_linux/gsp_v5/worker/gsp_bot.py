@@ -79,6 +79,7 @@ class GSPBot:
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-http2",
+                "--disable-quic",
             ],
         )
         self._context = self._browser.new_context(
@@ -173,11 +174,25 @@ class GSPBot:
         step = "login"
         self._log_step(step, "Navigating to login page")
 
-        try:
-            self.page.goto(self.settings.gsp_login_url, wait_until="networkidle", timeout=self.settings.playwright_timeout)
-        except PWTimeout:
-            ss = self._take_screenshot("login_navigation")
-            raise LoginError("Login page did not load", step=step, details=f"screenshot={ss}")
+        max_nav_retries = 3
+        for attempt in range(1, max_nav_retries + 1):
+            try:
+                self.page.goto(
+                    self.settings.gsp_login_url,
+                    wait_until="domcontentloaded",
+                    timeout=self.settings.playwright_timeout,
+                )
+                break  # success
+            except Exception as nav_err:
+                self._log_step(step, f"Navigation attempt {attempt}/{max_nav_retries} failed: {nav_err}", level="WARNING")
+                if attempt == max_nav_retries:
+                    ss = self._take_screenshot("login_navigation")
+                    raise LoginError(
+                        f"Login page did not load after {max_nav_retries} attempts: {nav_err}",
+                        step=step,
+                        details=f"screenshot={ss}",
+                    )
+                self.page.wait_for_timeout(3000)  # wait 3s before retry
 
         # Select "Código" from the combobox
         self._log_step(step, "Selecting 'Código' from login type dropdown")
