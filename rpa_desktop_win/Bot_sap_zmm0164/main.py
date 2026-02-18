@@ -10,9 +10,14 @@ Uso:
 """
 
 import sys
+import os
 
-# Asegurar que el módulo src está disponible
-sys.path.insert(0, str(__file__.rsplit("\\", 1)[0]))
+# Asegurar que el módulo src y paquetes del repo raíz están disponibles
+# Añadimos el directorio del paquete local y la raíz del repositorio al inicio de sys.path
+sys.path.insert(0, os.path.dirname(__file__))
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
 
 from src.domain.export_data import (
     ExportConfig,
