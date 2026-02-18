@@ -15,7 +15,7 @@ import os
 # Asegurar que el módulo src y paquetes del repo raíz están disponibles
 # Añadimos el directorio del paquete local y la raíz del repositorio al inicio de sys.path
 sys.path.insert(0, os.path.dirname(__file__))
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
@@ -74,7 +74,7 @@ if not OUTPUT_FOLDER:
         # Fallback final
         OUTPUT_FOLDER = r"Z:\Publico\RPA\Plan Chile\zmm0164"
 
-print(f"📁 Carpeta de salida configurada: {OUTPUT_FOLDER}")
+print(f"[OUTPUT] Carpeta de salida configurada: {OUTPUT_FOLDER}")
 
 # Configuración de exportación desde variables de entorno
 EXPORT_CONFIG = ExportConfig(
@@ -102,13 +102,13 @@ def main():
         use_case.execute()
         
         print("\n" + "=" * 60)
-        print("✨ PROCESO COMPLETADO EXITOSAMENTE")
+        print("[DONE] PROCESO COMPLETADO EXITOSAMENTE")
         print("=" * 60)
         return 0
     
     except Exception as e:
         print("\n" + "=" * 60)
-        print(f"❌ ERROR CRÍTICO: {e}")
+        print(f"[ERROR] ERROR CRÍTICO: {e}")
         print("=" * 60)
         return 1
 

@@ -50,7 +50,7 @@ def mount_smb_windows(unc_path: str, drive_letter: str, username: str, password:
         True si se monta correctamente, False en caso contrario
     """
     try:
-        print(f"\n📦 Montaje SMB/CIFS en Windows")
+        print(f"\n[SMB] Montaje SMB/CIFS en Windows")
         print(f"   UNC Path: {unc_path}")
         print(f"   Unidad: {drive_letter}:")
         print(f"   Usuario: {domain}\\{username}")
@@ -64,9 +64,9 @@ def mount_smb_windows(unc_path: str, drive_letter: str, username: str, password:
                 check=False,
                 timeout=10
             )
-            print(f"     ✓ Limpieza completada")
+            print(f"     OK: Limpieza completada")
         except Exception:
-            print(f"     ℹ️  Sin conexión anterior (primera vez)")
+            print(f"     INFO: Sin conexión anterior (primera vez)")
         
         # Mapear unidad SMB con credenciales desde variables de entorno
         print(f"\n[2/2] Montando unidad SMB con 'net use'...")
@@ -92,12 +92,12 @@ def mount_smb_windows(unc_path: str, drive_letter: str, username: str, password:
         )
         
         if result.returncode == 0:
-            print(f"\n✅ MONTAJE EXITOSO")
-            print(f"   {drive_letter}: → {unc_path}")
+            print(f"\n[OK] MONTAJE EXITOSO")
+            print(f"   {drive_letter}: -> {unc_path}")
             print(f"   Persistente: {persistent}")
             return True
         else:
-            print(f"\n❌ ERROR EN MONTAJE SMB")
+            print(f"\n[ERROR] ERROR EN MONTAJE SMB")
             print(f"   Código de error: {result.returncode}")
             print(f"   Mensaje: {result.stderr.strip()}")
             
@@ -115,8 +115,8 @@ def mount_smb_windows(unc_path: str, drive_letter: str, username: str, password:
             return False
             
     except subprocess.TimeoutExpired:
-        print(f"❌ Timeout: El comando tardó más de 30 segundos")
+        print(f"[ERROR] Timeout: El comando tardó más de 30 segundos")
         return False
     except Exception as e:
-        print(f"❌ Excepción durante montaje: {e}")
+        print(f"[ERROR] Excepción durante montaje: {e}")
         return False
