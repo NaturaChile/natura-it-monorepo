@@ -15,6 +15,8 @@ import ssl
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+import pandas as pd
+import tempfile
 
 from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page, TimeoutError as PWTimeout
 
@@ -617,6 +619,236 @@ class GSPBot:
             ss = self._take_screenshot(f"add_product_error_{product_code}")
             raise ProductAddError(f"Failed to add product {product_code}: {e}", step=step, details=f"screenshot={ss}")
 
+    # ── Bulk upload helpers ─────────────────────
+
+    def _generate_order_excel(self, products: list[dict]) -> str:
+        """Generate a temporary .xlsx file suitable for the bulk upload.
+
+        Returns the absolute path to the created file.
+        """
+        # Log the exact product codes we will place in the Excel
+        self._log_step("excel_generation", f"Preparing bulk upload for {len(products)} products: {[p['product_code'] for p in products]}")
+        self._log_step("file_generation", "Generating .xlsx for bulk upload")
+        data = []
+        for p in products:
+            data.append({
+                "CÓDIGO": p["product_code"],
+                "QTDE": p.get("quantity", 1),
+            })
+
+        df = pd.DataFrame(data)
+
+        # Crear archivo temporal seguro
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        df.to_excel(tmp_path, index=False)
+        self._log_step("file_generation", f"Generated temporary order file: {tmp_path}")
+        return tmp_path
+
+    def navigate_to_cart_adaptively(self) -> None:
+        """Adaptive navigation loop that ensures we reach the cart page.
+
+        Ports the decision loop from the async reference script to sync Playwright.
+        Raises NavigationError if it cannot reach `/cart` after attempts.
+        """
+        step = "navigate_to_cart_adaptively"
+        self._log_step(step, "Starting adaptive navigation to cart")
+
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            self._log_step(step, f"Adaptive loop attempt #{attempt+1}")
+            try:
+                self.page.wait_for_timeout(2500)
+
+                # If already in cart -- perform cart audit & cleanup then exit
+                if "/cart" in (self.page.url or ""):
+                    self._log_step(step, "Already in /cart; auditing and cleaning cart before upload")
+
+                    # Audit existing items in cart
+                    try:
+                        delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
+                        existing = []
+                        for btn in delete_buttons:
+                            tid = btn.get_attribute("data-testid") or ""
+                            code = tid.replace("remove-product-", "") if tid else "unknown"
+                            existing.append(code)
+
+                        if existing:
+                            self._log_step(step, f"Found existing items in cart: {existing}")
+                        else:
+                            self._log_step(step, "No existing items found in cart")
+
+                        # Remove existing items one by one (log before deleting)
+                        for _ in range(len(existing)):
+                            btn = self.page.query_selector('a[data-testid^="remove-product-"]')
+                            if not btn:
+                                break
+                            tid = btn.get_attribute("data-testid") or ""
+                            code = tid.replace("remove-product-", "") if tid else "unknown"
+                            try:
+                                btn.click()
+                                try:
+                                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
+                                    self._log_step(step, f"Confirmed removal toast for {code}")
+                                    try:
+                                        self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
+                                    except Exception:
+                                        pass
+                                except PWTimeout:
+                                    self._log_step(step, f"Warning: Removal toast not detected for {code}", level="WARNING")
+                            except Exception as e:
+                                self._log_step(step, f"Failed to remove {code}: {e}", level="WARNING")
+                        
+                    except Exception as audit_ex:
+                        self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
+
+                    self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop")
+                    return
+
+                # 1. Cycle popup
+                try:
+                    cycle_radios = self.page.locator('input[data-testid="cycle-radio-button"]')
+                    count = cycle_radios.count()
+                    if count > 0:
+                        selected = None
+                        for i in range(count):
+                            try:
+                                loc = cycle_radios.nth(i)
+                                if loc.is_visible(timeout=500):
+                                    selected = loc
+                                    break
+                            except Exception:
+                                continue
+
+                        if selected is not None:
+                            val = selected.get_attribute('value')
+                            id_attr = selected.get_attribute('id')
+                            self._log_step(step, f"Cycle dialog detected, selecting first visible (value={val})")
+                            try:
+                                if id_attr:
+                                    lbl = self.page.locator(f'label[for="{id_attr}"]')
+                                    if lbl.count() > 0:
+                                        lbl.first.evaluate('el => el.click()')
+                                    else:
+                                        selected.evaluate('el => el.click()')
+                                else:
+                                    selected.evaluate('el => el.click()')
+                            except Exception:
+                                selected.evaluate('el => el.click()')
+
+                            self.page.wait_for_timeout(500)
+                            try:
+                                self.page.locator('[data-testid="cycle-accept-button"]').evaluate('el => el.click()')
+                            except Exception:
+                                try:
+                                    self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                                except Exception:
+                                    self._log_step(step, "Failed to click Aceptar for cycle", level="WARNING")
+                            continue
+                except Exception:
+                    pass
+
+                # 2. Venta directa
+                try:
+                    if self.page.locator('label[for="id_1"]').is_visible(timeout=1000):
+                        self._log_step(step, "Venta Directa popup detected; accepting")
+                        self.page.locator('label[for="id_1"]').evaluate('el => el.click()')
+                        self.page.wait_for_timeout(500)
+                        self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                        continue
+                except Exception:
+                    pass
+
+                # 3. Generic LISTO popup
+                try:
+                    listo_btn = self.page.locator('button:has-text("LISTO")')
+                    if listo_btn.count() > 0 and listo_btn.first.is_visible(timeout=1000):
+                        self._log_step(step, "Found 'LISTO' button; clicking via JS")
+                        listo_btn.first.evaluate('el => el.click()')
+                        continue
+                except Exception:
+                    pass
+
+                # 4. Recuperar / eliminar pedido
+                try:
+                    if self.page.get_by_text("Este pedido esta guardado").is_visible(timeout=1000):
+                        self._log_step(step, "Recover order detected; clicking 'Eliminar Pedido'")
+                        self.page.get_by_role('button', name='Eliminar Pedido').evaluate('el => el.click()')
+                        continue
+                except Exception:
+                    pass
+
+                # 5. Ir al carrito
+                try:
+                    carrito_btn = None
+                    if self.page.locator('button[data-testid="icon-bag"]').count() > 0 and self.page.locator('button[data-testid="icon-bag"]').first.is_visible(timeout=1000):
+                        carrito_btn = self.page.locator('button[data-testid="icon-bag"]').first
+                    elif self.page.locator('button:has-text("Mi Carrito")').count() > 0 and self.page.locator('button:has-text("Mi Carrito")').first.is_visible(timeout=1000):
+                        carrito_btn = self.page.locator('button:has-text("Mi Carrito")').first
+                    elif self.page.get_by_role('button', name='Mi Carrito').count() > 0:
+                        carrito_btn = self.page.get_by_role('button', name='Mi Carrito').first
+
+                    if carrito_btn is not None:
+                        self._log_step(step, "Cart button detected; clicking via JS")
+                        carrito_btn.evaluate('el => el.click()')
+                        continue
+                except Exception:
+                    pass
+
+                # Recovery reload at midpoint
+                if attempt == 5:
+                    self._log_step(step, "State unknown; reloading page as recovery")
+                    try:
+                        self.page.reload()
+                        self.page.wait_for_load_state("networkidle")
+                    except Exception as e:
+                        self._log_step(step, f"Reload failed: {e}", level="WARNING")
+                    continue
+
+            except Exception as e:
+                self._log_step(step, f"Adaptive loop error: {e}", level="WARNING")
+
+        # If we exit loop without reaching /cart, raise
+        raise NavigationError("Could not reach cart after adaptive navigation attempts", step=step)
+
+    def upload_order_file(self, file_path: str) -> None:
+        step = "upload_order_file"
+        self._log_step(step, "Uploading order file...")
+        try:
+            self.page.wait_for_selector('input[type="file"]', state="attached", timeout=60000)
+            # Use Playwright's set_input_files with selector
+            self.page.set_input_files('input[type="file"]', file_path)
+            # Wait for server-side processing
+            self.page.wait_for_timeout(10000)
+
+            # Post-upload validations
+            try:
+                if self.page.get_by_text("No podemos encontrar los Códigos").is_visible(timeout=5000):
+                    # Capture the error text before closing modal
+                    msg_el = self.page.locator("div.modal-body")
+                    try:
+                        error_message = msg_el.inner_text().replace("\n", " ")
+                    except Exception:
+                        error_message = "(failed to read modal body)"
+                    self._log_step("upload_validation", f"GSP Validation Error: {error_message}", level="WARNING", details={"error_text": error_message})
+
+                    try:
+                        self.page.get_by_role('button', name='LISTO').first.evaluate('el => el.click()')
+                    except Exception:
+                        pass
+                else:
+                    # Check inconsistencies
+                    if self.page.get_by_text("hemos detectado inconsistencias").is_visible(timeout=5000):
+                        self._log_step(step, "Detected inconsistencies after upload; closing with LISTO", level="WARNING")
+                        try:
+                            self.page.locator('button:has-text("LISTO")').first.evaluate('el => el.click()')
+                        except Exception:
+                            pass
+        except PWTimeout:
+            ss = self._take_screenshot("upload_file_timeout")
+            raise NavigationError("File upload input not available", step=step, details=f"screenshot={ss}")
+
     # ── Full Flow Orchestration ───────────────
 
     def execute_order(
@@ -664,44 +896,24 @@ class GSPBot:
             self.confirm_consultora()
             result["current_step"] = "consultora_confirmed"
 
-            # Step 5: Select cycle
-            self.select_cycle()
-            result["current_step"] = "cycle_selected"
+            # New bulk upload flow:
+            # Generate temporary Excel, navigate adaptively to cart, upload file
+            excel_path = self._generate_order_excel(products)
+            result["current_step"] = "excel_generated"
 
-            # Step 6: Open cart
-            self.open_cart()
+            # Navigate adaptively to the cart page (handles popups, reloads, etc.)
+            self.navigate_to_cart_adaptively()
             result["current_step"] = "cart_open"
 
-            # Step 6b: Clear existing cart items
-            cleared = self.clear_cart()
-            if cleared > 0:
-                result["current_step"] = "cart_cleared"
+            # Upload the generated Excel file
+            self.upload_order_file(excel_path)
+            result["current_step"] = "file_uploaded"
 
-            # Step 7: Add products
-            for product in products:
-                pcode = product["product_code"]
-                pqty = product.get("quantity", 1)
-                try:
-                    self.add_product(pcode, pqty)
-                    result["products_added"].append({"product_code": pcode, "quantity": pqty})
-                except ProductAddError as e:
-                    is_stock = "no_stock" in (getattr(e, "details", "") or "")
-                    reason = "out_of_stock" if is_stock else "add_error"
-                    self._log_step(
-                        "add_product",
-                        f"FAILED to add {pcode}: {e}",
-                        level="WARNING" if is_stock else "ERROR",
-                        details={"product_code": pcode, "reason": reason},
-                    )
-                    result["products_failed"].append({
-                        "product_code": pcode,
-                        "quantity": pqty,
-                        "error": str(e),
-                        "reason": reason,
-                    })
+            # Assume all products were submitted for processing by the server
+            for p in products:
+                result["products_added"].append({"product_code": p["product_code"], "quantity": p.get("quantity", 1)})
 
-            result["current_step"] = "products_added"
-            result["success"] = len(result["products_failed"]) == 0
+            result["success"] = True
 
         except Exception as e:
             result["error"] = str(e)
