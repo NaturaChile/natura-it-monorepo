@@ -34,7 +34,7 @@ def get_secret(key: str, default: str = None) -> str:
 
 def mount_smb_windows(unc_path: str, drive_letter: str, username: str, password: str, 
                      domain: str = "NATURA", persistent: bool = True) -> bool:
-    """Monta una compartida SMB en Windows usando net use.
+    r"""Monta una compartida SMB en Windows usando net use.
     
     Lee credenciales desde variables de entorno (SAP_Jorge en GitHub).
     
