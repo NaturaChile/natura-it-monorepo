@@ -37,7 +37,7 @@ def test_mount_smb():
     USERNAME = get_secret("BOT_ZMM0164_OUTPUT_NET_USER", "cmancill")
     PASSWORD = get_secret("BOT_ZMM0164_OUTPUT_NET_PASSWORD", "B3l3n-2304!!")
     
-    print("\n📋 PARÁMETROS (desde variables de entorno):")
+    print("\n[PARAMS] PARÁMETROS (desde variables de entorno):")
     print(f"   UNC Path:      {UNC_PATH}")
     print(f"   Unidad:        {DRIVE_LETTER}:")
     print(f"   Dominio:       {DOMAIN}")
@@ -64,40 +64,40 @@ def test_mount_smb():
     print("-"*70)
     
     # Verificar montaje
-    print("\n🔍 VERIFICACIÓN:")
+    print("\n[CHECK] VERIFICACIÓN:")
     drive_path = Path(f"{DRIVE_LETTER}:")
     
     if drive_path.exists():
-        print(f"✅ Unidad {DRIVE_LETTER}: existe")
+        print(f"[OK] Unidad {DRIVE_LETTER}: existe")
         
         # Intentar listar contenido
         try:
             items = list(drive_path.iterdir())
-            print(f"✅ Contenido accesible ({len(items)} items)")
+            print(f"[OK] Contenido accesible ({len(items)} items)")
             
             print("\n   Primeros items encontrados:")
             for item in items[:5]:
-                item_type = "📁" if item.is_dir() else "📄"
+                item_type = "[DIR]" if item.is_dir() else "[FILE]"
                 print(f"      {item_type} {item.name}")
             
             if len(items) > 5:
                 print(f"      ... y {len(items) - 5} items más")
         except PermissionError:
-            print(f"⚠️  Unidad mapeada pero sin permisos de lectura")
+            print(f"[WARN]  Unidad mapeada pero sin permisos de lectura")
         except Exception as e:
-            print(f"⚠️  Error al listar contenido: {e}")
+            print(f"[WARN]  Error al listar contenido: {e}")
     else:
-        print(f"❌ Unidad {DRIVE_LETTER}: no existe")
+        print(f"[ERROR] Unidad {DRIVE_LETTER}: no existe")
     
     # Resumen
     print("\n" + "="*70)
-    print("📊 RESUMEN")
+    print("[SUMMARY]")
     print("="*70)
     if success:
-        print("✅ MONTAJE EXITOSO")
+        print("[OK] MONTAJE EXITOSO")
         print(f"   La unidad {DRIVE_LETTER}: está lista para usar")
     else:
-        print("❌ MONTAJE FALLÓ")
+        print("[ERROR] MONTAJE FALLÓ")
         print(f"   Verifica: credenciales, IP del servidor, conectividad de red")
     
     print("\n" + "="*70 + "\n")

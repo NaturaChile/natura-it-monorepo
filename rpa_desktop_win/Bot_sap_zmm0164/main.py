@@ -74,7 +74,7 @@ if not OUTPUT_FOLDER:
         # Fallback final
         OUTPUT_FOLDER = r"Z:\Publico\RPA\Plan Chile\zmm0164"
 
-print(f"📁 Carpeta de salida configurada: {OUTPUT_FOLDER}")
+print(f"[OUTPUT] Carpeta de salida configurada: {OUTPUT_FOLDER}")
 
 # Configuración de exportación desde variables de entorno
 EXPORT_CONFIG = ExportConfig(
@@ -102,13 +102,13 @@ def main():
         use_case.execute()
         
         print("\n" + "=" * 60)
-        print("✨ PROCESO COMPLETADO EXITOSAMENTE")
+        print("[DONE] PROCESO COMPLETADO EXITOSAMENTE")
         print("=" * 60)
         return 0
     
     except Exception as e:
         print("\n" + "=" * 60)
-        print(f"❌ ERROR CRÍTICO: {e}")
+        print(f"[ERROR] ERROR CRÍTICO: {e}")
         print("=" * 60)
         return 1
 
