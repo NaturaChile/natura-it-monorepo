@@ -362,44 +362,22 @@ class GSPBot:
     def select_otra_consultora(self) -> None:
         """Click 'Para otra Consultora', accept impersonation and ensure input appears."""
         step = "select_otra_consultora"
-        self._log_step(step, "Clicking 'Para otra Consultora'")
+        self._log_step(step, "Clicking 'Para otra Consultora' (Force Mode)")
 
         try:
-            # 1. Click the label to select the radio
-            self.page.click('label[for="otherCn"]')
+            # Use the precise input radio and click with force (mirrors reference script)
+            radio = self.page.locator('input[data-testid="impersonation-radio-button"][value="otherCn"]')
+            radio.wait_for(state="visible", timeout=30000)
+            radio.click(force=True)
 
-            # 2. Click the impersonation confirm button (Aceptar) if present
+            # Click Accept if present
             try:
-                # Wait briefly for the accept button to appear, then click it
-                if self.page.is_visible('[data-testid="impersonation-accept-button"]'):
-                    self.page.click('[data-testid="impersonation-accept-button"]')
-                else:
-                    # give it a short chance to appear
-                    try:
-                        self.page.wait_for_selector('[data-testid="impersonation-accept-button"]', state="visible", timeout=2000)
-                        self.page.click('[data-testid="impersonation-accept-button"]')
-                    except PWTimeout:
-                        # Button not present — continue, maybe not required in this flow
-                        self._log_step(step, "Impersonation accept button not present; continuing", level="DEBUG")
-            except Exception as ex:
-                self._log_step(step, f"Error clicking impersonation accept button: {ex}", level="WARNING")
+                self.page.click('button[data-testid="impersonation-accept-button"]')
+            except Exception:
+                self._log_step(step, "Impersonation accept button not present; continuing", level="DEBUG")
 
-            # 3. Now wait for the consultora input to appear (this appears after Accept)
-            try:
-                self.page.wait_for_selector('#naturaCode', state="visible", timeout=30000)
-            except PWTimeout:
-                # Last resort: force the radio click via DOM and wait a bit
-                self._log_step(step, "Input not visible after accept; forcing radio via JS", level="WARNING")
-                try:
-                    self.page.evaluate("document.getElementById('otherCn').click()")
-                    self.page.wait_for_selector('#naturaCode', state="visible", timeout=5000)
-                except Exception as ex2:
-                    ss = self._take_screenshot("otra_consultora_no_input")
-                    raise ConsultoraSearchError(
-                        f"Consultora input did not appear: {ex2}",
-                        step=step,
-                        details=f"screenshot={ss}",
-                    )
+            # Wait for consultora input
+            self.page.wait_for_selector('#naturaCode', state="visible", timeout=30000)
 
         except Exception as e:
             ss = self._take_screenshot("otra_consultora_error")
@@ -523,24 +501,26 @@ class GSPBot:
         self._log_step(step, "Waiting for main page to load")
 
         try:
-            # NEW: Wait for a reliable dashboard load indicator (category shortcut)
-            self._log_step(step, "Waiting for Dashboard load (Category Shortcut)")
-            self.page.wait_for_selector('[data-testid="category-shortcut-NATURA"]', state="visible", timeout=self.settings.playwright_timeout)
+            # Ported from reference script: wait for product grid/cards to confirm page load
+            self._log_step(step, "Waiting for product grid to confirm load...")
+            self.page.wait_for_selector('div[data-testid="cards-list"]', state="visible", timeout=60000)
+            self.page.wait_for_selector('div[data-testid="cards-list"] >> div[data-testid^="card-"]', state="visible", timeout=30000)
+            # Stabilization pause as in reference script
+            self.page.wait_for_timeout(2000)
 
-            self.page.wait_for_selector('[data-testid="icon-bag"]', state="visible", timeout=60000)
+            # Now open the cart (use button selector from reference)
+            self._log_step(step, "Opening cart")
+            self.page.click('button[data-testid="icon-bag"]')
+            # Validate cart opened by waiting for quick-order input
+            try:
+                self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=10000)
+            except PWTimeout:
+                ss = self._take_screenshot("cart_input_wait")
+                raise CartError("Cart input did not appear after clicking bag", step=step, details=f"screenshot={ss}")
+
         except PWTimeout:
             ss = self._take_screenshot("cart_wait")
             raise CartError("Shopping bag icon not found", step=step, details=f"screenshot={ss}")
-
-        self._log_step(step, "Clicking shopping bag")
-        self.page.click('[data-testid="icon-bag"]')
-
-        # Wait for cart input to appear
-        try:
-            self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=30000)
-        except PWTimeout:
-            ss = self._take_screenshot("cart_input_wait")
-            raise CartError("Cart input did not appear after clicking bag", step=step, details=f"screenshot={ss}")
 
         self._log_step(step, "Cart opened ✓")
 
@@ -609,116 +589,33 @@ class GSPBot:
     # ── STEP 7: Add product to cart ───────────
 
     def add_product(self, product_code: str, quantity: int) -> None:
-        """Enter product/qty using Tab for validation and wait for success Toast.
-
-        This version implements a 2-attempt retry with a recovery navigation to
-        the showcase page if a UI overlay blocks interaction.
-        """
         step = "add_product"
+        self._log_step(step, f"Adding product {product_code} x{quantity}")
 
-        # Helper robusto: esperar a que overlays/progress indicators desaparezcan
-        def wait_for_loading_gone():
-            # Incluir el selector visto en el screenshot 'progress_indicator'
-            self.page.wait_for_selector(
-                'div[class*="overlayContainer"], div[class*="progress_indicator"]',
-                state="hidden",
-                timeout=15000,
-            )
+        try:
+            # 1. Fill product code
+            self.page.fill('#code-and-quantity-code', product_code)
 
-        for attempt in range(2):
-            try:
-                self._log_step(step, f"Adding product {product_code} x{quantity} (Attempt {attempt+1})")
-                wait_for_loading_gone()
+            # 2. Quantity: use the hierarchical selector from the script
+            qty_container = self.page.locator('div[data-testid="code-and-quantity-counter"]')
+            qty_input = qty_container.locator('input[inputmode="numeric"]')
+            qty_input.wait_for(state="visible", timeout=15000)
 
-                # 1. Ingresar Código y Validar con TAB
-                try:
-                    code_input = self.page.wait_for_selector('#code-and-quantity-code', state="visible", timeout=15000)
-                    code_input.click()
-                    code_input.fill("")
-                    code_input.fill(product_code)
-                    self.page.keyboard.press("Tab")
-                    wait_for_loading_gone()
-                except PWTimeout:
-                    ss = self._take_screenshot(f"product_code_{product_code}")
-                    raise ProductAddError(f"Product input not found/interactable", step=step, details=f"screenshot={ss}")
+            # Focus and fill
+            qty_input.click()
+            qty_input.fill(str(quantity))
 
-                # 2. Ingresar Cantidad
-                qty_input = None
-                qty_selectors = ['#code-and-quantity-quantity', 'input[inputmode="numeric"]', '[data-testid="quantity-input"]']
-                for sel in qty_selectors:
-                    if self.page.is_visible(sel):
-                        qty_input = self.page.query_selector(sel)
-                        break
+            # 3. Click Add
+            self.page.click('button[data-testid="button-add-to-basket"]')
 
-                if not qty_input:
-                    try:
-                        qty_input = self.page.wait_for_selector('input[inputmode="numeric"]', state="visible", timeout=5000)
-                    except PWTimeout:
-                        ss = self._take_screenshot(f"product_qty_{product_code}")
-                        raise ProductAddError(f"Quantity input not found", step=step, details=f"screenshot={ss}")
+            # 4. Validate success toast
+            self.page.wait_for_selector('div:has-text("¡Producto agregado con éxito!")', state="visible", timeout=10000)
+            self._log_step(step, f"Product {product_code} added ✓")
+            return
 
-                try:
-                    qty_input.click(click_count=3)
-                    qty_input.fill(str(quantity))
-                    self.page.keyboard.press("Tab")
-                    wait_for_loading_gone()
-                except Exception as e:
-                    raise ProductAddError(f"Error entering quantity: {e}", step=step)
-
-                # 3. Clic en Añadir (Esperando que se habilite)
-                self._log_step(step, f"Clicking Añadir for {product_code}")
-                try:
-                    btn_sel = '[data-testid="button-add-to-basket"]'
-                    self.page.wait_for_selector(f'{btn_sel}:not([disabled])', state="visible", timeout=5000)
-                    self.page.click(btn_sel)
-                except PWTimeout:
-                    ss = self._take_screenshot(f"add_btn_error_{product_code}")
-                    raise ProductAddError(f"Añadir button never enabled", step=step, details=f"screenshot={ss}")
-
-                # 4. VERIFICACIÓN FINAL: Toast vs Error Modal
-                try:
-                    self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="visible", timeout=5000)
-                    self._log_step(step, f"Success detected: Toast '¡Producto agregado con éxito!' appeared")
-                    try:
-                        self.page.wait_for_selector("text=¡Producto agregado con éxito!", state="hidden", timeout=3000)
-                    except Exception:
-                        pass
-                    return
-                except PWTimeout:
-                    self._log_step(step, "Success toast not seen, checking for error modals...", level="WARNING")
-                    if self.page.is_visible("text=Opciones Disponibles") or self.page.is_visible('#dialog-title'):
-                        self._take_screenshot(f"stock_error_{product_code}")
-                        try:
-                            if self.page.is_visible('[data-testid="icon-outlined-navigation-close"]'):
-                                self.page.click('[data-testid="icon-outlined-navigation-close"]')
-                            else:
-                                self.page.keyboard.press("Escape")
-                            self.page.wait_for_timeout(1000)
-                        except:
-                            pass
-                        raise ProductAddError(f"Product {product_code} out of stock (Modal detected)", step=step, details="reason=no_stock")
-                    else:
-                        ss = self._take_screenshot(f"unknown_add_result_{product_code}")
-                        raise ProductAddError(f"No confirmation toast nor error modal appeared", step=step, details=f"screenshot={ss}")
-
-            except (PWTimeout, ProductAddError) as e:
-                # First attempt: try recovery navigation and retry
-                if attempt == 0:
-                    self._log_step(step, f"Product add failed ({e}), attempting recovery navigation to showcase...", level="WARNING")
-                    try:
-                        self.page.goto("https://gsp.natura.com/showcase/natura", wait_until="domcontentloaded")
-                        wait_for_loading_gone()
-                        # REOPEN CART: the quick-order input lives inside the cart sidebar
-                        try:
-                            self.open_cart()
-                        except Exception as open_ex:
-                            self._log_step(step, f"Recovery open_cart failed: {open_ex}", level="ERROR")
-                            raise open_ex
-                    except Exception as nav_ex:
-                        self._log_step(step, f"Recovery navigation failed: {nav_ex}", level="ERROR")
-                    continue
-                # Last attempt: re-raise for upstream handling
-                raise
+        except Exception as e:
+            ss = self._take_screenshot(f"add_product_error_{product_code}")
+            raise ProductAddError(f"Failed to add product {product_code}: {e}", step=step, details=f"screenshot={ss}")
 
     # ── Full Flow Orchestration ───────────────
 
