@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 # Asegurar que el módulo src está disponible
-sys.path.insert(0, str(__file__.rsplit("\\", 1)[0]))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from security.vault_helper import get_secret, mount_smb_windows
 
