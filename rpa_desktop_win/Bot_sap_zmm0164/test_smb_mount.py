@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-"""
+r"""
 Script de prueba para el montaje SMB/CIFS en Windows.
 
 Uso:
     python test_smb_mount.py
 
 O con variables de entorno:
-    $env:BOT_ZMM0164_OUTPUT_UNC_PATH = "\\10.156.145.28\Publico\RPA\Plan Chile\zmm0164"
+    $env:BOT_ZMM0164_OUTPUT_UNC_PATH = "\\10.156.145.28\Areas\Publico\RPA\Plan Chile\zmm0164"
     $env:BOT_ZMM0164_OUTPUT_NET_DOMAIN = "NATURA"
     $env:BOT_ZMM0164_OUTPUT_NET_USER = "cmancill"
     $env:BOT_ZMM0164_OUTPUT_NET_PASSWORD = "B3l3n-2304!!"
