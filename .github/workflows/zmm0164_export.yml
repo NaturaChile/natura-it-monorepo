@@ -1,0 +1,128 @@
+name: ZMM0164 Export
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 10:00 Chile (UTC-3 Verano / UTC-4 Invierno)
+    - cron: '13 13 * * *'   # 10:00 AM Chile (Verano: UTC 13:00)
+
+
+concurrency:
+  # Usamos un nombre de grupo ÚNICO para ZMM0164
+  group: zmm0164-production
+  cancel-in-progress: false
+
+jobs:
+  export-zmm0164:
+    runs-on: [self-hosted, Windows, X64, rpa_ui_55]
+    environment: SAP_Jorge
+
+    env:
+      # Variables de rutas (deben estar en environment SAP_Jorge o a nivel repo)
+      DEPLOY_PATH: ${{ vars.WIN_DEPLOY_PATH }}
+      PYTHON_EXE: ${{ vars.WIN_PYTHON_EXE }}
+      
+      # Variables ZMM0164 desde environment SAP_Jorge
+      BOT_ZMM0164_SAP_CLIENT: ${{ vars.BOT_ZMM0164_SAP_CLIENT }}
+      BOT_ZMM0164_SAP_USER: ${{ vars.BOT_ZMM0164_SAP_USER }}
+      BOT_ZMM0164_SAP_PASSWORD: ${{ secrets.BOT_ZMM0164_SAP_PASSWORD }}
+      BOT_ZMM0164_SAP_LANGUAGE: ${{ vars.BOT_ZMM0164_SAP_LANGUAGE }}
+      BOT_ZMM0164_MATERIAL_CODE: ${{ vars.BOT_ZMM0164_MATERIAL_CODE }}
+      BOT_ZMM0164_FILE_FORMAT: ${{ vars.BOT_ZMM0164_FILE_FORMAT }}
+      
+      # Credenciales para acceso a carpeta de salida (network location)
+      BOT_ZMM0164_OUTPUT_UNC_PATH: ${{ vars.BOT_ZMM0164_OUTPUT_UNC_PATH }}
+      BOT_ZMM0164_OUTPUT_NET_DOMAIN: ${{ vars.BOT_ZMM0164_OUTPUT_NET_DOMAIN }}
+      BOT_ZMM0164_OUTPUT_NET_USER: ${{ vars.BOT_ZMM0164_OUTPUT_NET_USER }}
+      BOT_ZMM0164_OUTPUT_NET_PASSWORD: ${{ secrets.BOT_ZMM0164_OUTPUT_NET_PASSWORD }}
+      BOT_ZMM0164_OUTPUT_FOLDER: ${{ vars.BOT_ZMM0164_OUTPUT_FOLDER }}
+
+    steps:
+      - name: Descargar Codigo del Repositorio
+        uses: actions/checkout@v4
+
+      - name: Verificar Variables de Entorno
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Verificando presencia de variables ZMM0164 en entorno..."
+          $hasClient = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_SAP_CLIENT)
+          $hasUser = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_SAP_USER)
+          $hasPassword = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_SAP_PASSWORD)
+          $hasLang = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_SAP_LANGUAGE)
+          $hasMaterial = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_MATERIAL_CODE)
+          $hasFormat = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_FILE_FORMAT)
+          
+          Write-Host "BOT_ZMM0164_SAP_CLIENT set? $hasClient"
+          Write-Host "BOT_ZMM0164_SAP_USER set? $hasUser"
+          Write-Host "BOT_ZMM0164_SAP_PASSWORD set? $hasPassword"
+          Write-Host "BOT_ZMM0164_SAP_LANGUAGE set? $hasLang"
+          Write-Host "BOT_ZMM0164_MATERIAL_CODE set? $hasMaterial"
+          Write-Host "BOT_ZMM0164_FILE_FORMAT set? $hasFormat"
+          
+          if (-not ($hasClient -and $hasUser -and $hasPassword -and $hasLang -and $hasMaterial -and $hasFormat)) {
+            Write-Error "[ERROR] Faltan variables BOT_ZMM0164_* en el environment SAP_Jorge. Abortando."
+            exit 1
+          }
+          
+          Write-Host "[INFO] Verificando credenciales de red para output folder..."
+          $hasNetDomain = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_OUTPUT_NET_DOMAIN)
+          $hasNetUser = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_OUTPUT_NET_USER)
+          $hasNetPassword = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_OUTPUT_NET_PASSWORD)
+          $hasNetPath = -not [string]::IsNullOrEmpty($env:BOT_ZMM0164_OUTPUT_UNC_PATH)
+          
+          Write-Host "BOT_ZMM0164_OUTPUT_NET_DOMAIN set? $hasNetDomain"
+          Write-Host "BOT_ZMM0164_OUTPUT_NET_USER set? $hasNetUser"
+          Write-Host "BOT_ZMM0164_OUTPUT_NET_PASSWORD set? $hasNetPassword"
+          Write-Host "BOT_ZMM0164_OUTPUT_UNC_PATH set? $hasNetPath"
+          
+          if (-not ($hasNetDomain -and $hasNetUser -and $hasNetPassword -and $hasNetPath)) {
+            Write-Error "[ERROR] Faltan credenciales de red para output folder. Abortando."
+            exit 1
+          }
+          
+          Write-Host "[INFO] Todas las variables ZMM0164 presentes. Continuando..."
+
+      - name: Verificar Acceso Red
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Intentando mapear unidad de red..."
+          $uncPath = $env:BOT_ZMM0164_OUTPUT_UNC_PATH
+          $domain = $env:BOT_ZMM0164_OUTPUT_NET_DOMAIN
+          $user = $env:BOT_ZMM0164_OUTPUT_NET_USER
+          $password = $env:BOT_ZMM0164_OUTPUT_NET_PASSWORD
+          
+          if ([string]::IsNullOrEmpty($uncPath) -or [string]::IsNullOrEmpty($password)) {
+            Write-Error "[ERROR] Faltan credenciales de red. Abortando."
+            exit 1
+          }
+          
+          Write-Host "[INFO] Configuración de red OK."
+
+      - name: Ejecutar ZMM0164 Export
+        shell: powershell
+        run: |
+          Write-Host "[INFO] Ejecutando Bot ZMM0164..."
+          Set-Location "$env:DEPLOY_PATH"
+          
+          # Ejecutar el bot con variables de entorno
+          & "$env:PYTHON_EXE" ".\rpa_desktop_win\Bot_sap_zmm0164\main.py"
+          
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] Bot fallo con codigo de salida: $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+          
+          Write-Host "[SUCCESS] Bot ZMM0164 ejecutado correctamente."
+
+      - name: Notificar Éxito
+        if: success()
+        shell: powershell
+        run: |
+          Write-Host "✅ ZMM0164 Export completado exitosamente"
+
+      - name: Notificar Error
+        if: failure()
+        shell: powershell
+        run: |
+          Write-Host "❌ ZMM0164 Export falló"
+          exit 1
