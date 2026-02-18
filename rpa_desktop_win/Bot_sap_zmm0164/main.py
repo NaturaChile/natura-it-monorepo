@@ -75,6 +75,15 @@ if not OUTPUT_FOLDER:
         OUTPUT_FOLDER = r"Z:\Publico\RPA\Plan Chile\zmm0164"
 
 safe_out = str(OUTPUT_FOLDER).encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8')
+# Asegurar que OUTPUT_FOLDER tenga un valor útil antes de crear ExportConfig
+if not OUTPUT_FOLDER or not str(OUTPUT_FOLDER).strip():
+    if NET_UNC_PATH and str(NET_UNC_PATH).strip():
+        OUTPUT_FOLDER = NET_UNC_PATH
+    else:
+        OUTPUT_FOLDER = r"Z:\Publico\RPA\Plan Chile\zmm0164"
+
+# Mostrar representación segura para depuración (ayuda a verificar escapes/UNC)
+safe_out = repr(str(OUTPUT_FOLDER))
 print(f"[OUTPUT] Carpeta de salida configurada: {safe_out}")
 
 # Configuración de exportación desde variables de entorno
