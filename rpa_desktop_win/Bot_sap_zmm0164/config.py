@@ -147,10 +147,10 @@ def validate_config() -> bool:
     
     if errors:
         for error in errors:
-            print(f"❌ Error de configuración: {error}")
+            print(f"[ERROR] Error de configuración: {error}")
         return False
     
-    print("✅ Configuración válida")
+    print("[OK] Configuración válida")
     return True
 
 

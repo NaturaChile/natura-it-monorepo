@@ -46,7 +46,7 @@ def test_mount_smb():
     
     # Validar que tenemos credenciales
     if not PASSWORD:
-        print("\n❌ ERROR: Falta BOT_ZMM0164_OUTPUT_NET_PASSWORD")
+        print("\n[ERROR] Falta BOT_ZMM0164_OUTPUT_NET_PASSWORD")
         print("   Establece la variable de entorno:")
         print("   $env:BOT_ZMM0164_OUTPUT_NET_PASSWORD = 'B3l3n-2304!!'")
         return False

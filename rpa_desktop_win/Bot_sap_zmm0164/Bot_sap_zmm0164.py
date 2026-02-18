@@ -46,7 +46,7 @@ def connect_to_sap():
         try:
             connection = application.OpenConnection(SAP_CONEXION, True)
         except:
-            print(f"❌ Error: No se encontró la conexión '{SAP_CONEXION}'.")
+            print(f"[ERROR] Error: No se encontró la conexión '{SAP_CONEXION}'.")
             sys.exit(1)
         
     session = connection.Children(0)
@@ -55,7 +55,7 @@ def connect_to_sap():
 # --- INICIO ROBOT ---
 
 try:
-    print(f"🤖 Conectando como {USUARIO}...")
+    print(f"[BOT] Conectando como {USUARIO}...")
     session = connect_to_sap()
     
     if session.findById("wnd[0]/sbar").text != "":
@@ -97,7 +97,7 @@ try:
     session.findById("wnd[1]/tbar[0]/btn[0]").press()
     
     # 5. GUARDAR
-    print("⏳ Esperando ventana de guardar...")
+    print("[WAIT] Esperando ventana de guardar...")
     for i in range(20):
         try:
             if session.findById("wnd[1]/usr/ctxtDY_PATH").text != "ERROR":
@@ -109,13 +109,13 @@ try:
     nombre_archivo = f"zmm0164-{fecha_hoy}.XLS"
     
     # Escribir RUTA
-    print(f"📝 Escribiendo Ruta: {RUTA_CARPETA}")
+    print(f"[WRITE] Escribiendo Ruta: {RUTA_CARPETA}")
     session.findById("wnd[1]/usr/ctxtDY_PATH").text = RUTA_CARPETA
     session.findById("wnd[1]/usr/ctxtDY_PATH").setFocus()
     session.findById("wnd[1]/usr/ctxtDY_PATH").caretPosition = len(RUTA_CARPETA)
     
     # Escribir NOMBRE
-    print(f"📝 Escribiendo Nombre: {nombre_archivo}")
+    print(f"[WRITE] Escribiendo Nombre: {nombre_archivo}")
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").text = nombre_archivo
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").setFocus()
     session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = len(nombre_archivo)
@@ -123,7 +123,7 @@ try:
     time.sleep(0.5)
     
     # GENERAR
-    print("🖱️ Generando archivo...")
+    print("[CLICK] Generando archivo...")
     try:
         session.findById("wnd[1]/tbar[0]/btn[0]").press()
     except:
@@ -134,15 +134,15 @@ try:
         time.sleep(1)
         if session.Children.Count > 1:
             if session.findById("wnd[2]").text != "": 
-                print("⚠️ Sobrescribiendo...")
+                print("[WARN] Sobrescribiendo...")
                 session.findById("wnd[2]/tbar[0]/btn[11]").press()
     except:
         pass
 
-    print("✅ Archivo guardado/actualizado.")
+    print("[OK] Archivo guardado/actualizado.")
 
     # 6. CERRAR SESIÓN SAP (/nex)
-    print("🚪 Desconectando del servidor...")
+    print("[DISCONNECT] Desconectando del servidor...")
     try:
         session.findById("wnd[0]/tbar[0]/okcd").text = "/nex"
         session.findById("wnd[0]").sendVKey(0)
@@ -150,17 +150,17 @@ try:
         pass
     
     # 7. MATAR PROCESO SAP LOGON (Cierra la ventana 760)
-    print("🛑 Cerrando SAP Logon completamente...")
+    print("[STOP] Cerrando SAP Logon completamente...")
     time.sleep(2) # Esperamos a que el comando /nex termine
     
     # TASKKILL: Fuerza el cierre de saplogon.exe
     # /F = Forzar, /IM = Nombre de imagen
     os.system("taskkill /F /IM saplogon.exe")
 
-    print("👋 Fin del proceso.")
+    print("[DONE] Fin del proceso.")
 
 except Exception as e:
-    print(f"❌ Error Crítico: {e}")
+    print(f"[ERROR] Error Crítico: {e}")
     # En caso de error, también intentamos cerrar SAP para no dejarlo colgado
     try:
         os.system("taskkill /F /IM saplogon.exe")

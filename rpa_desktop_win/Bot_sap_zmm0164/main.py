@@ -65,16 +65,17 @@ if not OUTPUT_FOLDER:
         else:
             # Si falla montaje, usar UNC directamente
             OUTPUT_FOLDER = NET_UNC_PATH
-            print("⚠️  No se pudo montar Z:, usando ruta UNC directamente")
+            print("[WARN] No se pudo montar Z:, usando ruta UNC directamente")
     elif NET_UNC_PATH:
         # Sin credenciales, intentar UNC
         OUTPUT_FOLDER = NET_UNC_PATH
-        print("⚠️  Usando ruta UNC sin credenciales adicionales")
+        print("[WARN] Usando ruta UNC sin credenciales adicionales")
     else:
         # Fallback final
         OUTPUT_FOLDER = r"Z:\Publico\RPA\Plan Chile\zmm0164"
 
-print(f"[OUTPUT] Carpeta de salida configurada: {OUTPUT_FOLDER}")
+safe_out = str(OUTPUT_FOLDER).encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8')
+print(f"[OUTPUT] Carpeta de salida configurada: {safe_out}")
 
 # Configuración de exportación desde variables de entorno
 EXPORT_CONFIG = ExportConfig(
@@ -107,8 +108,10 @@ def main():
         return 0
     
     except Exception as e:
+        # Sanitize exception message to avoid UnicodeEncodeError on Windows consoles
+        safe_e = str(e).encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8')
         print("\n" + "=" * 60)
-        print(f"[ERROR] ERROR CRÍTICO: {e}")
+        print(f"[ERROR] ERROR CRÍTICO: {safe_e}")
         print("=" * 60)
         return 1
 
