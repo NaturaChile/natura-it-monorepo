@@ -7,7 +7,7 @@
 #   POSTGRES_PASSWORD    → Password para PostgreSQL
 #   DEPLOY_HOST          → IP/hostname del servidor (opcional, solo para deploy remoto)
 #   DEPLOY_USER          → Usuario SSH del servidor (opcional)
-#   DEPLOY_SSH_KEY       → Llave SSH privada (opcional)
+#   DEPLOY_SSH_KE       → Llave SSH privada (opcional)
 # ──────────────────────────────────────────────
 
 name: Deploy GSP Bot
