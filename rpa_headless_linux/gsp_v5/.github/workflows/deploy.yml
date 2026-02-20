@@ -27,6 +27,16 @@ jobs:
 
       - name: Create .env from GitHub Secrets
         run: |
+          # Detect proxy settings from runner environment
+          DETECTED_HTTP_PROXY="${HTTP_PROXY:-${http_proxy:-}}"
+          DETECTED_HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy:-}}"
+          DETECTED_NO_PROXY="${NO_PROXY:-${no_proxy:-}}"
+          
+          echo "Detected proxy configuration:"
+          echo "  HTTP_PROXY: ${DETECTED_HTTP_PROXY:-<not set>}"
+          echo "  HTTPS_PROXY: ${DETECTED_HTTPS_PROXY:-<not set>}"
+          echo "  NO_PROXY: ${DETECTED_NO_PROXY:-<not set>}"
+          
           cat > .env << EOF
           APP_ENV=production
           LOG_LEVEL=INFO
@@ -41,8 +51,8 @@ jobs:
           POSTGRES_USER=gsp
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           # Leave CELERY urls unset so docker-compose interpolation uses the
-          # `x-common-env` defaults in docker-compose.yml which already provide
-          # a safe fallback (uses ${REDIS_PASSWORD:-clave}).
+          # \`x-common-env\` defaults in docker-compose.yml which already provide
+          # a safe fallback (uses \${REDIS_PASSWORD:-clave}).
           CELERY_CONCURRENCY=3
           CELERY_MAX_RETRIES=3
           CELERY_RETRY_DELAY=30
@@ -58,6 +68,12 @@ jobs:
           API_PORT=8000
           FLOWER_PORT=5555
           FLOWER_BASIC_AUTH=admin:changeme
+          HTTP_PROXY=${DETECTED_HTTP_PROXY}
+          HTTPS_PROXY=${DETECTED_HTTPS_PROXY}
+          http_proxy=${DETECTED_HTTP_PROXY}
+          https_proxy=${DETECTED_HTTPS_PROXY}
+          NO_PROXY=${DETECTED_NO_PROXY:-localhost,127.0.0.1,postgres,redis,master,dispatcher}
+          no_proxy=${DETECTED_NO_PROXY:-localhost,127.0.0.1,postgres,redis,master,dispatcher}
           EOF
 
       - name: Build Docker images
@@ -92,14 +108,62 @@ jobs:
             APP_ENV=production
             LOG_LEVEL=INFO
             LOG_FORMAT=json
+            REDIS_HOST=redis
+            REDIS_PORT=6379
+            REDIS_DB=0
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            POSTGRES_HOST=postgres
+            POSTGRES_PORT=5432
+            POSTGRES_DB=gsp_bot
+            POSTGRES_USER=gsp
             POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            CELERY_CONCURRENCY=3
+            CELERY_MAX_RETRIES=3
+            CELERY_RETRY_DELAY=30
+            GSP_LOGIN_URL=https://natura-auth.prd.naturacloud.com/?company=natura&client_id=3ec6rhfe52b2k78h32kv7ml6ti&redirect_uri=https://gsp.natura.com&country=CL&language=es
             GSP_USER_CODE=${{ secrets.GSP_USER_CODE }}
             GSP_PASSWORD=${{ secrets.GSP_PASSWORD }}
             PLAYWRIGHT_HEADLESS=true
+            PLAYWRIGHT_TIMEOUT=60000
+            PLAYWRIGHT_SLOW_MO=100
+            SCREENSHOT_ON_ERROR=true
+            SCREENSHOT_DIR=/app/screenshots
+            API_HOST=0.0.0.0
+            API_PORT=8000
+            FLOWER_PORT=5555
             FLOWER_BASIC_AUTH=admin:changeme
             ENVEOF
+            
+            # Detect and append proxy settings from server environment
+            if [ -n "$HTTP_PROXY" ] || [ -n "$http_proxy" ]; then
+              echo "HTTP_PROXY=${HTTP_PROXY:-${http_proxy}}" >> .env
+              echo "http_proxy=${HTTP_PROXY:-${http_proxy}}" >> .env
+            fi
+            if [ -n "$HTTPS_PROXY" ] || [ -n "$https_proxy" ]; then
+              echo "HTTPS_PROXY=${HTTPS_PROXY:-${https_proxy}}" >> .env
+              echo "https_proxy=${HTTPS_PROXY:-${https_proxy}}" >> .env
+            fi
+            if [ -n "$NO_PROXY" ] || [ -n "$no_proxy" ]; then
+              echo "NO_PROXY=${NO_PROXY:-${no_proxy}}" >> .env
+              echo "no_proxy=${NO_PROXY:-${no_proxy}}" >> .env
+            fi
+            
+            echo "Proxy configuration:"
+            grep -i proxy .env || echo "  No proxy configured"
 
             # Levantar servicios
             docker-compose down
             docker-compose up -d --build
+            docker-compose ps
+            
+            # Capturar logs de startup para diagnosticar crashes
+            echo "=== Waiting for containers to start ==="
+            sleep 5
+            echo "=== Worker-1 logs ==="
+            docker-compose logs --tail=100 worker-1 || true
+            echo "=== Worker-2 logs ==="
+            docker-compose logs --tail=100 worker-2 || true
+            echo "=== Worker-3 logs ==="
+            docker-compose logs --tail=100 worker-3 || true
+            echo "=== Container status ==="
             docker-compose ps
