@@ -845,6 +845,8 @@ class GSPBot:
                             self.page.locator('button:has-text("LISTO")').first.evaluate('el => el.click()')
                         except Exception:
                             pass
+            except Exception as e:
+                self._log_step(step, f"Post-upload validation error (non-fatal): {e}", level="WARNING")
         except PWTimeout:
             ss = self._take_screenshot("upload_file_timeout")
             raise NavigationError("File upload input not available", step=step, details=f"screenshot={ss}")
