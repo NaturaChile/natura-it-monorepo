@@ -1,0 +1,7 @@
+2026-02-23T18:29:09.2060000Z Evaluating gsp-docker.if
+2026-02-23T18:29:09.2060000Z Evaluating: success()
+2026-02-23T18:29:09.2060000Z Result: true
+2026-02-23T18:29:09.3940000Z Requested labels: self-hosted, Windows, X64, self-hosted-ml
+2026-02-23T18:29:09.3940000Z Job defined at: NaturaChile/natura-it-monorepo/.github/workflows/deploy_gsp_v5_docker.yml@refs/heads/main
+2026-02-23T18:29:09.3940000Z Waiting for a runner to pick up this job...
+2026-02-23T18:29:09.4170000Z Job is about to start running on the runner: runner-ml-windows
