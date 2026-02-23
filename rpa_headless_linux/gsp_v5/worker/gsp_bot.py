@@ -824,6 +824,9 @@ class GSPBot:
                     pass
 
                 # ── 6. Click cart button and wait for navigation ──
+                # IMPORTANT: Use Playwright's native .click() — NOT JS evaluate.
+                # JS el.click() does NOT fire React synthetic events, so the
+                # SPA router never picks up the navigation.
                 cart_clicked = False
                 try:
                     cart_selectors = [
@@ -836,20 +839,33 @@ class GSPBot:
                         try:
                             loc = self.page.locator(sel)
                             if loc.count() > 0 and loc.first.is_visible(timeout=2000):
-                                self._log_step(step, f"Cart button found via '{sel}'; clicking")
-                                loc.first.evaluate('el => el.click()')
+                                self._log_step(step, f"Cart button found via '{sel}'; Playwright-clicking")
+                                # Use Playwright click (real mouse events) — not JS evaluate
+                                loc.first.click(timeout=5000)
                                 cart_clicked = True
                                 break
-                        except Exception:
+                        except Exception as click_err:
+                            self._log_step(step, f"Click via '{sel}' failed: {click_err}", level="WARNING")
                             continue
 
                     if not cart_clicked:
-                        # Also try role-based selection
+                        # Fallback: role-based
                         try:
                             mi_carrito = self.page.get_by_role('button', name='Mi Carrito')
                             if mi_carrito.count() > 0:
-                                self._log_step(step, "Cart button found via role; clicking")
-                                mi_carrito.first.evaluate('el => el.click()')
+                                self._log_step(step, "Cart button found via role; Playwright-clicking")
+                                mi_carrito.first.click(timeout=5000)
+                                cart_clicked = True
+                        except Exception:
+                            pass
+
+                    if not cart_clicked:
+                        # Last resort: JS dispatchEvent with full MouseEvent
+                        try:
+                            btn = self.page.query_selector('button[data-testid="icon-bag"]')
+                            if btn:
+                                self._log_step(step, "Falling back to JS dispatchEvent for cart button")
+                                btn.evaluate('el => el.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, view: window}))')
                                 cart_clicked = True
                         except Exception:
                             pass
@@ -885,9 +901,9 @@ class GSPBot:
                         self._log_step(step, f"Reload failed: {e}", level="WARNING")
                     continue
 
-                # ── 8. Direct /cart navigation as last resort ──
-                if attempt >= 10:
-                    self._log_step(step, "Late attempts; trying direct navigation to /cart URL")
+                # ── 8. Direct /cart navigation as fallback ──
+                if attempt >= 5:
+                    self._log_step(step, f"Attempt {attempt+1}: trying direct navigation to /cart URL")
                     try:
                         # Extract the base URL from current page and append /cart
                         current = self.page.url or ""
