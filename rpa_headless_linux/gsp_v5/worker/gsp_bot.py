@@ -646,67 +646,93 @@ class GSPBot:
         self._log_step("file_generation", f"Generated temporary order file: {tmp_path}")
         return tmp_path
 
+    def _is_at_cart(self) -> bool:
+        """Check if we're at the cart page by URL or element presence."""
+        url = self.page.url or ""
+        if "/cart" in url:
+            return True
+        # SPA fallback: check for cart-specific elements
+        try:
+            if self.page.locator('input[type="file"]').count() > 0:
+                return True
+        except Exception:
+            pass
+        try:
+            if self.page.locator('#code-and-quantity-code').is_visible(timeout=500):
+                return True
+        except Exception:
+            pass
+        try:
+            if self.page.locator('[data-testid="button-add-to-basket"]').is_visible(timeout=500):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _cleanup_cart(self, step: str) -> None:
+        """Audit and remove existing products from the cart."""
+        try:
+            delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
+            existing = []
+            for btn in delete_buttons:
+                tid = btn.get_attribute("data-testid") or ""
+                code = tid.replace("remove-product-", "") if tid else "unknown"
+                existing.append(code)
+
+            if existing:
+                self._log_step(step, f"Found existing items in cart: {existing}")
+            else:
+                self._log_step(step, "No existing items found in cart")
+
+            for _ in range(len(existing)):
+                btn = self.page.query_selector('a[data-testid^="remove-product-"]')
+                if not btn:
+                    break
+                tid = btn.get_attribute("data-testid") or ""
+                code = tid.replace("remove-product-", "") if tid else "unknown"
+                try:
+                    btn.click()
+                    try:
+                        self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
+                        self._log_step(step, f"Confirmed removal toast for {code}")
+                        try:
+                            self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
+                        except Exception:
+                            pass
+                    except PWTimeout:
+                        self._log_step(step, f"Warning: Removal toast not detected for {code}", level="WARNING")
+                except Exception as e:
+                    self._log_step(step, f"Failed to remove {code}: {e}", level="WARNING")
+        except Exception as audit_ex:
+            self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
+
     def navigate_to_cart_adaptively(self) -> None:
         """Adaptive navigation loop that ensures we reach the cart page.
 
         Ports the decision loop from the async reference script to sync Playwright.
-        Raises NavigationError if it cannot reach `/cart` after attempts.
+        Handles popups (cycle, venta directa, LISTO, recover order) and clicks the
+        cart button, waiting for the navigation to complete.
+        Raises NavigationError if it cannot reach the cart after attempts.
         """
         step = "navigate_to_cart_adaptively"
         self._log_step(step, "Starting adaptive navigation to cart")
 
-        max_attempts = 10
+        max_attempts = 14  # more attempts for slow Docker environments
+
         for attempt in range(max_attempts):
-            self._log_step(step, f"Adaptive loop attempt #{attempt+1}")
+            current_url = self.page.url or "(blank)"
+            self._log_step(step, f"Attempt #{attempt+1}/{max_attempts} | URL: {current_url}")
             try:
                 self.page.wait_for_timeout(2500)
 
-                # If already in cart -- perform cart audit & cleanup then exit
-                if "/cart" in (self.page.url or ""):
-                    self._log_step(step, "Already in /cart; auditing and cleaning cart before upload")
-
-                    # Audit existing items in cart
-                    try:
-                        delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
-                        existing = []
-                        for btn in delete_buttons:
-                            tid = btn.get_attribute("data-testid") or ""
-                            code = tid.replace("remove-product-", "") if tid else "unknown"
-                            existing.append(code)
-
-                        if existing:
-                            self._log_step(step, f"Found existing items in cart: {existing}")
-                        else:
-                            self._log_step(step, "No existing items found in cart")
-
-                        # Remove existing items one by one (log before deleting)
-                        for _ in range(len(existing)):
-                            btn = self.page.query_selector('a[data-testid^="remove-product-"]')
-                            if not btn:
-                                break
-                            tid = btn.get_attribute("data-testid") or ""
-                            code = tid.replace("remove-product-", "") if tid else "unknown"
-                            try:
-                                btn.click()
-                                try:
-                                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
-                                    self._log_step(step, f"Confirmed removal toast for {code}")
-                                    try:
-                                        self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
-                                    except Exception:
-                                        pass
-                                except PWTimeout:
-                                    self._log_step(step, f"Warning: Removal toast not detected for {code}", level="WARNING")
-                            except Exception as e:
-                                self._log_step(step, f"Failed to remove {code}: {e}", level="WARNING")
-                        
-                    except Exception as audit_ex:
-                        self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
-
-                    self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop")
+                # ── Check: already at cart? ──
+                if self._is_at_cart():
+                    self._log_step(step, "Cart detected (URL or elements); auditing and cleaning")
+                    self._cleanup_cart(step)
+                    self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop ✓")
                     return
 
-                # 1. Cycle popup
+                # ── 1. Cycle popup ──
                 try:
                     cycle_radios = self.page.locator('input[data-testid="cycle-radio-button"]')
                     count = cycle_radios.count()
@@ -715,7 +741,7 @@ class GSPBot:
                         for i in range(count):
                             try:
                                 loc = cycle_radios.nth(i)
-                                if loc.is_visible(timeout=500):
+                                if loc.is_visible(timeout=1500):
                                     selected = loc
                                     break
                             except Exception:
@@ -737,7 +763,7 @@ class GSPBot:
                             except Exception:
                                 selected.evaluate('el => el.click()')
 
-                            self.page.wait_for_timeout(500)
+                            self.page.wait_for_timeout(800)
                             try:
                                 self.page.locator('[data-testid="cycle-accept-button"]').evaluate('el => el.click()')
                             except Exception:
@@ -745,72 +771,164 @@ class GSPBot:
                                     self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
                                 except Exception:
                                     self._log_step(step, "Failed to click Aceptar for cycle", level="WARNING")
+                            # Wait for page to react after cycle selection
+                            self.page.wait_for_timeout(3000)
                             continue
                 except Exception:
                     pass
 
-                # 2. Venta directa
+                # ── 2. Venta directa ──
                 try:
-                    if self.page.locator('label[for="id_1"]').is_visible(timeout=1000):
+                    if self.page.locator('label[for="id_1"]').is_visible(timeout=2000):
                         self._log_step(step, "Venta Directa popup detected; accepting")
                         self.page.locator('label[for="id_1"]').evaluate('el => el.click()')
-                        self.page.wait_for_timeout(500)
+                        self.page.wait_for_timeout(800)
                         self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                        self.page.wait_for_timeout(3000)
                         continue
                 except Exception:
                     pass
 
-                # 3. Generic LISTO popup
+                # ── 3. Generic LISTO popup ──
                 try:
                     listo_btn = self.page.locator('button:has-text("LISTO")')
-                    if listo_btn.count() > 0 and listo_btn.first.is_visible(timeout=1000):
+                    if listo_btn.count() > 0 and listo_btn.first.is_visible(timeout=2000):
                         self._log_step(step, "Found 'LISTO' button; clicking via JS")
                         listo_btn.first.evaluate('el => el.click()')
+                        self.page.wait_for_timeout(2000)
                         continue
                 except Exception:
                     pass
 
-                # 4. Recuperar / eliminar pedido
+                # ── 4. Recuperar / eliminar pedido ──
                 try:
-                    if self.page.get_by_text("Este pedido esta guardado").is_visible(timeout=1000):
+                    if self.page.get_by_text("Este pedido esta guardado").is_visible(timeout=2000):
                         self._log_step(step, "Recover order detected; clicking 'Eliminar Pedido'")
                         self.page.get_by_role('button', name='Eliminar Pedido').evaluate('el => el.click()')
+                        self.page.wait_for_timeout(3000)
                         continue
                 except Exception:
                     pass
 
-                # 5. Ir al carrito
+                # ── 5. Wait for product grid before trying cart button ──
+                # The product grid must be loaded before the bag icon is clickable
                 try:
-                    carrito_btn = None
-                    if self.page.locator('button[data-testid="icon-bag"]').count() > 0 and self.page.locator('button[data-testid="icon-bag"]').first.is_visible(timeout=1000):
-                        carrito_btn = self.page.locator('button[data-testid="icon-bag"]').first
-                    elif self.page.locator('button:has-text("Mi Carrito")').count() > 0 and self.page.locator('button:has-text("Mi Carrito")').first.is_visible(timeout=1000):
-                        carrito_btn = self.page.locator('button:has-text("Mi Carrito")').first
-                    elif self.page.get_by_role('button', name='Mi Carrito').count() > 0:
-                        carrito_btn = self.page.get_by_role('button', name='Mi Carrito').first
-
-                    if carrito_btn is not None:
-                        self._log_step(step, "Cart button detected; clicking via JS")
-                        carrito_btn.evaluate('el => el.click()')
-                        continue
+                    cards = self.page.locator('div[data-testid="cards-list"]')
+                    if cards.count() > 0 and cards.first.is_visible(timeout=3000):
+                        self._log_step(step, "Product grid is visible; page loaded")
+                    else:
+                        self._log_step(step, "Product grid not yet visible; waiting...", level="DEBUG")
+                        # Give the page more time to settle
+                        self.page.wait_for_timeout(3000)
                 except Exception:
                     pass
 
-                # Recovery reload at midpoint
-                if attempt == 5:
-                    self._log_step(step, "State unknown; reloading page as recovery")
+                # ── 6. Click cart button and wait for navigation ──
+                # IMPORTANT: Use Playwright's native .click() — NOT JS evaluate.
+                # JS el.click() does NOT fire React synthetic events, so the
+                # SPA router never picks up the navigation.
+                cart_clicked = False
+                try:
+                    cart_selectors = [
+                        'button[data-testid="icon-bag"]',
+                        'button:has-text("Mi Carrito")',
+                        '[data-testid="icon-bag"]',
+                        'a[href*="/cart"]',
+                    ]
+                    for sel in cart_selectors:
+                        try:
+                            loc = self.page.locator(sel)
+                            if loc.count() > 0 and loc.first.is_visible(timeout=2000):
+                                self._log_step(step, f"Cart button found via '{sel}'; Playwright-clicking")
+                                # Use Playwright click (real mouse events) — not JS evaluate
+                                loc.first.click(timeout=5000)
+                                cart_clicked = True
+                                break
+                        except Exception as click_err:
+                            self._log_step(step, f"Click via '{sel}' failed: {click_err}", level="WARNING")
+                            continue
+
+                    if not cart_clicked:
+                        # Fallback: role-based
+                        try:
+                            mi_carrito = self.page.get_by_role('button', name='Mi Carrito')
+                            if mi_carrito.count() > 0:
+                                self._log_step(step, "Cart button found via role; Playwright-clicking")
+                                mi_carrito.first.click(timeout=5000)
+                                cart_clicked = True
+                        except Exception:
+                            pass
+
+                    if not cart_clicked:
+                        # Last resort: JS dispatchEvent with full MouseEvent
+                        try:
+                            btn = self.page.query_selector('button[data-testid="icon-bag"]')
+                            if btn:
+                                self._log_step(step, "Falling back to JS dispatchEvent for cart button")
+                                btn.evaluate('el => el.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, view: window}))')
+                                cart_clicked = True
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                if cart_clicked:
+                    # Wait for URL change or cart elements to appear
+                    self._log_step(step, "Cart button clicked; waiting for cart page to load...")
+                    try:
+                        self.page.wait_for_url("**/cart**", timeout=15000)
+                        self._log_step(step, f"URL changed to cart: {self.page.url}")
+                    except Exception:
+                        # SPA may not change URL; check for cart elements
+                        self._log_step(step, "URL did not change to /cart; checking for cart elements...", level="DEBUG")
+                        self.page.wait_for_timeout(5000)
+                        if self._is_at_cart():
+                            self._log_step(step, "Cart elements detected after click ✓")
+                        else:
+                            self._log_step(step, "Cart elements not detected; will retry", level="WARNING")
+                    continue
+                else:
+                    self._log_step(step, "No cart button found on page", level="WARNING")
+
+                # ── 7. Recovery reload at midpoint ──
+                if attempt == 6:
+                    self._log_step(step, "State unknown at midpoint; reloading page as recovery")
                     try:
                         self.page.reload()
-                        self.page.wait_for_load_state("networkidle")
+                        self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+                        self.page.wait_for_timeout(5000)
                     except Exception as e:
                         self._log_step(step, f"Reload failed: {e}", level="WARNING")
+                    continue
+
+                # ── 8. Direct /cart navigation as fallback ──
+                if attempt >= 5:
+                    self._log_step(step, f"Attempt {attempt+1}: trying direct navigation to /cart URL")
+                    try:
+                        # Extract the base URL from current page and append /cart
+                        current = self.page.url or ""
+                        if current:
+                            from urllib.parse import urlparse
+                            parsed = urlparse(current)
+                            cart_url = f"{parsed.scheme}://{parsed.netloc}/cart"
+                            self._log_step(step, f"Navigating directly to {cart_url}")
+                            self.page.goto(cart_url, wait_until="domcontentloaded", timeout=30000)
+                            self.page.wait_for_timeout(5000)
+                    except Exception as e:
+                        self._log_step(step, f"Direct navigation to /cart failed: {e}", level="WARNING")
                     continue
 
             except Exception as e:
                 self._log_step(step, f"Adaptive loop error: {e}", level="WARNING")
 
-        # If we exit loop without reaching /cart, raise
-        raise NavigationError("Could not reach cart after adaptive navigation attempts", step=step)
+        # Take screenshot before giving up
+        ss = self._take_screenshot("cart_navigation_failed")
+        final_url = self.page.url or "(blank)"
+        raise NavigationError(
+            f"Could not reach cart after {max_attempts} adaptive navigation attempts. Final URL: {final_url}",
+            step=step,
+            details=f"screenshot={ss}",
+        )
 
     def upload_order_file(self, file_path: str) -> None:
         step = "upload_order_file"
