@@ -698,9 +698,10 @@ class GSPBot:
                     qty = "?"
                 cart_items.append({"code": code, "name": name, "qty": qty})
 
+            summary = ["{} x{}".format(it["code"], it["qty"]) for it in cart_items]
             self._log_step(
                 step,
-                f"Found {count} existing item(s) in cart: {[f'{it['code']} x{it['qty']}' for it in cart_items]}",
+                f"Found {count} existing item(s) in cart: {summary}",
                 details={"cart_items": cart_items},
             )
 
