@@ -1,0 +1,257 @@
+﻿2026-02-24T17:57:20.1054399Z ##[group]Run Write-Host "════════════════════════════════════════"
+2026-02-24T17:57:20.1055422Z [36;1mWrite-Host "════════════════════════════════════════"[0m
+2026-02-24T17:57:20.1056136Z [36;1mWrite-Host "  GSP Bot v5 - LOGS (ultimos 150 por servicio)"[0m
+2026-02-24T17:57:20.1056617Z [36;1mWrite-Host "════════════════════════════════════════"[0m
+2026-02-24T17:57:20.1057103Z [36;1m[0m
+2026-02-24T17:57:20.1057429Z [36;1mWrite-Host ""[0m
+2026-02-24T17:57:20.1057866Z [36;1mWrite-Host "=== MASTER API ==="[0m
+2026-02-24T17:57:20.1058378Z [36;1mdocker compose logs --tail=50 --timestamps master 2>$null[0m
+2026-02-24T17:57:20.1058712Z [36;1m[0m
+2026-02-24T17:57:20.1059005Z [36;1mWrite-Host ""[0m
+2026-02-24T17:57:20.1059309Z [36;1mWrite-Host "=== DISPATCHER ==="[0m
+2026-02-24T17:57:20.1059803Z [36;1mdocker compose logs --tail=30 --timestamps dispatcher 2>$null[0m
+2026-02-24T17:57:20.1060425Z [36;1m[0m
+2026-02-24T17:57:20.1060833Z [36;1mWrite-Host ""[0m
+2026-02-24T17:57:20.1061399Z [36;1mWrite-Host "=== WORKERS ==="[0m
+2026-02-24T17:57:20.1061842Z [36;1mdocker compose logs --tail=50 --timestamps worker-1 worker-2 worker-3 2>$null[0m
+2026-02-24T17:57:20.1062344Z [36;1m[0m
+2026-02-24T17:57:20.1062608Z [36;1mWrite-Host ""[0m
+2026-02-24T17:57:20.1062902Z [36;1mWrite-Host "=== FLOWER ==="[0m
+2026-02-24T17:57:20.1063299Z [36;1mdocker compose logs --tail=20 --timestamps flower 2>$null[0m
+2026-02-24T17:57:20.1139304Z shell: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.EXE -command ". '{0}'"
+2026-02-24T17:57:20.1140956Z env:
+2026-02-24T17:57:20.1141819Z   COMPOSE_DIR: rpa_headless_linux/gsp_v5
+2026-02-24T17:57:20.1143791Z   GSP_USER_CODE: ***
+2026-02-24T17:57:20.1144697Z   GSP_PASSWORD: ***
+2026-02-24T17:57:20.1145511Z   POSTGRES_PASSWORD: ***
+2026-02-24T17:57:20.1146607Z   FLOWER_BASIC_AUTH: ***
+2026-02-24T17:57:20.1147381Z   REDIS_PASSWORD: ***
+2026-02-24T17:57:20.1148146Z   CELERY_CONCURRENCY: 3
+2026-02-24T17:57:20.1148949Z   CELERY_MAX_RETRIES: 3
+2026-02-24T17:57:20.1149695Z   CELERY_RETRY_DELAY: 30
+2026-02-24T17:57:20.1150345Z   PLAYWRIGHT_HEADLESS: true
+2026-02-24T17:57:20.1151181Z   PLAYWRIGHT_TIMEOUT: 60000
+2026-02-24T17:57:20.1152086Z   PLAYWRIGHT_SLOW_MO: 100
+2026-02-24T17:57:20.1153024Z   APP_ENV: production
+2026-02-24T17:57:20.1153609Z   LOG_LEVEL: INFO
+2026-02-24T17:57:20.1154198Z   LOG_FORMAT: json
+2026-02-24T17:57:20.1154869Z ##[endgroup]
+2026-02-24T17:57:20.7362254Z â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+2026-02-24T17:57:20.7380242Z   GSP Bot v5 - LOGS (ultimos 150 por servicio)
+2026-02-24T17:57:20.7399988Z â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+2026-02-24T17:57:20.7406661Z 
+2026-02-24T17:57:20.7422714Z === MASTER API ===
+2026-02-24T17:57:21.2012132Z master-1  | 2026-02-24T17:47:20.469218687Z INFO:     Started server process [1]
+2026-02-24T17:57:21.2013160Z master-1  | 2026-02-24T17:47:20.469325434Z INFO:     Waiting for application startup.
+2026-02-24T17:57:21.2014264Z master-1  | 2026-02-24T17:47:20.515743181Z {"host": "0.0.0.0", "port": 8000, "event": "api_started", "level": "info", "logger": "api", "timestamp": "2026-02-24T17:47:20.515023Z"}
+2026-02-24T17:57:21.2015219Z master-1  | 2026-02-24T17:47:20.515853469Z INFO:     Application startup complete.
+2026-02-24T17:57:21.2016129Z master-1  | 2026-02-24T17:47:20.520874454Z INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-02-24T17:57:21.2017325Z master-1  | 2026-02-24T17:47:44.737994965Z INFO:     172.18.0.1:56460 - "GET /health HTTP/1.1" 200 OK
+2026-02-24T17:57:21.2018283Z master-1  | 2026-02-24T17:52:39.163299789Z INFO:     172.18.0.1:37962 - "GET /docs HTTP/1.1" 200 OK
+2026-02-24T17:57:21.2019093Z master-1  | 2026-02-24T17:52:41.124006893Z INFO:     172.18.0.1:37962 - "GET /openapi.json HTTP/1.1" 200 OK
+2026-02-24T17:57:21.2020435Z master-1  | 2026-02-24T17:54:27.863046650Z {"batch_id": 31, "orders": 1, "products": 1, "source": "/app/data/uploads/20260224_175427_sample_orders.csv", "event": "data_loaded", "level": "info", "logger": "loader", "timestamp": "2026-02-24T17:54:27.862544Z"}
+2026-02-24T17:57:21.2030492Z master-1  | 2026-02-24T17:54:27.868885874Z INFO:     172.18.0.1:40946 - "POST /batches/upload HTTP/1.1" 200 OK
+2026-02-24T17:57:21.2031772Z master-1  | 2026-02-24T17:54:34.545246525Z {"batch_id": 31, "celery_task": "3c65710d-9e0a-44e1-bfd5-1aef925b8c3c", "event": "batch_started", "level": "info", "logger": "orchestrator", "timestamp": "2026-02-24T17:54:34.544264Z"}
+2026-02-24T17:57:21.2033171Z master-1  | 2026-02-24T17:54:34.546271636Z INFO:     172.18.0.1:39142 - "POST /batches/31/start HTTP/1.1" 200 OK
+2026-02-24T17:57:21.2435550Z 
+2026-02-24T17:57:21.2462966Z === DISPATCHER ===
+2026-02-24T17:57:21.7271445Z dispatcher-1  | 2026-02-24T17:47:20.586859932Z 
+2026-02-24T17:57:21.7272132Z dispatcher-1  | 2026-02-24T17:47:20.586861170Z [tasks]
+2026-02-24T17:57:21.7277551Z dispatcher-1  | 2026-02-24T17:47:20.586862398Z   . worker.tasks.health_check
+2026-02-24T17:57:21.7278266Z dispatcher-1  | 2026-02-24T17:47:20.586863682Z   . worker.tasks.process_batch
+2026-02-24T17:57:21.7278878Z dispatcher-1  | 2026-02-24T17:47:20.586864892Z   . worker.tasks.process_order
+2026-02-24T17:57:21.7279518Z dispatcher-1  | 2026-02-24T17:47:20.586866093Z   . worker.tasks.retry_failed_orders
+2026-02-24T17:57:21.7280057Z dispatcher-1  | 2026-02-24T17:47:20.586867367Z 
+2026-02-24T17:57:21.7281306Z dispatcher-1  | 2026-02-24T17:47:20.680168665Z [2026-02-24 17:47:20,678: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:21.7282959Z dispatcher-1  | 2026-02-24T17:47:20.680387705Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:21.7284004Z dispatcher-1  | 2026-02-24T17:47:20.680403225Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:21.7284853Z dispatcher-1  | 2026-02-24T17:47:20.680405636Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:21.7285497Z dispatcher-1  | 2026-02-24T17:47:20.680407296Z   warnings.warn(
+2026-02-24T17:57:21.7285939Z dispatcher-1  | 2026-02-24T17:47:20.680408654Z 
+2026-02-24T17:57:21.7286744Z dispatcher-1  | 2026-02-24T17:47:20.700297784Z [2026-02-24 17:47:20,699: INFO/MainProcess] Connected to redis://:**@redis:6379/0
+2026-02-24T17:57:21.7289250Z dispatcher-1  | 2026-02-24T17:47:20.700917128Z [2026-02-24 17:47:20,700: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:21.7290537Z dispatcher-1  | 2026-02-24T17:47:20.700941133Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:21.7291392Z dispatcher-1  | 2026-02-24T17:47:20.700943552Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:21.7292147Z dispatcher-1  | 2026-02-24T17:47:20.700945208Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:21.7292766Z dispatcher-1  | 2026-02-24T17:47:20.700946529Z   warnings.warn(
+2026-02-24T17:57:21.7293212Z dispatcher-1  | 2026-02-24T17:47:20.700947853Z 
+2026-02-24T17:57:21.7293840Z dispatcher-1  | 2026-02-24T17:47:20.704790944Z [2026-02-24 17:47:20,704: INFO/MainProcess] mingle: searching for neighbors
+2026-02-24T17:57:21.7294605Z dispatcher-1  | 2026-02-24T17:47:21.723086386Z [2026-02-24 17:47:21,722: INFO/MainProcess] mingle: all alone
+2026-02-24T17:57:21.7295358Z dispatcher-1  | 2026-02-24T17:47:21.755709826Z [2026-02-24 17:47:21,755: INFO/MainProcess] dispatcher@47436fcc642c ready.
+2026-02-24T17:57:21.7296074Z dispatcher-1  | 2026-02-24T17:47:23.045622385Z [2026-02-24 17:47:23,045: INFO/MainProcess] sync with worker@gsp-worker-1
+2026-02-24T17:57:21.7298531Z dispatcher-1  | 2026-02-24T17:47:24.660471441Z [2026-02-24 17:47:24,659: INFO/MainProcess] sync with worker@gsp-worker-2
+2026-02-24T17:57:21.7299321Z dispatcher-1  | 2026-02-24T17:47:26.259900522Z [2026-02-24 17:47:26,259: INFO/MainProcess] sync with worker@gsp-worker-3
+2026-02-24T17:57:21.7300313Z dispatcher-1  | 2026-02-24T17:54:34.549266278Z [2026-02-24 17:54:34,548: INFO/MainProcess] Task worker.tasks.process_batch[3c65710d-9e0a-44e1-bfd5-1aef925b8c3c] received
+2026-02-24T17:57:21.7301529Z dispatcher-1  | 2026-02-24T17:54:34.643265340Z [2026-02-24 17:54:34,642: INFO/ForkPoolWorker-1] worker.tasks.process_batch[3c65710d-9e0a-44e1-bfd5-1aef925b8c3c]: Dispatching 1 orders for batch 31
+2026-02-24T17:57:21.7302758Z dispatcher-1  | 2026-02-24T17:54:34.669998834Z [2026-02-24 17:54:34,669: INFO/ForkPoolWorker-1] worker.tasks.process_batch[3c65710d-9e0a-44e1-bfd5-1aef925b8c3c]: Batch 31: dispatched 1 orders
+2026-02-24T17:57:21.7489137Z dispatcher-1  | 2026-02-24T17:54:34.671969963Z [2026-02-24 17:54:34,671: INFO/ForkPoolWorker-1] Task worker.tasks.process_batch[3c65710d-9e0a-44e1-bfd5-1aef925b8c3c] succeeded in 0.11897709999993822s: {'success': True, 'batch_id': 31, 'dispatched': 1}
+2026-02-24T17:57:21.7571127Z 
+2026-02-24T17:57:21.7595319Z === WORKERS ===
+2026-02-24T17:57:22.2441157Z worker-1-1  | 2026-02-24T17:47:22.356273154Z /usr/local/lib/python3.11/site-packages/celery/platforms.py:829: SecurityWarning: You're running the worker with superuser privileges: this is
+2026-02-24T17:57:22.2442483Z worker-1-1  | 2026-02-24T17:47:22.356338941Z absolutely not recommended!
+2026-02-24T17:57:22.2442945Z worker-1-1  | 2026-02-24T17:47:22.356342113Z 
+2026-02-24T17:57:22.2443631Z worker-1-1  | 2026-02-24T17:47:22.356344078Z Please specify a different user using the --uid option.
+2026-02-24T17:57:22.2444198Z worker-1-1  | 2026-02-24T17:47:22.356345654Z 
+2026-02-24T17:57:22.2444657Z worker-2-1  | 2026-02-24T17:47:24.624103537Z   warnings.warn(
+2026-02-24T17:57:22.2445228Z worker-1-1  | 2026-02-24T17:47:22.356347014Z User information: uid=0 euid=0 gid=0 egid=0
+2026-02-24T17:57:22.2445698Z worker-1-1  | 2026-02-24T17:47:22.356348549Z 
+2026-02-24T17:57:22.2446246Z worker-1-1  | 2026-02-24T17:47:22.356349996Z   warnings.warn(SecurityWarning(ROOT_DISCOURAGED.format(
+2026-02-24T17:57:22.2446797Z worker-1-1  | 2026-02-24T17:47:22.558876947Z  
+2026-02-24T17:57:22.2447436Z worker-1-1  | 2026-02-24T17:47:22.558929407Z  -------------- worker@gsp-worker-1 v5.4.0 (opalescent)
+2026-02-24T17:57:22.2449261Z worker-1-1  | 2026-02-24T17:47:22.558931476Z --- ***** ----- 
+2026-02-24T17:57:22.2449659Z worker-2-1  | 2026-02-24T17:47:24.624108500Z 
+2026-02-24T17:57:22.2450462Z worker-1-1  | 2026-02-24T17:47:22.558932995Z -- ******* ---- Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.36 2026-02-24 17:47:22
+2026-02-24T17:57:22.2451173Z worker-1-1  | 2026-02-24T17:47:22.558934391Z - *** --- * --- 
+2026-02-24T17:57:22.2452182Z worker-3-1  | 2026-02-24T17:47:25.588492571Z /usr/local/lib/python3.11/site-packages/celery/platforms.py:829: SecurityWarning: You're running the worker with superuser privileges: this is
+2026-02-24T17:57:22.2453133Z worker-1-1  | 2026-02-24T17:47:22.558935555Z - ** ---------- [config]
+2026-02-24T17:57:22.2453840Z worker-2-1  | 2026-02-24T17:47:24.643508565Z [2026-02-24 17:47:24,642: INFO/MainProcess] Connected to redis://:**@redis:6379/0
+2026-02-24T17:57:22.2454584Z worker-3-1  | 2026-02-24T17:47:25.588617219Z absolutely not recommended!
+2026-02-24T17:57:22.2455924Z worker-2-1  | 2026-02-24T17:47:24.644019412Z [2026-02-24 17:47:24,643: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:22.2457224Z worker-3-1  | 2026-02-24T17:47:25.588626582Z 
+2026-02-24T17:57:22.2457873Z worker-2-1  | 2026-02-24T17:47:24.644062993Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:22.2459376Z worker-2-1  | 2026-02-24T17:47:24.644070746Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:22.2460164Z worker-2-1  | 2026-02-24T17:47:24.644121030Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:22.2460758Z worker-2-1  | 2026-02-24T17:47:24.644127989Z   warnings.warn(
+2026-02-24T17:57:22.2461328Z worker-1-1  | 2026-02-24T17:47:22.558936885Z - ** ---------- .> app:         gsp_worker:0x7f81c245ab50
+2026-02-24T17:57:22.2461995Z worker-1-1  | 2026-02-24T17:47:22.558938792Z - ** ---------- .> transport:   redis://:**@redis:6379/0
+2026-02-24T17:57:22.2462655Z worker-1-1  | 2026-02-24T17:47:22.558940247Z - ** ---------- .> results:     redis://:**@redis:6379/1
+2026-02-24T17:57:22.2463286Z worker-1-1  | 2026-02-24T17:47:22.558941477Z - *** --- * --- .> concurrency: 3 (prefork)
+2026-02-24T17:57:22.2463762Z worker-2-1  | 2026-02-24T17:47:24.644133118Z 
+2026-02-24T17:57:22.2464224Z worker-1-1  | 2026-02-24T17:47:22.558942769Z -- ******* ---- .> task events: ON
+2026-02-24T17:57:22.2464718Z worker-1-1  | 2026-02-24T17:47:22.558943995Z --- ***** ----- 
+2026-02-24T17:57:22.2465168Z worker-1-1  | 2026-02-24T17:47:22.558945144Z  -------------- [queues]
+2026-02-24T17:57:22.2465785Z worker-1-1  | 2026-02-24T17:47:22.558946513Z                 .> default          exchange=default(direct) key=default
+2026-02-24T17:57:22.2466519Z worker-1-1  | 2026-02-24T17:47:22.558947866Z                 .> orders           exchange=orders(direct) key=orders
+2026-02-24T17:57:22.2467283Z worker-2-1  | 2026-02-24T17:47:24.648226657Z [2026-02-24 17:47:24,647: INFO/MainProcess] mingle: searching for neighbors
+2026-02-24T17:57:22.2467827Z worker-1-1  | 2026-02-24T17:47:22.558949408Z 
+2026-02-24T17:57:22.2468338Z worker-3-1  | 2026-02-24T17:47:25.588631964Z Please specify a different user using the --uid option.
+2026-02-24T17:57:22.2469053Z worker-2-1  | 2026-02-24T17:47:25.671551077Z [2026-02-24 17:47:25,670: INFO/MainProcess] mingle: sync with 2 nodes
+2026-02-24T17:57:22.2469776Z worker-2-1  | 2026-02-24T17:47:25.671800227Z [2026-02-24 17:47:25,671: INFO/MainProcess] mingle: sync complete
+2026-02-24T17:57:22.2470490Z worker-2-1  | 2026-02-24T17:47:25.743091949Z [2026-02-24 17:47:25,742: INFO/MainProcess] worker@gsp-worker-2 ready.
+2026-02-24T17:57:22.2471222Z worker-2-1  | 2026-02-24T17:47:26.259364430Z [2026-02-24 17:47:26,258: INFO/MainProcess] sync with worker@gsp-worker-3
+2026-02-24T17:57:22.2472556Z worker-1-1  | 2026-02-24T17:47:22.558950576Z [tasks]
+2026-02-24T17:57:22.2473523Z worker-2-1  | 2026-02-24T17:54:34.664474080Z [2026-02-24 17:54:34,663: INFO/MainProcess] Task worker.tasks.process_order[9969bd36-9511-4345-9409-8be2067ec852] received
+2026-02-24T17:57:22.2474970Z worker-2-1  | 2026-02-24T17:54:34.758499303Z [2026-02-24 17:54:34,757: INFO/ForkPoolWorker-1] {'headless': True, 'worker': 'gsp-worker-2-9969bd36', 'event': 'launching_browser', 'level': 'info', 'logger': 'gsp_bot', 'timestamp': '2026-02-24T17:54:34.757552Z'}
+2026-02-24T17:57:22.2476974Z worker-2-1  | 2026-02-24T17:54:35.335153760Z [2026-02-24 17:54:35,334: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:35.334611Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Navigating to login page', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2479019Z worker-2-1  | 2026-02-24T17:54:36.208297195Z [2026-02-24 17:54:36,207: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:36.207196Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Selecting 'Código' from login type dropdown", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2481676Z worker-2-1  | 2026-02-24T17:54:36.867714625Z [2026-02-24 17:54:36,867: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:36.867156Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Entering supervisor code', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2483250Z worker-3-1  | 2026-02-24T17:47:25.588637135Z 
+2026-02-24T17:57:22.2483732Z worker-3-1  | 2026-02-24T17:47:25.588641582Z User information: uid=0 euid=0 gid=0 egid=0
+2026-02-24T17:57:22.2484999Z worker-2-1  | 2026-02-24T17:54:37.144976021Z [2026-02-24 17:54:37,144: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:37.143984Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Entering password', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2486058Z worker-3-1  | 2026-02-24T17:47:25.588646552Z 
+2026-02-24T17:57:22.2486577Z worker-3-1  | 2026-02-24T17:47:25.588651492Z   warnings.warn(SecurityWarning(ROOT_DISCOURAGED.format(
+2026-02-24T17:57:22.2487103Z worker-3-1  | 2026-02-24T17:47:25.793655639Z  
+2026-02-24T17:57:22.2487618Z worker-3-1  | 2026-02-24T17:47:25.793707942Z  -------------- worker@gsp-worker-3 v5.4.0 (opalescent)
+2026-02-24T17:57:22.2488924Z worker-2-1  | 2026-02-24T17:54:37.335621220Z [2026-02-24 17:54:37,334: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:37.334502Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Clicking ACCESO button', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2490023Z worker-3-1  | 2026-02-24T17:47:25.793709931Z --- ***** ----- 
+2026-02-24T17:57:22.2490735Z worker-3-1  | 2026-02-24T17:47:25.793711430Z -- ******* ---- Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.36 2026-02-24 17:47:25
+2026-02-24T17:57:22.2491404Z worker-3-1  | 2026-02-24T17:47:25.793713431Z - *** --- * --- 
+2026-02-24T17:57:22.2491848Z worker-3-1  | 2026-02-24T17:47:25.793714816Z - ** ---------- [config]
+2026-02-24T17:57:22.2492402Z worker-3-1  | 2026-02-24T17:47:25.793716115Z - ** ---------- .> app:         gsp_worker:0x799f73112b50
+2026-02-24T17:57:22.2493782Z worker-2-1  | 2026-02-24T17:54:37.570788979Z [2026-02-24 17:54:37,570: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:37.570060Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Waiting for post-login navigation', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2495032Z worker-3-1  | 2026-02-24T17:47:25.793718175Z - ** ---------- .> transport:   redis://:**@redis:6379/0
+2026-02-24T17:57:22.2495605Z worker-1-1  | 2026-02-24T17:47:22.558953261Z   . worker.tasks.health_check
+2026-02-24T17:57:22.2496099Z worker-1-1  | 2026-02-24T17:47:22.558954556Z   . worker.tasks.process_batch
+2026-02-24T17:57:22.2502031Z worker-1-1  | 2026-02-24T17:47:22.558955728Z   . worker.tasks.process_order
+2026-02-24T17:57:22.2503635Z worker-1-1  | 2026-02-24T17:47:22.558956920Z   . worker.tasks.retry_failed_orders
+2026-02-24T17:57:22.2505591Z worker-3-1  | 2026-02-24T17:47:25.793719504Z - ** ---------- .> results:     redis://:**@redis:6379/1
+2026-02-24T17:57:22.2507030Z worker-3-1  | 2026-02-24T17:47:25.793720820Z - *** --- * --- .> concurrency: 3 (prefork)
+2026-02-24T17:57:22.2508275Z worker-3-1  | 2026-02-24T17:47:25.793722107Z -- ******* ---- .> task events: ON
+2026-02-24T17:57:22.2509405Z worker-3-1  | 2026-02-24T17:47:25.793723382Z --- ***** ----- 
+2026-02-24T17:57:22.2511934Z worker-2-1  | 2026-02-24T17:54:44.180617652Z [2026-02-24 17:54:44,179: INFO/ForkPoolWorker-1] {'step': 'login', 'details': {}, 'timestamp': '2026-02-24T17:54:44.179819Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Login successful ✓', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2513694Z worker-3-1  | 2026-02-24T17:47:25.793724556Z  -------------- [queues]
+2026-02-24T17:57:22.2514602Z worker-3-1  | 2026-02-24T17:47:25.793725883Z                 .> default          exchange=default(direct) key=default
+2026-02-24T17:57:22.2515949Z worker-3-1  | 2026-02-24T17:47:25.793727929Z                 .> orders           exchange=orders(direct) key=orders
+2026-02-24T17:57:22.2516749Z worker-1-1  | 2026-02-24T17:47:22.558958238Z 
+2026-02-24T17:57:22.2518556Z worker-1-1  | 2026-02-24T17:47:23.005488208Z [2026-02-24 17:47:23,004: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:22.2523366Z worker-1-1  | 2026-02-24T17:47:23.005559239Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:22.2524265Z worker-3-1  | 2026-02-24T17:47:25.793729560Z 
+2026-02-24T17:57:22.2524824Z worker-3-1  | 2026-02-24T17:47:25.793730771Z [tasks]
+2026-02-24T17:57:22.2525610Z worker-3-1  | 2026-02-24T17:47:25.793732105Z   . worker.tasks.health_check
+2026-02-24T17:57:22.2526605Z worker-3-1  | 2026-02-24T17:47:25.793733357Z   . worker.tasks.process_batch
+2026-02-24T17:57:22.2527727Z worker-1-1  | 2026-02-24T17:47:23.005562225Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:22.2528874Z worker-1-1  | 2026-02-24T17:47:23.005563690Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:22.2529734Z worker-1-1  | 2026-02-24T17:47:23.005565265Z   warnings.warn(
+2026-02-24T17:57:22.2530305Z worker-1-1  | 2026-02-24T17:47:23.005566542Z 
+2026-02-24T17:57:22.2531189Z worker-1-1  | 2026-02-24T17:47:23.021586236Z [2026-02-24 17:47:23,018: INFO/MainProcess] Connected to redis://:**@redis:6379/0
+2026-02-24T17:57:22.2533707Z worker-1-1  | 2026-02-24T17:47:23.022801879Z [2026-02-24 17:47:23,022: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:22.2535762Z worker-1-1  | 2026-02-24T17:47:23.022845102Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:22.2536768Z worker-3-1  | 2026-02-24T17:47:25.793734564Z   . worker.tasks.process_order
+2026-02-24T17:57:22.2537934Z worker-3-1  | 2026-02-24T17:47:25.793735826Z   . worker.tasks.retry_failed_orders
+2026-02-24T17:57:22.2538627Z worker-3-1  | 2026-02-24T17:47:25.793737132Z 
+2026-02-24T17:57:22.2539500Z worker-1-1  | 2026-02-24T17:47:23.022847486Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:22.2540628Z worker-1-1  | 2026-02-24T17:47:23.022848891Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:22.2541372Z worker-1-1  | 2026-02-24T17:47:23.022850432Z   warnings.warn(
+2026-02-24T17:57:22.2542368Z worker-1-1  | 2026-02-24T17:47:23.022851783Z 
+2026-02-24T17:57:22.2544631Z worker-2-1  | 2026-02-24T17:54:44.180720132Z [2026-02-24 17:54:44,180: INFO/ForkPoolWorker-1] {'step': 'select_otra_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.180141Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Clicking 'Para otra Consultora' (Force Mode)", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2547622Z worker-2-1  | 2026-02-24T17:54:44.662029109Z [2026-02-24 17:54:44,661: INFO/ForkPoolWorker-1] {'step': 'select_otra_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.661461Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Selected 'Para otra Consultora' and accepted impersonation ✓", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2550752Z worker-2-1  | 2026-02-24T17:54:44.662092945Z [2026-02-24 17:54:44,661: INFO/ForkPoolWorker-1] {'step': 'search_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.661703Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Searching consultora: 10028439', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2553297Z worker-2-1  | 2026-02-24T17:54:44.807226111Z [2026-02-24 17:54:44,806: INFO/ForkPoolWorker-1] {'step': 'search_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.806775Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Clicking Buscar', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2556134Z worker-2-1  | 2026-02-24T17:54:44.998153412Z [2026-02-24 17:54:44,997: INFO/ForkPoolWorker-1] {'step': 'search_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.997437Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Consultora 10028439 searched ✓', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2559173Z worker-2-1  | 2026-02-24T17:54:44.998251351Z [2026-02-24 17:54:44,997: INFO/ForkPoolWorker-1] {'step': 'confirm_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:44.997768Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Waiting for Confirmar button', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2562064Z worker-2-1  | 2026-02-24T17:54:46.031414049Z [2026-02-24 17:54:46,030: INFO/ForkPoolWorker-1] {'step': 'confirm_consultora', 'details': {}, 'timestamp': '2026-02-24T17:54:46.030783Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Consultora confirmed ✓', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2564548Z worker-3-1  | 2026-02-24T17:47:26.216417996Z [2026-02-24 17:47:26,215: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:22.2566725Z worker-3-1  | 2026-02-24T17:47:26.216508243Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:22.2567828Z worker-3-1  | 2026-02-24T17:47:26.216517235Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:22.2568871Z worker-1-1  | 2026-02-24T17:47:23.033144386Z [2026-02-24 17:47:23,032: INFO/MainProcess] mingle: searching for neighbors
+2026-02-24T17:57:22.2569830Z worker-1-1  | 2026-02-24T17:47:24.055012331Z [2026-02-24 17:47:24,054: INFO/MainProcess] mingle: sync with 1 nodes
+2026-02-24T17:57:22.2571728Z worker-3-1  | 2026-02-24T17:47:26.216523466Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:22.2572717Z worker-1-1  | 2026-02-24T17:47:24.055291120Z [2026-02-24 17:47:24,054: INFO/MainProcess] mingle: sync complete
+2026-02-24T17:57:22.2574687Z worker-2-1  | 2026-02-24T17:54:46.031582439Z [2026-02-24 17:54:46,031: INFO/ForkPoolWorker-1] {'step': 'excel_generation', 'details': {}, 'timestamp': '2026-02-24T17:54:46.031202Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Preparing bulk upload for 1 products: ['171365']", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2578974Z worker-2-1  | 2026-02-24T17:54:46.031659454Z [2026-02-24 17:54:46,031: INFO/ForkPoolWorker-1] {'step': 'file_generation', 'details': {}, 'timestamp': '2026-02-24T17:54:46.031357Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Generating .xlsx for bulk upload', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2580329Z worker-3-1  | 2026-02-24T17:47:26.216529214Z   warnings.warn(
+2026-02-24T17:57:22.2580771Z worker-3-1  | 2026-02-24T17:47:26.216534839Z 
+2026-02-24T17:57:22.2581442Z worker-3-1  | 2026-02-24T17:47:26.236964896Z [2026-02-24 17:47:26,235: INFO/MainProcess] Connected to redis://:**@redis:6379/0
+2026-02-24T17:57:22.2582568Z worker-1-1  | 2026-02-24T17:47:24.079893362Z [2026-02-24 17:47:24,079: INFO/MainProcess] worker@gsp-worker-1 ready.
+2026-02-24T17:57:22.2584139Z worker-3-1  | 2026-02-24T17:47:26.237579193Z [2026-02-24 17:47:26,237: WARNING/MainProcess] /usr/local/lib/python3.11/site-packages/celery/worker/consumer/consumer.py:508: CPendingDeprecationWarning: The broker_connection_retry configuration setting will no longer determine
+2026-02-24T17:57:22.2586477Z worker-2-1  | 2026-02-24T17:54:46.193899419Z [2026-02-24 17:54:46,193: INFO/ForkPoolWorker-1] {'step': 'file_generation', 'details': {}, 'timestamp': '2026-02-24T17:54:46.193008Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Generated temporary order file: /tmp/tmpq8fhrfqe.xlsx', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2589226Z worker-2-1  | 2026-02-24T17:54:46.193982492Z [2026-02-24 17:54:46,193: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:46.193300Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Starting adaptive navigation to cart', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2592885Z worker-3-1  | 2026-02-24T17:47:26.237628636Z whether broker connection retries are made during startup in Celery 6.0 and above.
+2026-02-24T17:57:22.2594085Z worker-3-1  | 2026-02-24T17:47:26.237635654Z If you wish to retain the existing behavior for retrying connections on startup,
+2026-02-24T17:57:22.2594938Z worker-3-1  | 2026-02-24T17:47:26.237641163Z you should set broker_connection_retry_on_startup to True.
+2026-02-24T17:57:22.2595762Z worker-1-1  | 2026-02-24T17:47:24.660155226Z [2026-02-24 17:47:24,659: INFO/MainProcess] sync with worker@gsp-worker-2
+2026-02-24T17:57:22.2596612Z worker-1-1  | 2026-02-24T17:47:26.259645368Z [2026-02-24 17:47:26,259: INFO/MainProcess] sync with worker@gsp-worker-3
+2026-02-24T17:57:22.2597339Z worker-3-1  | 2026-02-24T17:47:26.237646710Z   warnings.warn(
+2026-02-24T17:57:22.2597875Z worker-3-1  | 2026-02-24T17:47:26.237652291Z 
+2026-02-24T17:57:22.2599613Z worker-2-1  | 2026-02-24T17:54:46.194345996Z [2026-02-24 17:54:46,194: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:46.193954Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Attempt #1/14 | URL: https://gsp.natura.com/profile/select-consultant', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2602436Z worker-2-1  | 2026-02-24T17:54:48.740570260Z [2026-02-24 17:54:48,739: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:48.739914Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Cycle dialog detected, selecting first visible (value=202603)', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2605203Z worker-2-1  | 2026-02-24T17:54:52.666110879Z [2026-02-24 17:54:52,665: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:52.665512Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Attempt #2/14 | URL: https://gsp.natura.com/showcase/natura', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2607930Z worker-2-1  | 2026-02-24T17:54:55.703222930Z [2026-02-24 17:54:55,702: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:55.702640Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Product grid is visible; showcase loaded ✓', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2610742Z worker-2-1  | 2026-02-24T17:54:55.703303913Z [2026-02-24 17:54:55,702: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:55.702885Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Navigating directly to /cart URL', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2612355Z worker-3-1  | 2026-02-24T17:47:26.244129020Z [2026-02-24 17:47:26,243: INFO/MainProcess] mingle: searching for neighbors
+2026-02-24T17:57:22.2613106Z worker-3-1  | 2026-02-24T17:47:27.278908988Z [2026-02-24 17:47:27,277: INFO/MainProcess] mingle: sync with 3 nodes
+2026-02-24T17:57:22.2613830Z worker-3-1  | 2026-02-24T17:47:27.279230081Z [2026-02-24 17:47:27,278: INFO/MainProcess] mingle: sync complete
+2026-02-24T17:57:22.2615291Z worker-2-1  | 2026-02-24T17:54:55.703413281Z [2026-02-24 17:54:55,703: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:54:55.703065Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'goto(https://gsp.natura.com/cart)', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2616656Z worker-3-1  | 2026-02-24T17:47:27.310389027Z [2026-02-24 17:47:27,309: INFO/MainProcess] worker@gsp-worker-3 ready.
+2026-02-24T17:57:22.2618409Z worker-2-1  | 2026-02-24T17:55:01.222212174Z [2026-02-24 17:55:01,221: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:55:01.221628Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Arrived at /cart ✓ | URL: https://gsp.natura.com/cart', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2621582Z worker-2-1  | 2026-02-24T17:55:03.324676557Z [2026-02-24 17:55:03,324: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {'cart_items': [{'code': '255542', 'name': 'Plan B Avon Care crema facial hidratante 100ml', 'qty': '1'}]}, 'timestamp': '2026-02-24T17:55:03.323983Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Found 1 existing item(s) in cart: ['255542 x1']", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2624269Z worker-2-1  | 2026-02-24T17:55:03.346685081Z [2026-02-24 17:55:03,346: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:55:03.346166Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': "Clicking 'Vaciar carrito' button to clear all items", 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2626479Z worker-2-1  | 2026-02-24T17:55:06.731743974Z [2026-02-24 17:55:06,731: WARNING/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:55:06.731033Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Cart still has 1 item(s) after Vaciar carrito', 'level': 'warning', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2628892Z worker-2-1  | 2026-02-24T17:55:06.731817418Z [2026-02-24 17:55:06,731: INFO/ForkPoolWorker-1] {'step': 'navigate_to_cart_adaptively', 'details': {}, 'timestamp': '2026-02-24T17:55:06.731470Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Cart audit/cleanup completed; exiting adaptive loop ✓', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2631197Z worker-2-1  | 2026-02-24T17:55:06.732333092Z [2026-02-24 17:55:06,731: INFO/ForkPoolWorker-1] {'step': 'upload_order_file', 'details': {}, 'timestamp': '2026-02-24T17:55:06.731931Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Uploading order file... Current URL: https://gsp.natura.com/cart', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2633416Z worker-2-1  | 2026-02-24T17:55:06.757040092Z [2026-02-24 17:55:06,756: INFO/ForkPoolWorker-1] {'step': 'upload_order_file', 'details': {}, 'timestamp': '2026-02-24T17:55:06.756570Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Found import button via \'button:has-text("Importar")\'; clicking', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2636594Z worker-2-1  | 2026-02-24T17:55:11.882744367Z [2026-02-24 17:55:11,882: INFO/ForkPoolWorker-1] {'step': 'upload_order_file', 'details': {}, 'timestamp': '2026-02-24T17:55:11.882256Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'Found import button via \'button:has-text("Cargar")\'; clicking', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2638953Z worker-2-1  | 2026-02-24T17:55:17.187455483Z [2026-02-24 17:55:17,186: INFO/ForkPoolWorker-1] {'step': 'upload_order_file', 'details': {}, 'timestamp': '2026-02-24T17:55:17.186825Z', 'order_id': 271, 'worker_id': 'gsp-worker-2-9969bd36', 'event': 'File injected into input; waiting for server processing...', 'level': 'info', 'logger': 'gsp_bot'}
+2026-02-24T17:57:22.2641492Z worker-2-1  | 2026-02-24T17:55:32.597912411Z [2026-02-24 17:55:32,597: INFO/ForkPoolWorker-1] Task worker.tasks.process_order[9969bd36-9511-4345-9409-8be2067ec852] succeeded in 57.93678299200019s: {'success': True, 'order_id': 271, 'consultora_code': '10028439', 'products_added': 1, 'products_failed': 0, 'duration': 56.9}
+2026-02-24T17:57:22.2810695Z 
+2026-02-24T17:57:22.2828464Z === FLOWER ===
+2026-02-24T17:57:22.7228477Z flower-1  | 2026-02-24T17:47:20.423028945Z      'celery.chain',
+2026-02-24T17:57:22.7229570Z flower-1  | 2026-02-24T17:47:20.423030896Z      'celery.chord',
+2026-02-24T17:57:22.7234053Z flower-1  | 2026-02-24T17:47:20.423032839Z      'celery.chord_unlock',
+2026-02-24T17:57:22.7235057Z flower-1  | 2026-02-24T17:47:20.423034686Z      'celery.chunks',
+2026-02-24T17:57:22.7235940Z flower-1  | 2026-02-24T17:47:20.423036574Z      'celery.group',
+2026-02-24T17:57:22.7236713Z flower-1  | 2026-02-24T17:47:20.423038464Z      'celery.map',
+2026-02-24T17:57:22.7237482Z flower-1  | 2026-02-24T17:47:20.423040880Z      'celery.starmap',
+2026-02-24T17:57:22.7238367Z flower-1  | 2026-02-24T17:47:20.423043074Z      'worker.tasks.health_check',
+2026-02-24T17:57:22.7239300Z flower-1  | 2026-02-24T17:47:20.423045548Z      'worker.tasks.process_batch',
+2026-02-24T17:57:22.7240210Z flower-1  | 2026-02-24T17:47:20.423047761Z      'worker.tasks.process_order',
+2026-02-24T17:57:22.7241171Z flower-1  | 2026-02-24T17:47:20.423049940Z      'worker.tasks.retry_failed_orders']
+2026-02-24T17:57:22.7242368Z flower-1  | 2026-02-24T17:47:20.447412800Z [I 260224 17:47:20 mixins:228] Connected to redis://:**@redis:6379/0
+2026-02-24T17:57:22.7243646Z flower-1  | 2026-02-24T17:47:21.515291252Z [W 260224 17:47:21 inspector:44] Inspect method revoked failed
+2026-02-24T17:57:22.7244880Z flower-1  | 2026-02-24T17:47:21.524788035Z [W 260224 17:47:21 inspector:44] Inspect method scheduled failed
+2026-02-24T17:57:22.7246288Z flower-1  | 2026-02-24T17:47:21.527821789Z [W 260224 17:47:21 inspector:44] Inspect method active_queues failed
+2026-02-24T17:57:22.7247569Z flower-1  | 2026-02-24T17:47:21.528819890Z [W 260224 17:47:21 inspector:44] Inspect method stats failed
+2026-02-24T17:57:22.7248901Z flower-1  | 2026-02-24T17:47:21.539819998Z [W 260224 17:47:21 inspector:44] Inspect method active failed
+2026-02-24T17:57:22.7250126Z flower-1  | 2026-02-24T17:47:21.540636005Z [W 260224 17:47:21 inspector:44] Inspect method registered failed
+2026-02-24T17:57:22.7251333Z flower-1  | 2026-02-24T17:47:21.541181964Z [W 260224 17:47:21 inspector:44] Inspect method reserved failed
+2026-02-24T17:57:22.7252514Z flower-1  | 2026-02-24T17:47:21.542200612Z [W 260224 17:47:21 inspector:44] Inspect method conf failed
