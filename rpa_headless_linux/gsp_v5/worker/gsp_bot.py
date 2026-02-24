@@ -660,27 +660,59 @@ class GSPBot:
     def _cleanup_cart(self, step: str) -> None:
         """Audit and remove existing products from the cart.
 
+        Flow:
+          1. Wait for cart content to render (up to 10s for item rows)
+          2. Audit every item: code, name, qty → log
+          3. Click "Vaciar carrito" to bulk-clear (wait for button visibility)
+          4. Handle confirmation dialog if present
+          5. Verify items disappeared from DOM
+          6. Fallback: delete individually via trash icon
+
         Real GSP cart DOM structure:
           li.row-products__container              → each product row
             span.row-products__info__title         → product name
             span.row-products__info__data >> span  → product code
             input.form-control[value]              → quantity
-
-        If items exist, a "Vaciar carrito" button appears:
-          button span.MuiButton-label:has-text("Vaciar carrito")
+          button:has-text("Vaciar carrito")        → bulk clear (only when items exist)
         """
         try:
-            # Give the cart a moment to render its product rows
-            self.page.wait_for_timeout(2000)
+            # ── Wait for cart content to fully render ──
+            self._log_step(step, "Waiting for cart content to render...")
+            has_items = False
+            try:
+                self.page.wait_for_selector(
+                    'li.row-products__container',
+                    state='attached',
+                    timeout=10000,
+                )
+                has_items = True
+                self._log_step(step, "Cart item rows detected in DOM")
+            except Exception:
+                self._log_step(step, "No cart item rows found after 10s wait")
 
-            rows = self.page.locator('li.row-products__container')
-            count = rows.count()
-
-            if count == 0:
-                self._log_step(step, "No existing items found in cart")
+            # Double-check: if no items via selector, also look for "Vaciar carrito"
+            # (button only appears when there are items)
+            if not has_items:
+                vaciar_check = self.page.locator('button:has-text("Vaciar carrito")')
+                if vaciar_check.count() > 0:
+                    self._log_step(step, "'Vaciar carrito' button present despite no item rows — clicking to be safe")
+                    try:
+                        vaciar_check.first.click(timeout=5000)
+                        self.page.wait_for_timeout(3000)
+                    except Exception as e:
+                        self._log_step(step, f"Safety Vaciar click failed: {e}", level="WARNING")
+                else:
+                    self._log_step(step, "No existing items in cart ✓")
                 return
 
+            # Small extra wait for DOM to stabilize
+            self.page.wait_for_timeout(1500)
+
             # ── Phase 1: Audit — log every item currently in the cart ──
+            rows = self.page.locator('li.row-products__container')
+            count = rows.count()
+            self._log_step(step, f"Auditing {count} item(s) in cart...")
+
             cart_items: list[dict] = []
             for i in range(count):
                 row = rows.nth(i)
@@ -696,7 +728,8 @@ class GSPBot:
                     qty = row.locator('input.form-control').first.get_attribute('value') or "?"
                 except Exception:
                     qty = "?"
-                cart_items.append({"code": code, "name": name, "qty": qty})
+                cart_items.append({"code": code.strip(), "name": name.strip(), "qty": qty.strip()})
+                self._log_step(step, "  Item {}: code={} qty={} name={}".format(i + 1, code.strip(), qty.strip(), name.strip()))
 
             summary = ["{} x{}".format(it["code"], it["qty"]) for it in cart_items]
             self._log_step(
@@ -705,56 +738,61 @@ class GSPBot:
                 details={"cart_items": cart_items},
             )
 
-            # ── Phase 2: Click "Vaciar carrito" to clear everything at once ──
+            # ── Phase 2: Click "Vaciar carrito" — wait for button to be visible ──
             vaciar_btn = self.page.locator('button:has-text("Vaciar carrito")')
-            if vaciar_btn.count() > 0 and vaciar_btn.first.is_visible(timeout=3000):
+            try:
+                vaciar_btn.first.wait_for(state='visible', timeout=5000)
                 self._log_step(step, "Clicking 'Vaciar carrito' button to clear all items")
                 vaciar_btn.first.click(timeout=5000)
 
-                # Some UIs show a confirmation dialog — accept if present
-                try:
-                    confirm_btn = self.page.locator('button:has-text("Confirmar"), button:has-text("Aceptar"), button:has-text("Sí")')
-                    if confirm_btn.count() > 0 and confirm_btn.first.is_visible(timeout=3000):
-                        self._log_step(step, "Confirmation dialog detected; accepting")
-                        confirm_btn.first.click(timeout=5000)
-                except Exception:
-                    pass
-
-                # Wait for cart to become empty
-                self.page.wait_for_timeout(3000)
-
-                # Verify cart is now empty
-                remaining = self.page.locator('li.row-products__container').count()
-                if remaining == 0:
-                    self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
-                else:
-                    self._log_step(step, f"Cart still has {remaining} item(s) after Vaciar carrito", level="WARNING")
-            else:
-                # Fallback: delete items one by one via trash icon
-                self._log_step(step, "'Vaciar carrito' button not found; removing items individually", level="WARNING")
-                removed = 0
-                for _ in range(count + 3):
-                    del_btn = self.page.locator('div.row-products__delete button').first
+                # Handle confirmation dialog if one appears
+                for confirm_text in ["Confirmar", "Aceptar", "Sí", "Si", "OK"]:
                     try:
-                        if del_btn.count() == 0 or not del_btn.is_visible(timeout=2000):
+                        cb = self.page.locator('button:has-text("{}")'.format(confirm_text))
+                        if cb.count() > 0 and cb.first.is_visible(timeout=2000):
+                            self._log_step(step, "Confirmation dialog detected; clicking '{}'".format(confirm_text))
+                            cb.first.click(timeout=5000)
                             break
                     except Exception:
+                        continue
+
+                # Wait for item rows to disappear from DOM
+                try:
+                    self.page.wait_for_selector(
+                        'li.row-products__container',
+                        state='detached',
+                        timeout=10000,
+                    )
+                    self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
+                except Exception:
+                    remaining = self.page.locator('li.row-products__container').count()
+                    if remaining == 0:
+                        self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
+                    else:
+                        self._log_step(step, f"Cart still has {remaining} item(s) after Vaciar carrito", level="WARNING")
+
+            except Exception as vaciar_ex:
+                # Fallback: delete items one by one via trash icon
+                self._log_step(step, "'Vaciar carrito' button not available ({}); removing individually".format(vaciar_ex), level="WARNING")
+                removed = 0
+                for attempt_del in range(count + 3):
+                    del_btn = self.page.locator('div.row-products__delete button').first
+                    try:
+                        del_btn.wait_for(state='visible', timeout=5000)
+                    except Exception:
+                        self._log_step(step, f"No more delete buttons visible after {removed} removals")
                         break
                     try:
                         del_btn.click(timeout=5000)
-                        try:
-                            self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=8000)
-                            try:
-                                self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=5000)
-                            except Exception:
-                                pass
-                        except PWTimeout:
-                            pass
                         removed += 1
-                        self.page.wait_for_timeout(1500)
-                    except Exception:
+                        self._log_step(step, f"Deleted item {removed}/{count}")
+                        # Wait for toast or item to disappear
+                        self.page.wait_for_timeout(2000)
+                    except Exception as del_ex:
+                        self._log_step(step, f"Failed to delete item: {del_ex}", level="WARNING")
                         break
-                self._log_step(step, f"Cart cleanup done: {removed}/{count} item(s) removed individually")
+                remaining = self.page.locator('li.row-products__container').count()
+                self._log_step(step, f"Individual cleanup done: {removed} removed, {remaining} remaining")
 
         except Exception as audit_ex:
             self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
