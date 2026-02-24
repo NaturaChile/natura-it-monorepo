@@ -658,39 +658,103 @@ class GSPBot:
         return "/cart" in url
 
     def _cleanup_cart(self, step: str) -> None:
-        """Audit and remove existing products from the cart."""
+        """Audit and remove existing products from the cart.
+
+        Real GSP cart DOM structure:
+          li.row-products__container              → each product row
+            span.row-products__info__title         → product name
+            span.row-products__info__data >> span  → product code
+            input.form-control[value]              → quantity
+
+        If items exist, a "Vaciar carrito" button appears:
+          button span.MuiButton-label:has-text("Vaciar carrito")
+        """
         try:
-            delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
-            existing = []
-            for btn in delete_buttons:
-                tid = btn.get_attribute("data-testid") or ""
-                code = tid.replace("remove-product-", "") if tid else "unknown"
-                existing.append(code)
+            # Give the cart a moment to render its product rows
+            self.page.wait_for_timeout(2000)
 
-            if existing:
-                self._log_step(step, f"Found existing items in cart: {existing}")
-            else:
+            rows = self.page.locator('li.row-products__container')
+            count = rows.count()
+
+            if count == 0:
                 self._log_step(step, "No existing items found in cart")
+                return
 
-            for _ in range(len(existing)):
-                btn = self.page.query_selector('a[data-testid^="remove-product-"]')
-                if not btn:
-                    break
-                tid = btn.get_attribute("data-testid") or ""
-                code = tid.replace("remove-product-", "") if tid else "unknown"
+            # ── Phase 1: Audit — log every item currently in the cart ──
+            cart_items: list[dict] = []
+            for i in range(count):
+                row = rows.nth(i)
                 try:
-                    btn.click()
+                    name = row.locator('span.row-products__info__title').first.inner_text(timeout=3000)
+                except Exception:
+                    name = "(unknown)"
+                try:
+                    code = row.locator('span.row-products__info__data >> span').first.inner_text(timeout=3000)
+                except Exception:
+                    code = "(unknown)"
+                try:
+                    qty = row.locator('input.form-control').first.get_attribute('value') or "?"
+                except Exception:
+                    qty = "?"
+                cart_items.append({"code": code, "name": name, "qty": qty})
+
+            self._log_step(
+                step,
+                f"Found {count} existing item(s) in cart: {[f'{it['code']} x{it['qty']}' for it in cart_items]}",
+                details={"cart_items": cart_items},
+            )
+
+            # ── Phase 2: Click "Vaciar carrito" to clear everything at once ──
+            vaciar_btn = self.page.locator('button:has-text("Vaciar carrito")')
+            if vaciar_btn.count() > 0 and vaciar_btn.first.is_visible(timeout=3000):
+                self._log_step(step, "Clicking 'Vaciar carrito' button to clear all items")
+                vaciar_btn.first.click(timeout=5000)
+
+                # Some UIs show a confirmation dialog — accept if present
+                try:
+                    confirm_btn = self.page.locator('button:has-text("Confirmar"), button:has-text("Aceptar"), button:has-text("Sí")')
+                    if confirm_btn.count() > 0 and confirm_btn.first.is_visible(timeout=3000):
+                        self._log_step(step, "Confirmation dialog detected; accepting")
+                        confirm_btn.first.click(timeout=5000)
+                except Exception:
+                    pass
+
+                # Wait for cart to become empty
+                self.page.wait_for_timeout(3000)
+
+                # Verify cart is now empty
+                remaining = self.page.locator('li.row-products__container').count()
+                if remaining == 0:
+                    self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
+                else:
+                    self._log_step(step, f"Cart still has {remaining} item(s) after Vaciar carrito", level="WARNING")
+            else:
+                # Fallback: delete items one by one via trash icon
+                self._log_step(step, "'Vaciar carrito' button not found; removing items individually", level="WARNING")
+                removed = 0
+                for _ in range(count + 3):
+                    del_btn = self.page.locator('div.row-products__delete button').first
                     try:
-                        self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
-                        self._log_step(step, f"Confirmed removal toast for {code}")
+                        if del_btn.count() == 0 or not del_btn.is_visible(timeout=2000):
+                            break
+                    except Exception:
+                        break
+                    try:
+                        del_btn.click(timeout=5000)
                         try:
-                            self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
-                        except Exception:
+                            self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=8000)
+                            try:
+                                self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=5000)
+                            except Exception:
+                                pass
+                        except PWTimeout:
                             pass
-                    except PWTimeout:
-                        self._log_step(step, f"Warning: Removal toast not detected for {code}", level="WARNING")
-                except Exception as e:
-                    self._log_step(step, f"Failed to remove {code}: {e}", level="WARNING")
+                        removed += 1
+                        self.page.wait_for_timeout(1500)
+                    except Exception:
+                        break
+                self._log_step(step, f"Cart cleanup done: {removed}/{count} item(s) removed individually")
+
         except Exception as audit_ex:
             self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
 
