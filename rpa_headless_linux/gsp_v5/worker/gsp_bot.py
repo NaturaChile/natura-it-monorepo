@@ -647,27 +647,15 @@ class GSPBot:
         return tmp_path
 
     def _is_at_cart(self) -> bool:
-        """Check if we're at the cart page by URL or element presence."""
+        """Check if we're at the cart page by URL ONLY.
+
+        IMPORTANT: Do NOT use element-based fallbacks — elements like
+        #code-and-quantity-code, button-add-to-basket, and even input[type='file']
+        may or may not exist depending on whether the import button has been
+        clicked. The ONLY reliable indicator is the URL containing '/cart'.
+        """
         url = self.page.url or ""
-        if "/cart" in url:
-            return True
-        # SPA fallback: check for cart-specific elements
-        try:
-            if self.page.locator('input[type="file"]').count() > 0:
-                return True
-        except Exception:
-            pass
-        try:
-            if self.page.locator('#code-and-quantity-code').is_visible(timeout=500):
-                return True
-        except Exception:
-            pass
-        try:
-            if self.page.locator('[data-testid="button-add-to-basket"]').is_visible(timeout=500):
-                return True
-        except Exception:
-            pass
-        return False
+        return "/cart" in url
 
     def _cleanup_cart(self, step: str) -> None:
         """Audit and remove existing products from the cart."""
@@ -709,15 +697,18 @@ class GSPBot:
     def navigate_to_cart_adaptively(self) -> None:
         """Adaptive navigation loop that ensures we reach the cart page.
 
-        Ports the decision loop from the async reference script to sync Playwright.
-        Handles popups (cycle, venta directa, LISTO, recover order) and clicks the
-        cart button, waiting for the navigation to complete.
+        Flow:
+          1. Handle popups (cycle, venta directa, LISTO, recover order)
+          2. Wait for the product grid (cards-list) to confirm showcase loaded
+          3. Navigate directly to /cart URL (NO button click needed)
+          4. Confirm URL is /cart, then audit/cleanup existing items
+
         Raises NavigationError if it cannot reach the cart after attempts.
         """
         step = "navigate_to_cart_adaptively"
         self._log_step(step, "Starting adaptive navigation to cart")
 
-        max_attempts = 14  # more attempts for slow Docker environments
+        max_attempts = 14
 
         for attempt in range(max_attempts):
             current_url = self.page.url or "(blank)"
@@ -727,7 +718,7 @@ class GSPBot:
 
                 # ── Check: already at cart? ──
                 if self._is_at_cart():
-                    self._log_step(step, "Cart detected (URL or elements); auditing and cleaning")
+                    self._log_step(step, "Already at /cart URL; auditing and cleaning")
                     self._cleanup_cart(step)
                     self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop ✓")
                     return
@@ -771,7 +762,6 @@ class GSPBot:
                                     self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
                                 except Exception:
                                     self._log_step(step, "Failed to click Aceptar for cycle", level="WARNING")
-                            # Wait for page to react after cycle selection
                             self.page.wait_for_timeout(3000)
                             continue
                 except Exception:
@@ -810,85 +800,42 @@ class GSPBot:
                 except Exception:
                     pass
 
-                # ── 5. Wait for product grid before trying cart button ──
-                # The product grid must be loaded before the bag icon is clickable
+                # ── 5. Wait for product grid to confirm showcase is loaded ──
+                grid_visible = False
                 try:
                     cards = self.page.locator('div[data-testid="cards-list"]')
-                    if cards.count() > 0 and cards.first.is_visible(timeout=3000):
-                        self._log_step(step, "Product grid is visible; page loaded")
+                    if cards.count() > 0 and cards.first.is_visible(timeout=5000):
+                        self._log_step(step, "Product grid is visible; showcase loaded ✓")
+                        grid_visible = True
                     else:
                         self._log_step(step, "Product grid not yet visible; waiting...", level="DEBUG")
-                        # Give the page more time to settle
                         self.page.wait_for_timeout(3000)
                 except Exception:
                     pass
 
-                # ── 6. Click cart button and wait for navigation ──
-                # IMPORTANT: Use Playwright's native .click() — NOT JS evaluate.
-                # JS el.click() does NOT fire React synthetic events, so the
-                # SPA router never picks up the navigation.
-                cart_clicked = False
-                try:
-                    cart_selectors = [
-                        'button[data-testid="icon-bag"]',
-                        'button:has-text("Mi Carrito")',
-                        '[data-testid="icon-bag"]',
-                        'a[href*="/cart"]',
-                    ]
-                    for sel in cart_selectors:
-                        try:
-                            loc = self.page.locator(sel)
-                            if loc.count() > 0 and loc.first.is_visible(timeout=2000):
-                                self._log_step(step, f"Cart button found via '{sel}'; Playwright-clicking")
-                                # Use Playwright click (real mouse events) — not JS evaluate
-                                loc.first.click(timeout=5000)
-                                cart_clicked = True
-                                break
-                        except Exception as click_err:
-                            self._log_step(step, f"Click via '{sel}' failed: {click_err}", level="WARNING")
-                            continue
-
-                    if not cart_clicked:
-                        # Fallback: role-based
-                        try:
-                            mi_carrito = self.page.get_by_role('button', name='Mi Carrito')
-                            if mi_carrito.count() > 0:
-                                self._log_step(step, "Cart button found via role; Playwright-clicking")
-                                mi_carrito.first.click(timeout=5000)
-                                cart_clicked = True
-                        except Exception:
-                            pass
-
-                    if not cart_clicked:
-                        # Last resort: JS dispatchEvent with full MouseEvent
-                        try:
-                            btn = self.page.query_selector('button[data-testid="icon-bag"]')
-                            if btn:
-                                self._log_step(step, "Falling back to JS dispatchEvent for cart button")
-                                btn.evaluate('el => el.dispatchEvent(new MouseEvent("click", {bubbles: true, cancelable: true, view: window}))')
-                                cart_clicked = True
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
-                if cart_clicked:
-                    # Wait for URL change or cart elements to appear
-                    self._log_step(step, "Cart button clicked; waiting for cart page to load...")
+                # ── 6. Navigate directly to /cart URL ──
+                # No button click needed — /cart is a separate full page.
+                if grid_visible or attempt >= 3:
+                    self._log_step(step, "Navigating directly to /cart URL")
                     try:
-                        self.page.wait_for_url("**/cart**", timeout=15000)
-                        self._log_step(step, f"URL changed to cart: {self.page.url}")
-                    except Exception:
-                        # SPA may not change URL; check for cart elements
-                        self._log_step(step, "URL did not change to /cart; checking for cart elements...", level="DEBUG")
-                        self.page.wait_for_timeout(5000)
-                        if self._is_at_cart():
-                            self._log_step(step, "Cart elements detected after click ✓")
-                        else:
-                            self._log_step(step, "Cart elements not detected; will retry", level="WARNING")
+                        from urllib.parse import urlparse
+                        current = self.page.url or ""
+                        if current:
+                            parsed = urlparse(current)
+                            cart_url = f"{parsed.scheme}://{parsed.netloc}/cart"
+                            self._log_step(step, f"goto({cart_url})")
+                            self.page.goto(cart_url, wait_until="domcontentloaded", timeout=30000)
+                            self.page.wait_for_timeout(5000)
+                            if self._is_at_cart():
+                                self._log_step(step, f"Arrived at /cart ✓ | URL: {self.page.url}")
+                                self._cleanup_cart(step)
+                                self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop ✓")
+                                return
+                            else:
+                                self._log_step(step, f"URL after goto: {self.page.url} — not /cart yet, will retry", level="WARNING")
+                    except Exception as e:
+                        self._log_step(step, f"Direct navigation to /cart failed: {e}", level="WARNING")
                     continue
-                else:
-                    self._log_step(step, "No cart button found on page", level="WARNING")
 
                 # ── 7. Recovery reload at midpoint ──
                 if attempt == 6:
@@ -899,23 +846,6 @@ class GSPBot:
                         self.page.wait_for_timeout(5000)
                     except Exception as e:
                         self._log_step(step, f"Reload failed: {e}", level="WARNING")
-                    continue
-
-                # ── 8. Direct /cart navigation as fallback ──
-                if attempt >= 5:
-                    self._log_step(step, f"Attempt {attempt+1}: trying direct navigation to /cart URL")
-                    try:
-                        # Extract the base URL from current page and append /cart
-                        current = self.page.url or ""
-                        if current:
-                            from urllib.parse import urlparse
-                            parsed = urlparse(current)
-                            cart_url = f"{parsed.scheme}://{parsed.netloc}/cart"
-                            self._log_step(step, f"Navigating directly to {cart_url}")
-                            self.page.goto(cart_url, wait_until="domcontentloaded", timeout=30000)
-                            self.page.wait_for_timeout(5000)
-                    except Exception as e:
-                        self._log_step(step, f"Direct navigation to /cart failed: {e}", level="WARNING")
                     continue
 
             except Exception as e:
@@ -932,13 +862,44 @@ class GSPBot:
 
     def upload_order_file(self, file_path: str) -> None:
         step = "upload_order_file"
-        self._log_step(step, "Uploading order file...")
+        self._log_step(step, f"Uploading order file... Current URL: {self.page.url}")
+
+        # Some GSP versions require clicking an "Importar" / "Cargar archivo" button
+        # before the <input type="file"> element is mounted in the DOM.
+        try:
+            import_selectors = [
+                'button:has-text("Importar")',
+                'button:has-text("Cargar")',
+                'button:has-text("Subir")',
+                'button:has-text("Upload")',
+                '[data-testid="import-button"]',
+                '[data-testid="upload-button"]',
+                'label:has-text("Importar")',
+            ]
+            import_clicked = False
+            for sel in import_selectors:
+                try:
+                    loc = self.page.locator(sel)
+                    if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                        self._log_step(step, f"Found import button via '{sel}'; clicking")
+                        loc.first.click(timeout=5000)
+                        self.page.wait_for_timeout(2000)
+                        import_clicked = True
+                        break
+                except Exception:
+                    continue
+            if not import_clicked:
+                self._log_step(step, "No import button found; assuming file input is already in DOM", level="DEBUG")
+        except Exception as import_err:
+            self._log_step(step, f"Import button search error (non-fatal): {import_err}", level="WARNING")
+
         try:
             self.page.wait_for_selector('input[type="file"]', state="attached", timeout=60000)
             # Use Playwright's set_input_files with selector
             self.page.set_input_files('input[type="file"]', file_path)
+            self._log_step(step, "File injected into input; waiting for server processing...")
             # Wait for server-side processing
-            self.page.wait_for_timeout(10000)
+            self.page.wait_for_timeout(15000)
 
             # Post-upload validations
             try:
@@ -1028,6 +989,12 @@ class GSPBot:
             # Upload the generated Excel file
             self.upload_order_file(excel_path)
             result["current_step"] = "file_uploaded"
+
+            # Cleanup temp file
+            try:
+                os.unlink(excel_path)
+            except Exception:
+                pass
 
             # Assume all products were submitted for processing by the server
             for p in products:
