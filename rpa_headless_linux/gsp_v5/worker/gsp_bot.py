@@ -745,16 +745,21 @@ class GSPBot:
                 self._log_step(step, "Clicking 'Vaciar carrito' button to clear all items")
                 vaciar_btn.first.click(timeout=5000)
 
-                # Handle confirmation dialog if one appears
-                for confirm_text in ["Confirmar", "Aceptar", "Sí", "Si", "OK"]:
+                # Handle confirmation dialog — GSP shows "Eliminar" button (natds style)
+                self.page.wait_for_timeout(1500)
+                confirmed = False
+                for confirm_text in ["Eliminar", "Confirmar", "Aceptar", "Sí", "Si", "OK"]:
                     try:
                         cb = self.page.locator('button:has-text("{}")'.format(confirm_text))
-                        if cb.count() > 0 and cb.first.is_visible(timeout=2000):
+                        if cb.count() > 0 and cb.first.is_visible(timeout=3000):
                             self._log_step(step, "Confirmation dialog detected; clicking '{}'".format(confirm_text))
                             cb.first.click(timeout=5000)
+                            confirmed = True
                             break
                     except Exception:
                         continue
+                if not confirmed:
+                    self._log_step(step, "No confirmation dialog detected after Vaciar carrito click", level="WARNING")
 
                 # Wait for item rows to disappear from DOM
                 try:
