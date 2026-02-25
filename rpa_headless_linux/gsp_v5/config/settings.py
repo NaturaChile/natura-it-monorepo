@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     celery_max_retries: int = Field(3, alias="CELERY_MAX_RETRIES")
     celery_retry_delay: int = Field(30, alias="CELERY_RETRY_DELAY")
 
+    # ── Workers ───────────────────────────────
+    worker_count: int = Field(3, alias="WORKER_COUNT")
+
     # ── GSP (credenciales sensibles via Vault) ─
     gsp_login_url: str = Field(
         "https://natura-auth.prd.naturacloud.com/?company=natura"

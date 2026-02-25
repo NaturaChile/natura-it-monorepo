@@ -118,6 +118,7 @@ services:
       <<: *common-env
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
+      WORKER_COUNT: ${WORKER_COUNT:-3}
     ports:
       - "8000:8000"
     volumes:
@@ -144,20 +145,11 @@ services:
         condition: service_healthy
     restart: "no"  # Temporary: disable restart to capture crash logs
 
-  # ── Worker 1 ──────────────────────────────
-  worker-1:
+  # ── Workers (scalable) ────────────────────
+  # Use: docker compose up -d --scale worker=N
+  # Each worker runs CELERY_CONCURRENCY Playwright instances.
+  worker:
     <<: *worker-base
-    hostname: gsp-worker-1
-
-  # ── Worker 2 ──────────────────────────────
-  worker-2:
-    <<: *worker-base
-    hostname: gsp-worker-2
-
-  # ── Worker 3 ──────────────────────────────
-  worker-3:
-    <<: *worker-base
-    hostname: gsp-worker-3
 
   # ── Flower (Celery Dashboard) ─────────────
   flower:
