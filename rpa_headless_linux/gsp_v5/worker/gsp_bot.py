@@ -14,7 +14,7 @@ import urllib.request
 import ssl
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 import pandas as pd
 import tempfile
 
@@ -59,6 +59,7 @@ class GSPBot:
         self.page: Optional[Page] = None
 
         self._step_log: list[dict] = []
+        self.progress_callback: Optional[Callable] = None
 
     # ── Context manager ───────────────────────
 
@@ -159,6 +160,13 @@ class GSPBot:
         self._step_log.append(entry)
         log_fn = getattr(logger, level.lower(), logger.info)
         log_fn(message, **{k: v for k, v in entry.items() if k not in ("message", "level")})
+
+        # Notify Celery task of progress (visible in Flower dashboard)
+        if self.progress_callback:
+            try:
+                self.progress_callback(step, message, details)
+            except Exception:
+                pass  # Non-fatal: don't break bot flow for callback errors
 
     def get_step_log(self) -> list[dict]:
         return list(self._step_log)
