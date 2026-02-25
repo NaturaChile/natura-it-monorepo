@@ -89,7 +89,7 @@ jobs:
       # DETECCION DE PROXY (antes de build)
       # ══════════════════════════════════════════════
       - name: "Detectar proxy corporativo del host"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'restart'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'restart' || github.event.inputs.action == 'login-stress'
         id: proxy
         shell: powershell
         run: |
@@ -161,7 +161,7 @@ jobs:
       # ACCION: DEPLOY (build + levantar todo)
       # ══════════════════════════════════════════════
       - name: "DEPLOY - Build de imagenes Docker"
-        if: github.event.inputs.action == 'deploy'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -180,7 +180,7 @@ jobs:
           cmd /c "docker compose build --no-cache"
 
       - name: "DEPLOY - Levantar infraestructura (PostgreSQL + Redis)"
-        if: github.event.inputs.action == 'deploy'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -212,7 +212,7 @@ jobs:
           }
 
       - name: "DEPLOY - Levantar servicios de aplicacion"
-        if: github.event.inputs.action == 'deploy'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -233,7 +233,7 @@ jobs:
 
       # ── Diagnostic: Network connectivity from inside a worker container ──
       - name: "DEPLOY - Diagnostico de red desde contenedor"
-        if: github.event.inputs.action == 'deploy'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -296,7 +296,7 @@ jobs:
           Write-Host "════════════════════════════════════════"
 
       - name: "DEPLOY - Verificar salud de la API"
-        if: github.event.inputs.action == 'deploy'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
         shell: powershell
         run: |
           Write-Host "[INFO] Verificando que la API responde..."
