@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 
 from celery import shared_task
+from celery.exceptions import Retry
 from celery.utils.log import get_task_logger
 from sqlalchemy.orm import Session
 
@@ -21,6 +22,23 @@ from worker.gsp_bot import GSPBot
 
 task_logger = get_task_logger(__name__)
 settings = get_settings()
+
+# Step → percent mapping for Flower real-time progress tracking
+STEP_PROGRESS = {
+    "starting": 0,
+    "preflight": 5,
+    "login": 15,
+    "select_otra_consultora": 25,
+    "search_consultora": 35,
+    "confirm_consultora": 45,
+    "excel_generation": 50,
+    "file_generation": 52,
+    "navigate_to_cart_adaptively": 60,
+    "cart_cleanup": 70,
+    "upload_order_file": 85,
+    "upload_validation": 92,
+    "completed": 100,
+}
 
 
 def _get_db() -> Session:
@@ -140,6 +158,28 @@ def process_order(self, order_id: int) -> dict:
             order_id=order_id,
             worker_id=worker_id,
         ) as bot:
+            # Wire up Celery progress tracking for Flower dashboard
+            _last_pct = [0]
+
+            def _on_progress(step: str, message: str, details: dict | None = None):
+                try:
+                    pct = STEP_PROGRESS.get(step, _last_pct[0])
+                    _last_pct[0] = pct
+                    self.update_state(state="PROGRESS", meta={
+                        "step": step,
+                        "message": message,
+                        "percent": pct,
+                        "order_id": order_id,
+                        "consultora": order.consultora_code,
+                        "worker_id": worker_id,
+                        "products_total": len(product_list),
+                        "started_at": order.started_at.isoformat() if order.started_at else None,
+                    })
+                except Exception:
+                    pass  # Non-fatal
+
+            bot.progress_callback = _on_progress
+
             result = bot.execute_order(
                 consultora_code=order.consultora_code,
                 products=product_list,
@@ -172,9 +212,26 @@ def process_order(self, order_id: int) -> dict:
         order.finished_at = datetime.now(timezone.utc)
 
         if result["success"]:
+            self.update_state(state="PROGRESS", meta={
+                "step": "completed", "message": "Order completed successfully",
+                "percent": 100, "order_id": order_id,
+                "consultora": order.consultora_code, "worker_id": worker_id,
+                "products_total": len(product_list),
+            })
             _update_order_status(db, order, OrderStatus.COMPLETED, step="completed")
             _record_log(db, order_id, "completed",
                         f"Order completed successfully in {result['duration_seconds']}s")
+            _update_batch_counters(db, order.batch_id)
+            db.commit()
+
+            return {
+                "success": True,
+                "order_id": order_id,
+                "consultora_code": order.consultora_code,
+                "products_added": len(result.get("products_added", [])),
+                "products_failed": len(result.get("products_failed", [])),
+                "duration": result.get("duration_seconds", 0),
+            }
         else:
             error_msg = result.get("error", "Products failed")
             error_step = result.get("error_step", "unknown")
@@ -197,26 +254,22 @@ def process_order(self, order_id: int) -> dict:
                 _record_log(db, order_id, "failed",
                             f"Order failed after {order.retry_count} retries: {error_msg}",
                             level="ERROR")
+                _update_batch_counters(db, order.batch_id)
+                db.commit()
+                # Raise so Celery marks as FAILURE (visible in Flower + allows retry)
+                raise Exception(f"Order {order_id} failed: {error_msg}")
 
-        # Update batch counters
-        _update_batch_counters(db, order.batch_id)
-        db.commit()
-
-        return {
-            "success": result["success"],
-            "order_id": order_id,
-            "consultora_code": order.consultora_code,
-            "products_added": len(result.get("products_added", [])),
-            "products_failed": len(result.get("products_failed", [])),
-            "duration": result.get("duration_seconds", 0),
-        }
+    except Retry:
+        # Don't interfere with intentional Celery retries
+        raise
 
     except process_order.MaxRetriesExceededError:
         _update_order_status(db, order, OrderStatus.FAILED, step="max_retries", error="Max retries exceeded")
         _record_log(db, order_id, "max_retries", "Max retries exceeded", level="ERROR")
         _update_batch_counters(db, order.batch_id)
         db.commit()
-        return {"success": False, "order_id": order_id, "error": "Max retries exceeded"}
+        # Re-raise so Celery marks as FAILURE (visible in Flower + allows retry)
+        raise
 
     except Exception as exc:
         task_logger.exception(f"Unexpected error processing order {order_id}")
