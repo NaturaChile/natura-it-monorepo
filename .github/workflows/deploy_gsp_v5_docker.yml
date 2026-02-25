@@ -13,6 +13,7 @@ on:
           - restart
           - status
           - logs
+          - login-stress
       scale_workers:
         description: 'Cantidad de workers Playwright (solo deploy/restart)'
         required: false
@@ -46,7 +47,8 @@ jobs:
       # --- Redis (SECRET) ---
       REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
 
-      # --- Celery (VARIABLES) ---
+      # --- Workers / Celery (VARIABLES) ---
+      WORKER_COUNT: ${{ github.event.inputs.scale_workers || '3' }}
       CELERY_CONCURRENCY: ${{ vars.CELERY_CONCURRENCY || '1' }}
       CELERY_MAX_RETRIES: ${{ vars.CELERY_MAX_RETRIES || '3' }}
       CELERY_RETRY_DELAY: ${{ vars.CELERY_RETRY_DELAY || '30' }}
@@ -222,10 +224,7 @@ jobs:
           # El docker-compose.yml usa ${GSP_USER_CODE}, ${POSTGRES_PASSWORD}, etc.
           # que ya estan en el environment del proceso.
           docker compose up -d master dispatcher flower
-          
-          if ($workers -ge 1) { docker compose up -d worker-1 }
-          if ($workers -ge 2) { docker compose up -d worker-2 }
-          if ($workers -ge 3) { docker compose up -d worker-3 }
+          docker compose up -d --scale worker=$workers worker
           
           Write-Host ""
           Write-Host "[5/5] Verificando estado de servicios..."
@@ -262,37 +261,37 @@ jobs:
           }
           
           Write-Host ""
-          Write-Host "--- Test desde CONTENEDOR worker-1 ---"
+          Write-Host "--- Test desde CONTENEDOR worker ---"
           
           Write-Host "[1] DNS Resolution:"
-          docker compose exec -T worker-1 python -c "import socket; ip=socket.getaddrinfo('$target',443)[0][4][0]; print(f'  [OK] DNS: $target -> '+ip)" 2>$null
+          docker compose exec -T worker python -c "import socket; ip=socket.getaddrinfo('$target',443)[0][4][0]; print(f'  [OK] DNS: $target -> '+ip)" 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] DNS resolution failed" }
           
           Write-Host "[2] TCP Connection (port 443):"
-          docker compose exec -T worker-1 python -c "import socket; s=socket.create_connection(('$target',443),timeout=10); s.close(); print('  [OK] TCP: connected to $target`:443')" 2>$null
+          docker compose exec -T worker python -c "import socket; s=socket.create_connection(('$target',443),timeout=10); s.close(); print('  [OK] TCP: connected to $target`:443')" 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] TCP connection failed" }
           
           Write-Host "[3] TLS Handshake:"
-          docker compose exec -T worker-1 python -c "import socket,ssl; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; s=socket.create_connection(('$target',443),timeout=10); ss=ctx.wrap_socket(s,server_hostname='$target'); print('  [OK] TLS: '+ss.version()); ss.close()" 2>$null
+          docker compose exec -T worker python -c "import socket,ssl; ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; s=socket.create_connection(('$target',443),timeout=10); ss=ctx.wrap_socket(s,server_hostname='$target'); print('  [OK] TLS: '+ss.version()); ss.close()" 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] TLS handshake failed" }
           
           Write-Host "[4] HTTP Request (urllib):"
-          docker compose exec -T worker-1 python -c "import urllib.request,ssl,os; proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'none'; print('  Proxy in env: '+proxy); ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; req=urllib.request.Request('https://$target',method='HEAD'); resp=urllib.request.urlopen(req,timeout=15,context=ctx); print('  [OK] HTTP: '+str(resp.status))" 2>$null
+          docker compose exec -T worker python -c "import urllib.request,ssl,os; proxy=os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy') or 'none'; print('  Proxy in env: '+proxy); ctx=ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE; req=urllib.request.Request('https://$target',method='HEAD'); resp=urllib.request.urlopen(req,timeout=15,context=ctx); print('  [OK] HTTP: '+str(resp.status))" 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host "  [FAIL] HTTP request failed" }
           
           Write-Host "[5] curl test:"
-          docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+          docker compose exec -T worker curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
           
           if ($env:PROXY_DETECTED -eq "true") {
             Write-Host "[6] curl with proxy ($env:HTTPS_PROXY):"
-            docker compose exec -T worker-1 curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --proxy "$env:HTTPS_PROXY" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
+            docker compose exec -T worker curl -sSL -o /dev/null -w "  HTTP %{http_code} in %{time_total}s`n" --proxy "$env:HTTPS_PROXY" --max-time 15 --connect-timeout 10 "https://$target" 2>&1
           }
           
           Write-Host ""
           Write-Host "--- Informacion de red del contenedor ---"
-          docker compose exec -T worker-1 cat /etc/resolv.conf 2>$null
+          docker compose exec -T worker cat /etc/resolv.conf 2>$null
           Write-Host ""
-          docker compose exec -T worker-1 ip route 2>$null
+          docker compose exec -T worker ip route 2>$null
           Write-Host ""
           Write-Host "════════════════════════════════════════"
 
@@ -376,9 +375,7 @@ jobs:
           Start-Sleep -Seconds 15
           
           docker compose up -d master dispatcher flower
-          if ($workers -ge 1) { docker compose up -d worker-1 }
-          if ($workers -ge 2) { docker compose up -d worker-2 }
-          if ($workers -ge 3) { docker compose up -d worker-3 }
+          docker compose up -d --scale worker=$workers worker
           
           Start-Sleep -Seconds 10
           Write-Host ""
@@ -440,8 +437,71 @@ jobs:
           
           Write-Host ""
           Write-Host "=== WORKERS ==="
-          docker compose logs --tail=50 --timestamps worker-1 worker-2 worker-3 2>$null
+          docker compose logs --tail=50 --timestamps worker 2>$null
           
           Write-Host ""
           Write-Host "=== FLOWER ==="
           docker compose logs --tail=20 --timestamps flower 2>$null
+
+      # ══════════════════════════════════════════════
+      # ACCION: LOGIN-STRESS
+      # ══════════════════════════════════════════════
+      - name: "LOGIN-STRESS - Test de logins concurrentes"
+        if: github.event.inputs.action == 'login-stress'
+        shell: powershell
+        run: |
+          $workers = [int]"${{ github.event.inputs.scale_workers }}"
+          $concurrency = [int]"${{ vars.CELERY_CONCURRENCY || '1' }}"
+          $total = $workers * $concurrency
+
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - LOGIN STRESS TEST"
+          Write-Host "  Workers: $workers"
+          Write-Host "  Concurrency/worker: $concurrency"
+          Write-Host "  Total logins: $total"
+          Write-Host "════════════════════════════════════════"
+
+          Write-Host ""
+          Write-Host "[1/3] Lanzando $total logins concurrentes via API..."
+          try {
+            $response = Invoke-RestMethod -Method POST -Uri "http://localhost:8000/tests/login-stress" -TimeoutSec 30 -ErrorAction Stop
+            Write-Host "[OK] Test lanzado:"
+            $response | ConvertTo-Json -Depth 5 | Write-Host
+
+            $taskIds = ($response.tasks | ForEach-Object { $_.task_id }) -join ","
+
+            Write-Host ""
+            Write-Host "[2/3] Esperando resultados (max 120s)..."
+            $maxWait = 120
+            $elapsed = 0
+
+            while ($elapsed -lt $maxWait) {
+              Start-Sleep -Seconds 10
+              $elapsed += 10
+              try {
+                $results = Invoke-RestMethod -Uri "http://localhost:8000/tests/login-stress/results?task_ids=$taskIds" -TimeoutSec 10 -ErrorAction Stop
+                $pending = $results.in_progress
+                $succeeded = $results.succeeded
+                $failed = $results.failed
+
+                Write-Host "[${elapsed}s] Succeeded: $succeeded | Failed: $failed | Pending: $pending"
+
+                if ($pending -eq 0) {
+                  Write-Host ""
+                  Write-Host "[3/3] Resultados finales:"
+                  $results | ConvertTo-Json -Depth 5 | Write-Host
+                  break
+                }
+              } catch {
+                Write-Host "[${elapsed}s] Esperando respuesta del API..."
+              }
+            }
+
+            if ($elapsed -ge $maxWait) {
+              Write-Host "[WARN] Timeout alcanzado. Revisa Flower para resultados completos."
+            }
+          } catch {
+            Write-Host "[ERROR] No se pudo conectar a la API: $($_.Exception.Message)"
+            Write-Host "[INFO] Asegurate de que los servicios esten corriendo (accion: deploy)"
+            exit 1
+          }

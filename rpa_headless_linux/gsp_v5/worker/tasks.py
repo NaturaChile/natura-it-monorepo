@@ -363,6 +363,79 @@ def health_check() -> dict:
 
 @shared_task(
     bind=True,
+    name="worker.tasks.stress_test_login",
+    time_limit=120,
+    soft_time_limit=100,
+    acks_late=True,
+)
+def stress_test_login(self, attempt_number: int, total_attempts: int) -> dict:
+    """Stress test: login only, then close.
+
+    Used to determine how many concurrent GSP sessions the provider allows.
+    Each task opens a browser, performs login, records timing, and closes.
+    """
+    worker_id = f"{socket.gethostname()}-{self.request.id[:8]}"
+    start = time.time()
+
+    self.update_state(state="PROGRESS", meta={
+        "step": "starting",
+        "message": f"Login attempt {attempt_number}/{total_attempts}",
+        "percent": 0,
+        "attempt": attempt_number,
+        "worker_id": worker_id,
+    })
+
+    try:
+        with GSPBot(
+            supervisor_code=settings.gsp_user_code,
+            supervisor_password=settings.gsp_password,
+            order_id=None,
+            worker_id=worker_id,
+        ) as bot:
+            def _on_progress(step: str, message: str, details: dict | None = None):
+                try:
+                    self.update_state(state="PROGRESS", meta={
+                        "step": step,
+                        "message": message,
+                        "percent": 50 if step == "login" else 0,
+                        "attempt": attempt_number,
+                        "worker_id": worker_id,
+                    })
+                except Exception:
+                    pass
+
+            bot.progress_callback = _on_progress
+
+            # Only perform login
+            bot.login()
+            elapsed = round(time.time() - start, 2)
+
+            self.update_state(state="PROGRESS", meta={
+                "step": "completed",
+                "message": f"Login OK in {elapsed}s",
+                "percent": 100,
+                "attempt": attempt_number,
+                "worker_id": worker_id,
+            })
+
+            return {
+                "success": True,
+                "attempt": attempt_number,
+                "worker_id": worker_id,
+                "login_time_seconds": elapsed,
+                "message": "Login successful",
+            }
+
+    except Exception as exc:
+        elapsed = round(time.time() - start, 2)
+        task_logger.warning(f"Login stress test attempt {attempt_number} failed: {exc}")
+        raise Exception(
+            f"Login attempt {attempt_number} failed after {elapsed}s: {exc}"
+        )
+
+
+@shared_task(
+    bind=True,
     name="worker.tasks.retry_failed_orders",
     time_limit=300,
 )

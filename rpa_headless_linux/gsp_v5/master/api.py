@@ -241,6 +241,79 @@ async def batch_orders(
     return q.order_by(Order.id).all()
 
 
+# ── Stress Tests ──────────────────────────────
+
+@app.post("/tests/login-stress")
+async def login_stress_test():
+    """Launch concurrent login-only tasks (workers × concurrency) to test GSP session limits.
+
+    The number of concurrent attempts is calculated automatically from the
+    deployed WORKER_COUNT and CELERY_CONCURRENCY settings. Each task opens
+    a browser, logs in, and closes. Results are tracked in Flower.
+    """
+    from worker.tasks import stress_test_login
+
+    worker_count = settings.worker_count
+    concurrency = settings.celery_concurrency
+    total = worker_count * concurrency
+
+    task_ids = []
+    for i in range(1, total + 1):
+        task = stress_test_login.apply_async(
+            args=[i, total],
+            queue="orders",
+        )
+        task_ids.append({"attempt": i, "task_id": task.id})
+
+    logger.info("login_stress_started", workers=worker_count, concurrency=concurrency, total=total)
+    return {
+        "test": "login_stress",
+        "workers": worker_count,
+        "concurrency_per_worker": concurrency,
+        "total_logins": total,
+        "tasks": task_ids,
+        "message": f"Launched {total} login attempts ({worker_count} workers × {concurrency} concurrency). Check Flower for progress.",
+    }
+
+
+@app.get("/tests/login-stress/results")
+async def login_stress_results(
+    task_ids: str = Query(..., description="Comma-separated task IDs from the stress test launch"),
+):
+    """Check results of a login stress test by task IDs."""
+    from celery.result import AsyncResult
+    from worker.celery_app import app as celery_app
+
+    ids = [t.strip() for t in task_ids.split(",") if t.strip()]
+    results = []
+    succeeded = 0
+    failed = 0
+
+    for task_id in ids:
+        ar = AsyncResult(task_id, app=celery_app)
+        entry = {
+            "task_id": task_id,
+            "state": ar.state,
+        }
+        if ar.state == "SUCCESS":
+            entry["result"] = ar.result
+            succeeded += 1
+        elif ar.state == "FAILURE":
+            entry["error"] = str(ar.result)
+            failed += 1
+        elif ar.state == "PROGRESS":
+            entry["progress"] = ar.info
+        results.append(entry)
+
+    return {
+        "total": len(ids),
+        "succeeded": succeeded,
+        "failed": failed,
+        "in_progress": len(ids) - succeeded - failed,
+        "results": results,
+    }
+
+
 # ── Screenshots ───────────────────────────────
 
 @app.get("/screenshots/{filename}")
