@@ -314,6 +314,122 @@ async def login_stress_results(
     }
 
 
+# ── Cart Clear ────────────────────────────────
+
+@app.post("/cart/clear/upload")
+async def upload_cart_clear(
+    file: UploadFile = File(...),
+    name: str = Query("", description="Nombre descriptivo del lote"),
+):
+    """Upload a CSV/Excel with consultora codes to empty their carts.
+
+    Expected file format:
+        consultora_code
+        12345678
+        87654321
+        ...
+
+    Only the 'consultora_code' column is required.
+    Dispatches one cart-clear task per unique consultora.
+    """
+    import pandas as pd
+
+    if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(400, "Only CSV and Excel files are supported")
+
+    # Save uploaded file
+    upload_dir = settings.base_dir / "data" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    dest = upload_dir / f"cart_clear_{ts}_{file.filename}"
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Parse file
+    try:
+        if dest.suffix in (".xlsx", ".xls"):
+            df = pd.read_excel(dest)
+        else:
+            df = pd.read_csv(dest)
+
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+        if "consultora_code" not in df.columns:
+            raise ValueError(f"Missing 'consultora_code' column. Found: {list(df.columns)}")
+
+        codes = df["consultora_code"].astype(str).str.strip().unique().tolist()
+        codes = [c for c in codes if c and c != "nan"]
+
+        if not codes:
+            raise ValueError("No valid consultora codes found in file")
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("cart_clear_upload_failed", error=str(e))
+        raise HTTPException(500, f"Failed to parse file: {e}")
+
+    # Dispatch tasks
+    from worker.tasks import empty_cart
+
+    total = len(codes)
+    task_ids = []
+    for i, code in enumerate(codes, 1):
+        task = empty_cart.apply_async(
+            args=[code, i, total],
+            queue="orders",
+        )
+        task_ids.append({"consultora_code": code, "task_id": task.id})
+
+    logger.info("cart_clear_dispatched", total=total, source=file.filename)
+    return {
+        "action": "cart_clear",
+        "total_consultoras": total,
+        "source_file": file.filename,
+        "tasks": task_ids,
+        "message": f"Dispatched {total} cart-clear tasks. Use /cart/clear/results to check progress.",
+    }
+
+
+@app.get("/cart/clear/results")
+async def cart_clear_results(
+    task_ids: str = Query(..., description="Comma-separated task IDs from the upload response"),
+):
+    """Check results of cart-clear tasks by task IDs."""
+    from celery.result import AsyncResult
+    from worker.celery_app import app as celery_app
+
+    ids = [t.strip() for t in task_ids.split(",") if t.strip()]
+    results = []
+    succeeded = 0
+    failed = 0
+
+    for task_id in ids:
+        ar = AsyncResult(task_id, app=celery_app)
+        entry = {
+            "task_id": task_id,
+            "state": ar.state,
+        }
+        if ar.state == "SUCCESS":
+            entry["result"] = ar.result
+            succeeded += 1
+        elif ar.state == "FAILURE":
+            entry["error"] = str(ar.result)
+            failed += 1
+        elif ar.state == "PROGRESS":
+            entry["progress"] = ar.info
+        results.append(entry)
+
+    return {
+        "total": len(ids),
+        "succeeded": succeeded,
+        "failed": failed,
+        "in_progress": len(ids) - succeeded - failed,
+        "results": results,
+    }
+
+
 # ── Screenshots ───────────────────────────────
 
 @app.get("/screenshots/{filename}")
