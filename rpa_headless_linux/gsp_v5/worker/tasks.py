@@ -434,6 +434,120 @@ def stress_test_login(self, attempt_number: int, total_attempts: int) -> dict:
         )
 
 
+# ── Empty Cart Task ──────────────────────────
+
+# Step → percent mapping for empty-cart Flower progress
+EMPTY_CART_PROGRESS = {
+    "starting": 0,
+    "login": 15,
+    "select_otra_consultora": 30,
+    "search_consultora": 45,
+    "confirm_consultora": 55,
+    "navigate_to_cart_adaptively": 70,
+    "cart_cleanup": 80,
+    "cart_cleared": 95,
+    "completed": 100,
+}
+
+
+@shared_task(
+    bind=True,
+    name="worker.tasks.empty_cart",
+    max_retries=2,
+    default_retry_delay=15,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    time_limit=300,
+    soft_time_limit=270,
+)
+def empty_cart(self, consultora_code: str, attempt_number: int = 1, total_attempts: int = 1) -> dict:
+    """
+    Empty the cart for a single consultora.
+
+    Flow: login → select consultora → navigate to cart → clear all items.
+    Used to reset consultora carts to a clean state before a new batch.
+    """
+    worker_id = f"{socket.gethostname()}-{self.request.id[:8]}"
+    start = time.time()
+
+    self.update_state(state="PROGRESS", meta={
+        "step": "starting",
+        "message": f"Empty cart {attempt_number}/{total_attempts}: {consultora_code}",
+        "percent": 0,
+        "consultora": consultora_code,
+        "worker_id": worker_id,
+    })
+
+    try:
+        with GSPBot(
+            supervisor_code=settings.gsp_user_code,
+            supervisor_password=settings.gsp_password,
+            order_id=None,
+            worker_id=worker_id,
+        ) as bot:
+            _last_pct = [0]
+
+            def _on_progress(step: str, message: str, details: dict | None = None):
+                try:
+                    pct = EMPTY_CART_PROGRESS.get(step, _last_pct[0])
+                    _last_pct[0] = pct
+                    self.update_state(state="PROGRESS", meta={
+                        "step": step,
+                        "message": message,
+                        "percent": pct,
+                        "consultora": consultora_code,
+                        "worker_id": worker_id,
+                    })
+                except Exception:
+                    pass
+
+            bot.progress_callback = _on_progress
+
+            result = bot.execute_empty_cart(consultora_code)
+
+        elapsed = round(time.time() - start, 2)
+
+        if result["success"]:
+            self.update_state(state="PROGRESS", meta={
+                "step": "completed",
+                "message": f"Cart cleared for {consultora_code}",
+                "percent": 100,
+                "consultora": consultora_code,
+                "worker_id": worker_id,
+            })
+            return {
+                "success": True,
+                "consultora_code": consultora_code,
+                "items_removed": result.get("items_removed", 0),
+                "duration_seconds": elapsed,
+                "worker_id": worker_id,
+                "message": f"Cart emptied for {consultora_code}",
+            }
+        else:
+            raise Exception(
+                f"Empty cart failed for {consultora_code}: {result.get('error', 'unknown')}"
+            )
+
+    except Retry:
+        raise
+
+    except empty_cart.MaxRetriesExceededError:
+        elapsed = round(time.time() - start, 2)
+        raise Exception(
+            f"Empty cart for {consultora_code} failed after max retries ({elapsed}s)"
+        )
+
+    except Exception as exc:
+        elapsed = round(time.time() - start, 2)
+        task_logger.warning(f"Empty cart for {consultora_code} failed: {exc}")
+        try:
+            raise self.retry(exc=exc, countdown=15)
+        except self.MaxRetriesExceededError:
+            raise Exception(
+                f"Empty cart for {consultora_code} failed after {elapsed}s: {exc}"
+            )
+
+
 @shared_task(
     bind=True,
     name="worker.tasks.retry_failed_orders",

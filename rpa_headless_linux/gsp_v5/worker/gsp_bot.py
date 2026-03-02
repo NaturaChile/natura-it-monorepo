@@ -1046,6 +1046,79 @@ class GSPBot:
             ss = self._take_screenshot("upload_file_timeout")
             raise NavigationError("File upload input not available", step=step, details=f"screenshot={ss}")
 
+    # ── Empty Cart Flow ─────────────────────────
+
+    def execute_empty_cart(self, consultora_code: str) -> dict:
+        """
+        Execute the cart-clearing flow for one consultora.
+
+        Steps:
+          1. Login as supervisor
+          2. Select "Para otra Consultora"
+          3. Search & confirm consultora
+          4. Navigate to cart adaptively (handles popups, cycle, etc.)
+          5. Clear all items from the cart
+
+        Args:
+            consultora_code: The consultora code whose cart should be emptied.
+
+        Returns:
+            dict with results and step log.
+        """
+        start_time = time.time()
+        result = {
+            "success": False,
+            "consultora_code": consultora_code,
+            "items_removed": 0,
+            "error": None,
+            "error_step": None,
+            "screenshot": None,
+            "duration_seconds": 0,
+            "step_log": [],
+        }
+
+        try:
+            # Step 1: Login
+            self.login()
+            result["current_step"] = "login_ok"
+
+            # Step 2: Select "Para otra Consultora"
+            self.select_otra_consultora()
+            result["current_step"] = "otra_consultora_selected"
+
+            # Step 3: Search consultora
+            self.search_consultora(consultora_code)
+            result["current_step"] = "consultora_searched"
+
+            # Step 4: Confirm consultora
+            self.confirm_consultora()
+            result["current_step"] = "consultora_confirmed"
+
+            # Step 5: Navigate to cart (handles popups, cycle selection, etc.)
+            # _cleanup_cart is called internally by navigate_to_cart_adaptively
+            self.navigate_to_cart_adaptively()
+            result["current_step"] = "cart_open"
+
+            # Step 6: Explicit clear of any remaining items
+            # (navigate_to_cart_adaptively already calls _cleanup_cart,
+            #  but we do a second pass with clear_cart for thoroughness)
+            removed = self.clear_cart()
+            result["items_removed"] = removed
+            result["current_step"] = "cart_cleared"
+
+            result["success"] = True
+            self._log_step("cart_cleared", f"Cart emptied for {consultora_code}: {removed} items removed ✓")
+
+        except Exception as e:
+            result["error"] = str(e)
+            result["error_step"] = getattr(e, "step", "unknown")
+            result["screenshot"] = self._take_screenshot(f"error_empty_cart_{result.get('error_step', 'unknown')}")
+            self._log_step("error", str(e), level="ERROR")
+
+        result["duration_seconds"] = round(time.time() - start_time, 2)
+        result["step_log"] = self.get_step_log()
+        return result
+
     # ── Full Flow Orchestration ───────────────
 
     def execute_order(

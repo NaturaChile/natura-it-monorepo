@@ -14,6 +14,7 @@ on:
           - status
           - logs
           - login-stress
+          - empty-cart
       scale_workers:
         description: 'Cantidad de workers Playwright (solo deploy/restart)'
         required: false
@@ -89,7 +90,7 @@ jobs:
       # DETECCION DE PROXY (antes de build)
       # ══════════════════════════════════════════════
       - name: "Detectar proxy corporativo del host"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'restart' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'restart' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         id: proxy
         shell: powershell
         run: |
@@ -161,7 +162,7 @@ jobs:
       # ACCION: DEPLOY (build + levantar todo)
       # ══════════════════════════════════════════════
       - name: "DEPLOY - Build de imagenes Docker"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -180,7 +181,7 @@ jobs:
           cmd /c "docker compose build --no-cache"
 
       - name: "DEPLOY - Levantar infraestructura (PostgreSQL + Redis)"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -212,7 +213,7 @@ jobs:
           }
 
       - name: "DEPLOY - Levantar servicios de aplicacion"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -233,7 +234,7 @@ jobs:
 
       # ── Diagnostic: Network connectivity from inside a worker container ──
       - name: "DEPLOY - Diagnostico de red desde contenedor"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         shell: powershell
         working-directory: ${{ env.COMPOSE_DIR }}
         run: |
@@ -296,7 +297,7 @@ jobs:
           Write-Host "════════════════════════════════════════"
 
       - name: "DEPLOY - Verificar salud de la API"
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress'
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'login-stress' || github.event.inputs.action == 'empty-cart'
         shell: powershell
         run: |
           Write-Host "[INFO] Verificando que la API responde..."
@@ -505,3 +506,30 @@ jobs:
             Write-Host "[INFO] Asegurate de que los servicios esten corriendo (accion: deploy)"
             exit 1
           }
+
+      # ══════════════════════════════════════════════
+      # ACCION: EMPTY-CART
+      # ══════════════════════════════════════════════
+      - name: "EMPTY-CART - Vaciar carritos de consultoras"
+        if: github.event.inputs.action == 'empty-cart'
+        shell: powershell
+        run: |
+          Write-Host "════════════════════════════════════════"
+          Write-Host "  GSP Bot v5 - EMPTY CART"
+          Write-Host "  Workers: ${{ github.event.inputs.scale_workers }}"
+          Write-Host "════════════════════════════════════════"
+          Write-Host ""
+          Write-Host "[OK] Infraestructura desplegada correctamente."
+          Write-Host ""
+          Write-Host "  Para vaciar carritos, sube tu archivo CSV/Excel con la columna"
+          Write-Host "  'consultora_code' desde la interfaz Swagger:"
+          Write-Host ""
+          Write-Host "  >> http://localhost:8000/docs#/default/upload_clear_cart_cart_clear_upload_post"
+          Write-Host ""
+          Write-Host "  Luego puedes consultar el progreso en:"
+          Write-Host "  >> http://localhost:8000/docs#/default/get_clear_cart_results_cart_clear_results_get"
+          Write-Host ""
+          Write-Host "  O monitorear desde Flower:"
+          Write-Host "  >> http://localhost:5555"
+          Write-Host ""
+          Write-Host "════════════════════════════════════════"
