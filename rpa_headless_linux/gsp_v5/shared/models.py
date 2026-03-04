@@ -46,6 +46,7 @@ class ProductStatus(str, enum.Enum):
     ADDED = "added"
     FAILED = "failed"
     NOT_FOUND = "not_found"
+    OUT_OF_STOCK = "out_of_stock"
 
 
 # ── Models ────────────────────────────────────

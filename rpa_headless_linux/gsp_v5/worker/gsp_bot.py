@@ -30,6 +30,7 @@ from shared.exceptions import (
     ProductAddError,
     NavigationError,
     SessionExpiredError,
+    OutOfStockError,
 )
 
 logger = get_logger("gsp_bot")
@@ -1019,32 +1020,209 @@ class GSPBot:
 
             # Post-upload validations
             try:
-                if self.page.get_by_text("No podemos encontrar los Códigos").is_visible(timeout=5000):
-                    # Capture the error text before closing modal
-                    msg_el = self.page.locator("div.modal-body")
-                    try:
-                        error_message = msg_el.inner_text().replace("\n", " ")
-                    except Exception:
-                        error_message = "(failed to read modal body)"
-                    self._log_step("upload_validation", f"GSP Validation Error: {error_message}", level="WARNING", details={"error_text": error_message})
+                # ── Check "indisponibles" modal (out-of-stock warning) ──
+                indisponibles_detected = False
+                try:
+                    indisponible_loc = self.page.get_by_text("indisponibles")
+                    if indisponible_loc.is_visible(timeout=5000):
+                        indisponibles_detected = True
+                        self._log_step(step, "⚠️ Detected 'productos indisponibles' modal — some products are out of stock", level="WARNING")
+                        ss = self._take_screenshot("indisponibles_modal")
+                        self._log_step(step, f"Screenshot of indisponibles modal: {ss}", level="INFO")
 
-                    try:
-                        self.page.get_by_role('button', name='LISTO').first.evaluate('el => el.click()')
-                    except Exception:
-                        pass
-                else:
-                    # Check inconsistencies
-                    if self.page.get_by_text("hemos detectado inconsistencias").is_visible(timeout=5000):
-                        self._log_step(step, "Detected inconsistencies after upload; closing with LISTO", level="WARNING")
+                        # Click "Entendido" to dismiss the modal
+                        entendido_clicked = False
+                        entendido_selectors = [
+                            'button:has-text("Entendido")',
+                            'span:has-text("Entendido")',
+                            'button.Button-gaya',
+                            'div.dialog-footer button',
+                        ]
+                        for sel in entendido_selectors:
+                            try:
+                                loc = self.page.locator(sel)
+                                if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                                    loc.first.click(timeout=5000)
+                                    self._log_step(step, f"Clicked 'Entendido' via '{sel}'")
+                                    entendido_clicked = True
+                                    break
+                            except Exception:
+                                continue
+
+                        if not entendido_clicked:
+                            # Fallback: press Escape or click overlay
+                            self._log_step(step, "Could not click Entendido; trying Escape key", level="WARNING")
+                            self.page.keyboard.press("Escape")
+
+                        self.page.wait_for_timeout(3000)
+                except Exception as e:
+                    self._log_step(step, f"Indisponibles check error (non-fatal): {e}", level="WARNING")
+
+                # ── Check "No podemos encontrar los Códigos" modal ──
+                if not indisponibles_detected:
+                    if self.page.get_by_text("No podemos encontrar los Códigos").is_visible(timeout=5000):
+                        # Capture the error text before closing modal
+                        msg_el = self.page.locator("div.modal-body")
                         try:
-                            self.page.locator('button:has-text("LISTO")').first.evaluate('el => el.click()')
+                            error_message = msg_el.inner_text().replace("\n", " ")
+                        except Exception:
+                            error_message = "(failed to read modal body)"
+                        self._log_step("upload_validation", f"GSP Validation Error: {error_message}", level="WARNING", details={"error_text": error_message})
+
+                        try:
+                            self.page.get_by_role('button', name='LISTO').first.evaluate('el => el.click()')
                         except Exception:
                             pass
+                    else:
+                        # Check inconsistencies
+                        if self.page.get_by_text("hemos detectado inconsistencias").is_visible(timeout=5000):
+                            self._log_step(step, "Detected inconsistencies after upload; closing with LISTO", level="WARNING")
+                            try:
+                                self.page.locator('button:has-text("LISTO")').first.evaluate('el => el.click()')
+                            except Exception:
+                                pass
             except Exception as e:
                 self._log_step(step, f"Post-upload validation error (non-fatal): {e}", level="WARNING")
         except PWTimeout:
             ss = self._take_screenshot("upload_file_timeout")
             raise NavigationError("File upload input not available", step=step, details=f"screenshot={ss}")
+
+    def verify_cart_contents(self, expected_products: list[dict]) -> dict:
+        """
+        Scrape the cart DOM to determine which products were actually added
+        and which are out of stock.
+
+        Reads two sections:
+          1. ul.bag-items → products successfully in cart
+          2. section#products-unavailable_section → products "Sin stock"
+
+        Args:
+            expected_products: List of dicts with 'product_code' and 'quantity'.
+
+        Returns:
+            dict with:
+                products_added:    [{"product_code": ..., "quantity": ..., "name": ...}]
+                products_failed:   [{"product_code": ..., "quantity": ..., "error": ..., "name": ...}]
+                has_out_of_stock:  bool
+                cart_screenshot:   str | None
+        """
+        step = "verify_cart"
+        self._log_step(step, "Verifying cart contents after upload...")
+
+        result = {
+            "products_added": [],
+            "products_failed": [],
+            "has_out_of_stock": False,
+            "cart_screenshot": None,
+        }
+
+        expected_codes = {p["product_code"]: p.get("quantity", 1) for p in expected_products}
+
+        # Wait for cart to stabilize after modal dismissal
+        self.page.wait_for_timeout(3000)
+
+        # ── 1. Scrape successfully added products from ul.bag-items ──
+        added_codes = set()
+        try:
+            cart_items = self.page.locator("ul.bag-items li.row-products__container")
+            count = cart_items.count()
+            self._log_step(step, f"Found {count} products in cart (bag-items)")
+
+            for i in range(count):
+                item = cart_items.nth(i)
+                try:
+                    # Product code is inside: span.row-products__info__data > span
+                    # There are multiple .row-products__info__data spans, the one with "Código:" has the code
+                    code_el = item.locator("span.row-products__info__data:has-text('Código:') span")
+                    code = code_el.inner_text(timeout=3000).strip()
+
+                    # Product name
+                    name_el = item.locator("span.row-products__info__title")
+                    name = ""
+                    try:
+                        name = name_el.inner_text(timeout=2000).strip()
+                    except Exception:
+                        pass
+
+                    added_codes.add(code)
+                    qty = expected_codes.get(code, 1)
+                    result["products_added"].append({
+                        "product_code": code,
+                        "quantity": qty,
+                        "name": name,
+                    })
+                    self._log_step(step, f"  ✓ In cart: {code} — {name}")
+                except Exception as e:
+                    self._log_step(step, f"  Could not read cart item {i}: {e}", level="WARNING")
+        except Exception as e:
+            self._log_step(step, f"Error scraping bag-items: {e}", level="WARNING")
+
+        # ── 2. Scrape out-of-stock products from #products-unavailable_section ──
+        oos_codes = set()
+        try:
+            unavailable_section = self.page.locator("section#products-unavailable_section")
+            if unavailable_section.count() > 0 and unavailable_section.is_visible(timeout=5000):
+                oos_items = unavailable_section.locator("li.products-unavailable_item")
+                oos_count = oos_items.count()
+                self._log_step(step, f"Found {oos_count} products in 'Productos Agotados' section", level="WARNING")
+                result["has_out_of_stock"] = oos_count > 0
+
+                for i in range(oos_count):
+                    item = oos_items.nth(i)
+                    try:
+                        code_el = item.locator("span.row-products__info__data:has-text('Código:') span")
+                        code = code_el.inner_text(timeout=3000).strip()
+
+                        name_el = item.locator("span.row-products__info__title")
+                        name = ""
+                        try:
+                            name = name_el.inner_text(timeout=2000).strip()
+                        except Exception:
+                            pass
+
+                        oos_codes.add(code)
+                        qty = expected_codes.get(code, 1)
+                        result["products_failed"].append({
+                            "product_code": code,
+                            "quantity": qty,
+                            "error": "out_of_stock",
+                            "name": name,
+                        })
+                        self._log_step(step, f"  ✗ Out of stock: {code} — {name}", level="WARNING")
+                    except Exception as e:
+                        self._log_step(step, f"  Could not read unavailable item {i}: {e}", level="WARNING")
+            else:
+                self._log_step(step, "No 'Productos Agotados' section found — all products should be in cart")
+        except Exception as e:
+            self._log_step(step, f"Error scraping unavailable section: {e}", level="WARNING")
+
+        # ── 3. Check for products that are neither in cart nor in unavailable ──
+        all_found = added_codes | oos_codes
+        for p in expected_products:
+            code = p["product_code"]
+            if code not in all_found:
+                result["products_failed"].append({
+                    "product_code": code,
+                    "quantity": p.get("quantity", 1),
+                    "error": "not_found_in_cart",
+                    "name": "",
+                })
+                self._log_step(step, f"  ? Missing from cart and unavailable: {code}", level="WARNING")
+
+        # Take a screenshot of the final cart state
+        result["cart_screenshot"] = self._take_screenshot("cart_verification")
+
+        # Summary
+        total_added = len(result["products_added"])
+        total_failed = len(result["products_failed"])
+        total_oos = len(oos_codes)
+        self._log_step(
+            step,
+            f"Cart verification complete: {total_added} added, {total_failed} failed ({total_oos} out of stock)",
+            level="WARNING" if total_failed > 0 else "INFO",
+        )
+
+        return result
 
     # ── Empty Cart Flow ─────────────────────────
 
@@ -1185,11 +1363,34 @@ class GSPBot:
             except Exception:
                 pass
 
-            # Assume all products were submitted for processing by the server
-            for p in products:
-                result["products_added"].append({"product_code": p["product_code"], "quantity": p.get("quantity", 1)})
+            # ── Verify what actually landed in the cart ──
+            verification = self.verify_cart_contents(products)
+            result["current_step"] = "cart_verified"
 
-            result["success"] = True
+            result["products_added"] = verification["products_added"]
+            result["products_failed"] = verification["products_failed"]
+            result["has_out_of_stock"] = verification.get("has_out_of_stock", False)
+            result["cart_screenshot"] = verification.get("cart_screenshot")
+
+            # Determine success: order succeeds if at least one product was added
+            if len(verification["products_added"]) > 0:
+                result["success"] = True
+                if verification["has_out_of_stock"]:
+                    self._log_step("order_result",
+                        f"Order partially completed: {len(verification['products_added'])} added, "
+                        f"{len(verification['products_failed'])} failed (out of stock)",
+                        level="WARNING")
+                else:
+                    self._log_step("order_result",
+                        f"Order completed: all {len(verification['products_added'])} products added ✓")
+            else:
+                # No products were added at all
+                result["success"] = False
+                result["error"] = "No products were added to cart — all may be out of stock"
+                result["error_step"] = "cart_verification"
+                self._log_step("order_result",
+                    "Order FAILED: zero products in cart after upload",
+                    level="ERROR")
 
         except Exception as e:
             result["error"] = str(e)
