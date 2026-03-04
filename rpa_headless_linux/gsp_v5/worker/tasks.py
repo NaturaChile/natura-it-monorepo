@@ -197,11 +197,21 @@ def process_order(self, order_id: int) -> dict:
                 details=log_entry.get("details"),
             )
 
-        # Update product statuses
-        for p in products:
-            added_codes = [a["product_code"] for a in result.get("products_added", [])]
-            failed_items = {f["product_code"]: f.get("error", "") for f in result.get("products_failed", [])}
+        # Update product statuses from cart verification
+        added_codes = {a["product_code"] for a in result.get("products_added", [])}
+        failed_items = {f["product_code"]: f.get("error", "") for f in result.get("products_failed", [])}
 
+        _record_log(db, order_id, "verify_cart",
+                    f"Cart verification: {len(added_codes)} in cart, {len(failed_items)} failed. "
+                    f"Added: {sorted(added_codes)}, Failed: {sorted(failed_items.keys())}",
+                    level="WARNING" if failed_items else "INFO",
+                    details={
+                        "products_added": result.get("products_added", []),
+                        "products_failed": result.get("products_failed", []),
+                        "has_out_of_stock": result.get("has_out_of_stock", False),
+                    })
+
+        for p in products:
             if p.product_code in added_codes:
                 p.status = ProductStatus.ADDED
                 p.added_at = datetime.now(timezone.utc)
@@ -216,6 +226,12 @@ def process_order(self, order_id: int) -> dict:
                 else:
                     p.status = ProductStatus.FAILED
                     p.error_message = error_reason or "Unknown error"
+            else:
+                # Product was in the order but bot didn't find it anywhere
+                p.status = ProductStatus.FAILED
+                p.error_message = "No verificado — producto no detectado en carrito ni en agotados"
+
+        db.commit()  # Persist product status changes immediately
 
         # Final order status
         order.duration_seconds = result.get("duration_seconds", 0)
