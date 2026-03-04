@@ -47,3 +47,8 @@ class NavigationError(GSPBotError):
 class SessionExpiredError(GSPBotError):
     """The browser session expired and needs re-login."""
     pass
+
+
+class OutOfStockError(GSPBotError):
+    """One or more products are out of stock."""
+    pass

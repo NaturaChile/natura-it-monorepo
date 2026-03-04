@@ -36,7 +36,9 @@ STEP_PROGRESS = {
     "navigate_to_cart_adaptively": 60,
     "cart_cleanup": 70,
     "upload_order_file": 85,
-    "upload_validation": 92,
+    "upload_validation": 90,
+    "verify_cart": 95,
+    "order_result": 98,
     "completed": 100,
 }
 
@@ -204,8 +206,16 @@ def process_order(self, order_id: int) -> dict:
                 p.status = ProductStatus.ADDED
                 p.added_at = datetime.now(timezone.utc)
             elif p.product_code in failed_items:
-                p.status = ProductStatus.FAILED
-                p.error_message = failed_items[p.product_code]
+                error_reason = failed_items[p.product_code]
+                if error_reason == "out_of_stock":
+                    p.status = ProductStatus.OUT_OF_STOCK
+                    p.error_message = "Producto agotado / sin stock"
+                elif error_reason == "not_found_in_cart":
+                    p.status = ProductStatus.NOT_FOUND
+                    p.error_message = "Producto no encontrado en carrito después del upload"
+                else:
+                    p.status = ProductStatus.FAILED
+                    p.error_message = error_reason or "Unknown error"
 
         # Final order status
         order.duration_seconds = result.get("duration_seconds", 0)
