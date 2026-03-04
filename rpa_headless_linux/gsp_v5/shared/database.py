@@ -87,6 +87,7 @@ def _migrate_enums() -> None:
     # (pg_enum_type, new_value)
     # NOTE: SQLAlchemy persists the enum member NAME (uppercase), not the .value
     _NEW_ENUM_VALUES = [
+        ("productstatus", "NOT_FOUND"),
         ("productstatus", "OUT_OF_STOCK"),
     ]
 
