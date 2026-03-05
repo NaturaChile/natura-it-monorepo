@@ -20,6 +20,7 @@ class ProductIn(BaseModel):
 class ProductOut(BaseModel):
     id: int
     product_code: str
+    product_name: Optional[str] = None
     quantity: int
     status: ProductStatus
     error_message: Optional[str] = None

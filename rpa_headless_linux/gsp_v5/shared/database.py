@@ -74,6 +74,7 @@ def init_db() -> None:
     from shared.models import Base  # noqa: ensure models are imported
     Base.metadata.create_all(bind=get_engine())
     _migrate_enums()
+    _migrate_columns()
 
 
 def _migrate_enums() -> None:
@@ -101,3 +102,20 @@ def _migrate_enums() -> None:
                 ), {"val": new_value})
             except Exception:
                 pass  # Value already exists or older PostgreSQL without IF NOT EXISTS
+
+
+def _migrate_columns() -> None:
+    """Add new columns to existing tables if they don't already exist."""
+    engine = get_engine()
+    _NEW_COLUMNS = [
+        ("order_products", "product_name", "VARCHAR(255)"),
+    ]
+    with engine.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        for table, column, col_type in _NEW_COLUMNS:
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"
+                ))
+            except Exception:
+                pass

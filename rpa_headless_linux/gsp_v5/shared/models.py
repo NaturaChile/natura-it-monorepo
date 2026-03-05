@@ -111,6 +111,7 @@ class OrderProduct(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     product_code = Column(String(50), nullable=False)
+    product_name = Column(String(255), nullable=True)
     quantity = Column(Integer, nullable=False, default=1)
     status = Column(Enum(ProductStatus), default=ProductStatus.PENDING, nullable=False)
     error_message = Column(Text, nullable=True)
