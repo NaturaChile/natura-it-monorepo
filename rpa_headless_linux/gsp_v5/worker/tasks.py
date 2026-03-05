@@ -201,6 +201,15 @@ def process_order(self, order_id: int) -> dict:
         added_codes = {a["product_code"] for a in result.get("products_added", [])}
         failed_items = {f["product_code"]: f.get("error", "") for f in result.get("products_failed", [])}
 
+        # Build code → name mapping from bot results
+        product_names = {}
+        for item in result.get("products_added", []):
+            if item.get("name"):
+                product_names[item["product_code"]] = item["name"]
+        for item in result.get("products_failed", []):
+            if item.get("name"):
+                product_names[item["product_code"]] = item["name"]
+
         _record_log(db, order_id, "verify_cart",
                     f"Cart verification: {len(added_codes)} in cart, {len(failed_items)} failed. "
                     f"Added: {sorted(added_codes)}, Failed: {sorted(failed_items.keys())}",
@@ -212,6 +221,10 @@ def process_order(self, order_id: int) -> dict:
                     })
 
         for p in products:
+            # Persist product name scraped from cart DOM
+            if p.product_code in product_names:
+                p.product_name = product_names[p.product_code]
+
             if p.product_code in added_codes:
                 p.status = ProductStatus.ADDED
                 p.added_at = datetime.now(timezone.utc)
