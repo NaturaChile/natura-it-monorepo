@@ -2,16 +2,11 @@
 Plantillas HTML de correo para GSP Bot v5.
 
 3 niveles de notificación:
-  1. Consultora  — notificación individual de carrito listo
+  1. Consultora  — notificación individual (Completo o Parcialmente Completo)
   2. Líder       — resumen de su sector (tabla por consultora)
   3. Gerente     — resumen gerencial (tabla por líder/sector)
 
-⚠️  INACTIVO — estas funciones solo generan HTML.
-    No envían correos ni están conectadas al proceso principal.
-
-Placeholders pendientes de definir:
-  - De dónde se obtiene `consultora_nombre`, `cb`, `ciclo`, etc.
-  - Si se usa Celery results, BD, o archivo de input como fuente.
+Fuente de datos: DB orders/products + CSV consultoras_matriz.csv
 """
 
 from typing import Dict, List, Optional
@@ -81,58 +76,158 @@ def _wrapper_close() -> str:
 # 1. PLANTILLA CONSULTORA  (Notificación individual)
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 1. PLANTILLA CONSULTORA  (Notificación individual)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _build_product_rows(products: List[Dict[str, str]], status_filter: str) -> str:
+    """Build <tr> rows for a product table filtered by status."""
+    rows = ""
+    for p in products:
+        if p.get("status") != status_filter:
+            continue
+        code = p.get("product_code", "—")
+        name = p.get("product_name") or "—"
+        if status_filter == "ok":
+            icon = "✓"
+            style = "color: #2e7d32; font-weight: bold;"
+        else:
+            icon = "✗"
+            style = "color: #c62828; font-weight: bold;"
+        reason = p.get("error_message", "") if status_filter != "ok" else ""
+        rows += f"""                    <tr>
+                      <td style="border: 1px solid #ddd;">{code}</td>
+                      <td style="border: 1px solid #ddd;">{name}</td>
+                      <td style="border: 1px solid #ddd; text-align: center; {style}">{icon}</td>
+"""
+        if status_filter != "ok":
+            rows += f"""                      <td style="border: 1px solid #ddd; font-size: 12px; color: #777;">{reason}</td>
+"""
+        rows += """                    </tr>
+"""
+    return rows
+
+
 def build_consultora_email(
     consultora_nombre: str,
     cb: str,
-    ciclo: str,
     lider_nombre: str,
+    products: Optional[List[Dict[str, str]]] = None,
+    is_partial: bool = False,
     evento: str = "Preventa del Día de las Madres",
 ) -> str:
     """
     Genera el HTML de notificación individual para una consultora.
 
-    Le avisa que su carrito fue cargado exitosamente y que debe
-    ingresar a finalizar su compra.
-
     Args:
         consultora_nombre: Nombre completo de la consultora.
         cb: Código de negocio (CB) de la consultora.
-        ciclo: Ciclo de la preventa (ej: "05-2026").
         lider_nombre: Nombre de su Líder de Negocio.
+        products: Lista de dicts {product_code, product_name, status, error_message}.
+                  status = "ok" | "failed". Si None, no muestra tabla.
+        is_partial: True si el carrito quedó parcialmente completo.
         evento: Nombre del evento/campaña.
 
     Returns:
         String HTML completo listo para enviar.
-
-    Ejemplo::
-
-        html = build_consultora_email(
-            consultora_nombre="Maria Alejandra Celedon",
-            cb="2373",
-            ciclo="05-2026",
-            lider_nombre="Constanza Acevedo",
-        )
     """
+    if is_partial and products:
+        # ── Parcialmente Completo ──
+        ok_rows = _build_product_rows(products, "ok")
+        fail_rows = _build_product_rows(products, "failed")
+        ok_count = sum(1 for p in products if p.get("status") == "ok")
+        fail_count = sum(1 for p in products if p.get("status") == "failed")
+
+        products_section = f"""
+              <div style="background-color: #fff3e0; border-left: 4px solid #ff9800; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                <p style="margin: 0; color: #e65100;">
+                  <strong>Tu carrito se cargó de forma parcial.</strong> Algunos de los
+                  productos que elegiste durante el evento
+                  no estaban disponibles al momento de la carga.
+                  <br><br>
+                  Revisa el detalle a continuación y comunícate con tu Líder si
+                  necesitas ayuda con algún cambio.
+                </p>
+              </div>
+
+              <h3 style="color: #2e7d32; margin-bottom: 8px;">Productos cargados ({ok_count})</h3>
+              <div style="overflow-x: auto; margin-bottom: 20px;">
+                <table width="100%" border="0" cellspacing="0" cellpadding="8"
+                       style="border-collapse: collapse; font-size: 13px;">
+                  <thead>
+                    <tr style="background-color: #4caf50; color: #ffffff;">
+                      <th style="border: 1px solid #ddd;">Código</th>
+                      <th style="border: 1px solid #ddd;">Producto</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+{ok_rows}                  </tbody>
+                </table>
+              </div>
+
+              <h3 style="color: #c62828; margin-bottom: 8px;">Productos no disponibles ({fail_count})</h3>
+              <div style="overflow-x: auto; margin-bottom: 20px;">
+                <table width="100%" border="0" cellspacing="0" cellpadding="8"
+                       style="border-collapse: collapse; font-size: 13px;">
+                  <thead>
+                    <tr style="background-color: #e53935; color: #ffffff;">
+                      <th style="border: 1px solid #ddd;">Código</th>
+                      <th style="border: 1px solid #ddd;">Producto</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Estado</th>
+                      <th style="border: 1px solid #ddd;">Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+{fail_rows}                  </tbody>
+                </table>
+              </div>"""
+    else:
+        # ── Completo ──
+        products_section = f"""
+              <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
+                <p style="margin: 0; color: #2e7d32;">
+                  <strong>¡Excelente noticia!</strong> Ya hemos cargado exitosamente en tu
+                  carrito los increíbles productos que elegiste durante el evento.
+                  <br><br>
+                  Solo debes ingresar a tu cuenta y finalizar tu compra para asegurar
+                  tus regalos.
+                </p>
+              </div>"""
+
+        # Optional product detail table for complete orders
+        if products:
+            ok_rows = _build_product_rows(products, "ok")
+            products_section += f"""
+
+              <h3 style="color: #2e7d32; margin-bottom: 8px;">Productos en tu carrito</h3>
+              <div style="overflow-x: auto; margin-bottom: 20px;">
+                <table width="100%" border="0" cellspacing="0" cellpadding="8"
+                       style="border-collapse: collapse; font-size: 13px;">
+                  <thead>
+                    <tr style="background-color: #4caf50; color: #ffffff;">
+                      <th style="border: 1px solid #ddd;">Código</th>
+                      <th style="border: 1px solid #ddd;">Producto</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+{ok_rows}                  </tbody>
+                </table>
+              </div>"""
+
+    title = "Tu carrito se cargó parcialmente ⚠️" if is_partial else "¡Tu carrito está listo! 🎁"
+
     return f"""{_wrapper_open()}
 
           {_header_block()}
 
           <tr>
             <td style="padding: 30px; color: #333333; line-height: 1.6;">
-              <h2 style="color: #F47920; margin-top: 0; text-align: center;">¡Tu carrito está listo! 🎁</h2>
+              <h2 style="color: {'#ff9800' if is_partial else '#F47920'}; margin-top: 0; text-align: center;">{title}</h2>
               <p>Hola <strong>{consultora_nombre}</strong> (CB: {cb}),</p>
               <p>¡Gracias por participar en nuestro Live Shopping de la {evento}!</p>
-
-              <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
-                <p style="margin: 0; color: #2e7d32;">
-                  <strong>¡Excelente noticia!</strong> Ya hemos cargado exitosamente en tu
-                  carrito los increíbles productos que elegiste durante el evento
-                  (Ciclo <strong>{ciclo}</strong>).
-                  <br><br>
-                  Solo debes ingresar a tu cuenta y finalizar tu compra para asegurar
-                  tus regalos.
-                </p>
-              </div>
+{products_section}
 
               <p style="margin-bottom: 0;">
                 Si tienes alguna duda o necesitas ayuda, por favor comunícate con tu
@@ -160,7 +255,7 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
     Cada dict debe tener:
         cb:                código de negocio
         consultora_nombre: nombre completo
-        estado:            "Cargado" | "No Cargado"
+        estado:            "Completo" | "Parcialmente Completo"
     """
     rows_html = ""
     for c in consultoras:
@@ -168,10 +263,10 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
         nombre = c.get("consultora_nombre", "—")
         estado = c.get("estado", "—")
 
-        if estado.lower() == "cargado":
+        if estado == "Completo":
             estado_style = "color: #2e7d32; font-weight: bold;"
         else:
-            estado_style = "color: #c62828; font-weight: bold;"
+            estado_style = "color: #e65100; font-weight: bold;"
 
         rows_html += f"""                    <tr>
                       <td style="border: 1px solid #ddd;">{cb}</td>
@@ -185,8 +280,8 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
 def build_lider_email(
     lider_nombre: str,
     nombre_sector: str,
-    total_exitosos: int,
-    total_errores: int,
+    total_completos: int,
+    total_parciales: int,
     consultoras: List[Dict[str, str]],
     evento: str = "Preventa del Día de las Madres",
 ) -> str:
@@ -196,26 +291,14 @@ def build_lider_email(
     Args:
         lider_nombre: Nombre de la líder.
         nombre_sector: Nombre del sector.
-        total_exitosos: Cantidad de carritos cargados correctamente.
-        total_errores: Cantidad que requieren apoyo.
-        consultoras: Lista de dicts con {cb, consultora_nombre, estado}.
+        total_completos: Carritos 100% cargados.
+        total_parciales: Carritos parcialmente completos.
+        consultoras: Lista de dicts {cb, consultora_nombre, estado}.
+                     estado = "Completo" | "Parcialmente Completo"
         evento: Nombre del evento/campaña.
 
     Returns:
         String HTML completo.
-
-    Ejemplo::
-
-        html = build_lider_email(
-            lider_nombre="Constanza Acevedo",
-            nombre_sector="Acacia",
-            total_exitosos=15,
-            total_errores=2,
-            consultoras=[
-                {"cb": "2373", "consultora_nombre": "Maria Celedon", "estado": "Cargado"},
-                {"cb": "4165", "consultora_nombre": "Angelina Cortes", "estado": "No Cargado"},
-            ],
-        )
     """
     rows = _build_lider_rows(consultoras)
 
@@ -238,18 +321,18 @@ def build_lider_email(
               <table width="100%" style="margin-bottom: 20px; text-align: center;">
                 <tr>
                   <td style="background-color: #e8f5e9; color: #2e7d32; padding: 10px; border-radius: 4px; width: 48%;">
-                    <strong>{total_exitosos}</strong><br>Carritos Listos
+                    <strong>{total_completos}</strong><br>Completos
                   </td>
                   <td style="width: 4%;"></td>
-                  <td style="background-color: #ffebee; color: #c62828; padding: 10px; border-radius: 4px; width: 48%;">
-                    <strong>{total_errores}</strong><br>Requieren Apoyo
+                  <td style="background-color: #fff3e0; color: #e65100; padding: 10px; border-radius: 4px; width: 48%;">
+                    <strong>{total_parciales}</strong><br>Parcialmente Completos
                   </td>
                 </tr>
               </table>
 
               <p style="font-size: 14px;">
-                Revisa el detalle a continuación para ayudar a las consultoras que
-                tuvieron inconvenientes con la carga de su carrito:
+                Revisa el detalle a continuación. Las consultoras con carrito
+                parcial tuvieron productos sin stock al momento de la carga:
               </p>
 
               <div style="overflow-x: auto;">
@@ -283,25 +366,25 @@ def _build_gerente_rows(lideres: List[Dict[str, str]]) -> str:
     Genera filas <tr> de la tabla del gerente.
 
     Cada dict debe tener:
-        lider_nombre:    nombre de la líder
-        nombre_sector:   nombre del sector
-        carritos_listos: int
-        no_cargados:     int
+        lider_nombre:      nombre de la líder
+        nombre_sector:     nombre del sector
+        completos:         int
+        parciales:         int
     """
     rows_html = ""
     for l in lideres:
         nombre = l.get("lider_nombre", "—")
         sector = l.get("nombre_sector", "—")
-        listos = l.get("carritos_listos", 0)
-        fallidos = l.get("no_cargados", 0)
+        completos = l.get("completos", 0)
+        parciales = l.get("parciales", 0)
 
         rows_html += f"""                    <tr>
                       <td style="border: 1px solid #ddd;">
                         <strong>{nombre}</strong><br>
                         <span style="font-size: 12px; color: #777;">Sector: {sector}</span>
                       </td>
-                      <td style="border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: bold;">{listos}</td>
-                      <td style="border: 1px solid #ddd; text-align: center; color: #c62828;">{fallidos}</td>
+                      <td style="border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: bold;">{completos}</td>
+                      <td style="border: 1px solid #ddd; text-align: center; color: #e65100; font-weight: bold;">{parciales}</td>
                     </tr>
 """
     return rows_html
@@ -319,24 +402,11 @@ def build_gerente_email(
     Args:
         gn_nombre: Nombre del Gerente de Negocio.
         nombre_gerencia: Nombre de la gerencia.
-        lideres: Lista de dicts con {lider_nombre, nombre_sector, carritos_listos, no_cargados}.
+        lideres: Lista de dicts {lider_nombre, nombre_sector, completos, parciales}.
         evento: Nombre del evento/campaña.
 
     Returns:
         String HTML completo.
-
-    Ejemplo::
-
-        html = build_gerente_email(
-            gn_nombre="Carolina Mendez",
-            nombre_gerencia="Gerencia Sur",
-            lideres=[
-                {"lider_nombre": "Constanza Acevedo", "nombre_sector": "Acacia",
-                 "carritos_listos": 15, "no_cargados": 2},
-                {"lider_nombre": "Maryorie Cortes", "nombre_sector": "Acacia",
-                 "carritos_listos": 8,  "no_cargados": 0},
-            ],
-        )
     """
     rows = _build_gerente_rows(lideres)
 
@@ -356,8 +426,8 @@ def build_gerente_email(
               </p>
 
               <p style="font-size: 14px;">
-                A continuación, el detalle de cuántos carritos logramos dejar listos
-                para compra por cada una de tus líderes:
+                A continuación, el detalle por cada una de tus líderes. Los carritos
+                "parciales" tuvieron productos sin stock al momento de la carga:
               </p>
 
               <div style="overflow-x: auto; margin-top: 20px;">
@@ -366,8 +436,8 @@ def build_gerente_email(
                   <thead>
                     <tr style="background-color: #6c757d; color: #ffffff; text-align: left;">
                       <th style="border: 1px solid #ddd;">Líder / Sector</th>
-                      <th style="border: 1px solid #ddd; text-align: center;">Carritos Listos</th>
-                      <th style="border: 1px solid #ddd; text-align: center;">No Cargados</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Completos</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Parciales</th>
                     </tr>
                   </thead>
                   <tbody>

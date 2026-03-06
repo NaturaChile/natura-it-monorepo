@@ -138,3 +138,33 @@ class SystemStats(BaseModel):
     total_orders_in_progress: int
     total_orders_completed: int
     total_orders_failed: int
+
+
+# ── Email ─────────────────────────────────────
+
+class EmailConsultoraSummary(BaseModel):
+    sent: int = 0
+    skipped_no_email: int = 0
+    skipped_failed: int = 0
+    skipped_not_in_csv: int = 0
+
+
+class EmailLevelSummary(BaseModel):
+    sent: int = 0
+
+
+class EmailError(BaseModel):
+    level: str
+    cb: Optional[str] = None
+    nombre: Optional[str] = None
+    email: Optional[str] = None
+    error: str
+
+
+class EmailSendResult(BaseModel):
+    batch_id: int
+    consultoras: EmailConsultoraSummary = EmailConsultoraSummary()
+    lideres: EmailLevelSummary = EmailLevelSummary()
+    gerentes: EmailLevelSummary = EmailLevelSummary()
+    errors: list[EmailError] = []
+    error: Optional[str] = None

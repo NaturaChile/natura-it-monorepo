@@ -2,59 +2,23 @@
 """
 Orquestador de envío de correos para GSP Bot v5.
 
-Envía notificaciones a 3 niveles después de un proceso de carga de carritos:
-  1. Consultora  → "Tu carrito está listo" (individual)
+Envía notificaciones a 3 niveles después de un batch completado:
+  1. Consultora  → "Tu carrito está listo" o "Parcialmente completo"
   2. Líder       → Resumen de su sector (tabla de consultoras)
   3. Gerente     → Reporte gerencial (tabla de líderes)
 
-⚠️  INACTIVO — no conectado al proceso principal.
-    Para usar, llamar manualmente o integrar en api.py / tasks.py.
-
-Uso CLI (standalone):
-    python -m shared.email.send_emails --preview           # Genera HTMLs de preview
-    python -m shared.email.send_emails --test ana@test.cl   # Envía test real
-    python -m shared.email.send_emails --token-status       # Verifica token
-
-Uso programático::
-
-    from shared.email.send_emails import EmailOrchestrator
-
-    orch = EmailOrchestrator()
-
-    # Enviar a una consultora
-    orch.send_consultora(
-        to="consultora@natura.cl",
-        consultora_nombre="Maria Celedon",
-        cb="2373",
-        ciclo="05-2026",
-        lider_nombre="Constanza Acevedo",
-    )
-
-    # Enviar resumen a líder
-    orch.send_lider(
-        to="lider@natura.cl",
-        lider_nombre="Constanza Acevedo",
-        nombre_sector="Acacia",
-        total_exitosos=15,
-        total_errores=2,
-        consultoras=[...],
-    )
-
-    # Enviar reporte a gerente
-    orch.send_gerente(
-        to="gerente@natura.cl",
-        gn_nombre="Carolina Mendez",
-        nombre_gerencia="Gerencia Sur",
-        lideres=[...],
-    )
+Uso:
+    POST /batches/{batch_id}/send-emails  →  send_batch_notifications(batch_id)
 """
 
-import argparse
+import csv
 import logging
 import sys
-from datetime import datetime
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Union
+
+from sqlalchemy.orm import Session
 
 # Asegurar que el root de gsp_v5 esté en sys.path
 _gsp_root = Path(__file__).resolve().parents[2]
@@ -70,142 +34,116 @@ from shared.email.templates import (
 
 logger = logging.getLogger(__name__)
 
+# ── CSV loader ────────────────────────────────
+
+_MATRIZ_PATH = Path(__file__).resolve().parents[2] / "data" / "consultoras_matriz.csv"
+
+
+def _load_consultora_matriz(path: Path = _MATRIZ_PATH) -> Dict[str, dict]:
+    """
+    Load consultoras_matriz.csv into a dict keyed by CB (consultora_code).
+
+    Returns:
+        {cb_str: {nombre, mail_cb, nombre_lider, mail_lider, nombre_sector,
+                  nombre_gn, mail_gn, nombre_gerencia, color}}
+    """
+    result = {}
+    with open(path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            cb = row.get("CB", "").strip()
+            if not cb:
+                continue
+            result[cb] = {
+                "nombre": row.get("Nombre", "").strip(),
+                "mail_cb": row.get("MAIL CB", "").strip(),
+                "nombre_lider": row.get("Nombre Lider", "").strip(),
+                "mail_lider": row.get("Mail lider", "").strip(),
+                "nombre_sector": row.get("Nombre Setor", "").strip(),
+                "nombre_gn": row.get("Nombre GN", "").strip(),
+                "mail_gn": row.get("Mail GN", "").strip(),
+                "nombre_gerencia": row.get("Nombre Gerencia", "").strip(),
+                "color": row.get("Color", "").strip(),
+            }
+    logger.info("Loaded %d consultoras from matriz CSV", len(result))
+    return result
+
+
+# ── EmailOrchestrator (low-level send wrappers) ──
+
 
 class EmailOrchestrator:
-    """
-    Orquestador que combina GmailSender + Templates HTML.
-
-    Provee métodos de alto nivel para cada tipo de notificación,
-    ocultando la complejidad de auth, templates y envío.
-    """
+    """Combines GmailSender + HTML templates for each notification level."""
 
     def __init__(self, token_path: Optional[str] = None):
-        """
-        Args:
-            token_path: Ruta al token.json. Default: shared/email/token.json
-        """
         self._sender = GmailSender(token_path=token_path)
 
     @property
     def sender(self) -> GmailSender:
-        """Acceso directo al GmailSender (para operaciones avanzadas)."""
         return self._sender
 
-    # ------------------------------------------------------------------
-    # 1. Envío individual a Consultora
-    # ------------------------------------------------------------------
+    # 1. Consultora
     def send_consultora(
         self,
         to: Union[str, List[str]],
         consultora_nombre: str,
         cb: str,
-        ciclo: str,
         lider_nombre: str,
+        products: Optional[List[Dict]] = None,
+        is_partial: bool = False,
         evento: str = "Preventa del Día de las Madres",
         cc: Optional[Union[str, List[str]]] = None,
         subject: Optional[str] = None,
     ) -> dict:
-        """
-        Envía notificación individual a una consultora.
-
-        Args:
-            to: Email de la consultora.
-            consultora_nombre: Nombre completo.
-            cb: Código de negocio.
-            ciclo: Ciclo de campaña (ej: "05-2026").
-            lider_nombre: Nombre de su líder.
-            evento: Nombre del evento/campaña.
-            cc: Emails en copia (opcional).
-            subject: Asunto personalizado (default: auto-generado).
-
-        Returns:
-            dict con resultado del envío.
-        """
         html = build_consultora_email(
             consultora_nombre=consultora_nombre,
             cb=cb,
-            ciclo=ciclo,
             lider_nombre=lider_nombre,
+            products=products,
+            is_partial=is_partial,
             evento=evento,
         )
-
         if subject is None:
-            subject = f"🎁 ¡Tu carrito del Live Shopping está listo! - CB {cb}"
+            if is_partial:
+                subject = f"⚠️ Tu carrito del Live Shopping se cargó parcialmente - CB {cb}"
+            else:
+                subject = f"🎁 ¡Tu carrito del Live Shopping está listo! - CB {cb}"
 
-        result = self._sender.send(
-            to=to,
-            subject=subject,
-            html_body=html,
-            cc=cc,
-        )
-        logger.info(
-            "Correo consultora enviado → %s (CB: %s)", consultora_nombre, cb
-        )
+        result = self._sender.send(to=to, subject=subject, html_body=html, cc=cc)
+        logger.info("Correo consultora → %s (CB: %s, parcial=%s)", consultora_nombre, cb, is_partial)
         return result
 
-    # ------------------------------------------------------------------
-    # 2. Envío de resumen a Líder
-    # ------------------------------------------------------------------
+    # 2. Líder
     def send_lider(
         self,
         to: Union[str, List[str]],
         lider_nombre: str,
         nombre_sector: str,
-        total_exitosos: int,
-        total_errores: int,
+        total_completos: int,
+        total_parciales: int,
         consultoras: List[Dict[str, str]],
         evento: str = "Preventa del Día de las Madres",
         cc: Optional[Union[str, List[str]]] = None,
         subject: Optional[str] = None,
     ) -> dict:
-        """
-        Envía resumen de sector a una líder.
-
-        Args:
-            to: Email de la líder.
-            lider_nombre: Nombre de la líder.
-            nombre_sector: Nombre del sector.
-            total_exitosos: Carritos cargados OK.
-            total_errores: Carritos con problemas.
-            consultoras: Lista de dicts {cb, consultora_nombre, estado}.
-            evento: Nombre del evento.
-            cc: Emails en copia (opcional).
-            subject: Asunto personalizado.
-
-        Returns:
-            dict con resultado del envío.
-        """
         html = build_lider_email(
             lider_nombre=lider_nombre,
             nombre_sector=nombre_sector,
-            total_exitosos=total_exitosos,
-            total_errores=total_errores,
+            total_completos=total_completos,
+            total_parciales=total_parciales,
             consultoras=consultoras,
             evento=evento,
         )
-
         if subject is None:
             subject = (
                 f"🌸 Resultados Live Shopping - Sector {nombre_sector} "
-                f"({total_exitosos} listos, {total_errores} pendientes)"
+                f"({total_completos} completos, {total_parciales} parciales)"
             )
-
-        result = self._sender.send(
-            to=to,
-            subject=subject,
-            html_body=html,
-            cc=cc,
-        )
-        logger.info(
-            "Correo líder enviado → %s (Sector: %s, %d/%d)",
-            lider_nombre, nombre_sector, total_exitosos,
-            total_exitosos + total_errores,
-        )
+        result = self._sender.send(to=to, subject=subject, html_body=html, cc=cc)
+        logger.info("Correo líder → %s (Sector: %s)", lider_nombre, nombre_sector)
         return result
 
-    # ------------------------------------------------------------------
-    # 3. Envío de reporte a Gerente
-    # ------------------------------------------------------------------
+    # 3. Gerente
     def send_gerente(
         self,
         to: Union[str, List[str]],
@@ -216,305 +154,218 @@ class EmailOrchestrator:
         cc: Optional[Union[str, List[str]]] = None,
         subject: Optional[str] = None,
     ) -> dict:
-        """
-        Envía reporte gerencial.
-
-        Args:
-            to: Email del gerente.
-            gn_nombre: Nombre del gerente.
-            nombre_gerencia: Nombre de la gerencia.
-            lideres: Lista de dicts {lider_nombre, nombre_sector, carritos_listos, no_cargados}.
-            evento: Nombre del evento.
-            cc: Emails en copia (opcional).
-            subject: Asunto personalizado.
-
-        Returns:
-            dict con resultado del envío.
-        """
         html = build_gerente_email(
             gn_nombre=gn_nombre,
             nombre_gerencia=nombre_gerencia,
             lideres=lideres,
             evento=evento,
         )
-
-        total_ok = sum(l.get("carritos_listos", 0) for l in lideres)
-        total_fail = sum(l.get("no_cargados", 0) for l in lideres)
-
+        total_ok = sum(l.get("completos", 0) for l in lideres)
+        total_parcial = sum(l.get("parciales", 0) for l in lideres)
         if subject is None:
             subject = (
                 f"📈 Reporte Live Shopping - {nombre_gerencia} "
-                f"({total_ok} listos, {total_fail} pendientes)"
+                f"({total_ok} completos, {total_parcial} parciales)"
             )
-
-        result = self._sender.send(
-            to=to,
-            subject=subject,
-            html_body=html,
-            cc=cc,
-        )
-        logger.info(
-            "Correo gerente enviado → %s (Gerencia: %s, %d OK / %d fail)",
-            gn_nombre, nombre_gerencia, total_ok, total_fail,
-        )
+        result = self._sender.send(to=to, subject=subject, html_body=html, cc=cc)
+        logger.info("Correo gerente → %s (Gerencia: %s)", gn_nombre, nombre_gerencia)
         return result
 
-    # ------------------------------------------------------------------
-    # Envío masivo (los 3 niveles en lote)
-    # ------------------------------------------------------------------
-    def send_all_notifications(
-        self,
-        consultoras_data: List[dict],
-        lideres_data: List[dict],
-        gerentes_data: List[dict],
-    ) -> dict:
-        """
-        Envía todas las notificaciones para un proceso completo.
 
-        Args:
-            consultoras_data: Lista de dicts con keys:
-                email, consultora_nombre, cb, ciclo, lider_nombre
-            lideres_data: Lista de dicts con keys:
-                email, lider_nombre, nombre_sector, total_exitosos,
-                total_errores, consultoras (list)
-            gerentes_data: Lista de dicts con keys:
-                email, gn_nombre, nombre_gerencia, lideres (list)
+# ═══════════════════════════════════════════════════════════════════════════
+# BATCH NOTIFICATION — main entry point for the endpoint
+# ═══════════════════════════════════════════════════════════════════════════
 
-        Returns:
-            dict con resumen {consultoras, lideres, gerentes} cada uno con
-            {total, sent, failed}
-        """
-        summary = {"consultoras": [], "lideres": [], "gerentes": []}
+def send_batch_notifications(
+    batch_id: int,
+    db: Session,
+    evento: str = "Preventa del Día de las Madres",
+) -> dict:
+    """
+    Send email notifications for a completed batch at 3 levels.
 
-        # 1. Consultoras
-        logger.info("Enviando %d correos a consultoras...", len(consultoras_data))
-        for c in consultoras_data:
-            try:
-                result = self.send_consultora(
-                    to=c["email"],
-                    consultora_nombre=c["consultora_nombre"],
-                    cb=c["cb"],
-                    ciclo=c["ciclo"],
-                    lider_nombre=c["lider_nombre"],
-                )
-                summary["consultoras"].append({"email": c["email"], "status": "sent"})
-            except Exception as e:
-                logger.error("Error consultora %s: %s", c.get("email"), e)
-                summary["consultoras"].append(
-                    {"email": c.get("email"), "status": "error", "error": str(e)}
-                )
+    1. Loads consultoras_matriz.csv
+    2. Queries orders + products for the batch
+    3. Cross-references orders with CSV by consultora_code == CB
+    4. Sends consultora emails (Completo or Parcialmente Completo)
+    5. Aggregates by líder → sends líder emails
+    6. Aggregates by GN → sends gerente emails
 
-        # 2. Líderes
-        logger.info("Enviando %d correos a líderes...", len(lideres_data))
-        for l in lideres_data:
-            try:
-                result = self.send_lider(
-                    to=l["email"],
-                    lider_nombre=l["lider_nombre"],
-                    nombre_sector=l["nombre_sector"],
-                    total_exitosos=l["total_exitosos"],
-                    total_errores=l["total_errores"],
-                    consultoras=l["consultoras"],
-                )
-                summary["lideres"].append({"email": l["email"], "status": "sent"})
-            except Exception as e:
-                logger.error("Error líder %s: %s", l.get("email"), e)
-                summary["lideres"].append(
-                    {"email": l.get("email"), "status": "error", "error": str(e)}
-                )
+    Orders with status FAILED are skipped (no email sent).
 
-        # 3. Gerentes
-        logger.info("Enviando %d correos a gerentes...", len(gerentes_data))
-        for g in gerentes_data:
-            try:
-                result = self.send_gerente(
-                    to=g["email"],
-                    gn_nombre=g["gn_nombre"],
-                    nombre_gerencia=g["nombre_gerencia"],
-                    lideres=g["lideres"],
-                )
-                summary["gerentes"].append({"email": g["email"], "status": "sent"})
-            except Exception as e:
-                logger.error("Error gerente %s: %s", g.get("email"), e)
-                summary["gerentes"].append(
-                    {"email": g.get("email"), "status": "error", "error": str(e)}
-                )
+    Returns:
+        Summary dict with counts per level + error list.
+    """
+    from shared.models import Batch, Order, OrderProduct, OrderStatus, ProductStatus
 
-        # Resumen
-        for nivel in ["consultoras", "lideres", "gerentes"]:
-            total = len(summary[nivel])
-            sent = sum(1 for r in summary[nivel] if r["status"] == "sent")
-            failed = total - sent
-            logger.info(
-                "%s: %d/%d enviados, %d fallidos",
-                nivel.title(), sent, total, failed,
+    # ── 1. Validate batch ──
+    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not batch:
+        return {"error": f"Batch {batch_id} not found"}
+
+    # ── 2. Load matriz CSV ──
+    try:
+        matriz = _load_consultora_matriz()
+    except FileNotFoundError:
+        return {"error": f"consultoras_matriz.csv not found at {_MATRIZ_PATH}"}
+
+    # ── 3. Query orders ──
+    orders = (
+        db.query(Order)
+        .filter(Order.batch_id == batch_id)
+        .all()
+    )
+    if not orders:
+        return {"error": f"No orders found in batch {batch_id}"}
+
+    orch = EmailOrchestrator()
+
+    summary = {
+        "batch_id": batch_id,
+        "consultoras": {"sent": 0, "skipped_no_email": 0, "skipped_failed": 0, "skipped_not_in_csv": 0},
+        "lideres": {"sent": 0},
+        "gerentes": {"sent": 0},
+        "errors": [],
+    }
+
+    # ── 4. Process each order → consultora emails ──
+    # Also collect data for líder / gerente aggregation
+    lider_groups = defaultdict(lambda: {"consultoras": [], "completos": 0, "parciales": 0})
+    gerente_groups = defaultdict(lambda: {"lideres_set": set()})
+
+    for order in orders:
+        cb = order.consultora_code
+
+        # Skip FAILED orders
+        if order.status == OrderStatus.FAILED:
+            summary["consultoras"]["skipped_failed"] += 1
+            logger.info("Skipped FAILED order %d (CB: %s)", order.id, cb)
+            continue
+
+        # Look up in CSV
+        csv_row = matriz.get(cb)
+        if not csv_row:
+            summary["consultoras"]["skipped_not_in_csv"] += 1
+            logger.warning("CB %s not found in consultoras_matriz.csv — skipped", cb)
+            continue
+
+        email = csv_row["mail_cb"]
+        if not email:
+            summary["consultoras"]["skipped_no_email"] += 1
+            logger.warning("CB %s (%s) has no email in CSV — skipped", cb, csv_row["nombre"])
+            continue
+
+        # Load products for this order
+        products_db = db.query(OrderProduct).filter(OrderProduct.order_id == order.id).all()
+
+        ok_products = []
+        failed_products = []
+        for p in products_db:
+            if p.status.name == "ADDED":
+                ok_products.append({
+                    "product_code": p.product_code,
+                    "product_name": p.product_name or "",
+                    "status": "ok",
+                    "error_message": "",
+                })
+            else:
+                failed_products.append({
+                    "product_code": p.product_code,
+                    "product_name": p.product_name or "",
+                    "status": "failed",
+                    "error_message": p.error_message or "Sin stock",
+                })
+
+        is_partial = len(failed_products) > 0 and len(ok_products) > 0
+        all_products = ok_products + failed_products
+
+        consultora_nombre = csv_row["nombre"] or order.consultora_name or cb
+        lider_nombre = csv_row["nombre_lider"] or "tu Líder"
+
+        # Send consultora email
+        try:
+            orch.send_consultora(
+                to=email,
+                consultora_nombre=consultora_nombre,
+                cb=cb,
+                lider_nombre=lider_nombre,
+                products=all_products if all_products else None,
+                is_partial=is_partial,
+                evento=evento,
             )
+            summary["consultoras"]["sent"] += 1
+        except Exception as e:
+            logger.error("Error sending to CB %s (%s): %s", cb, email, e)
+            summary["errors"].append({"level": "consultora", "cb": cb, "email": email, "error": str(e)})
 
-        return summary
+        # Aggregate for líder
+        estado = "Parcialmente Completo" if is_partial else "Completo"
+        lider_key = (csv_row["mail_lider"], csv_row["nombre_lider"], csv_row["nombre_sector"])
+        lider_groups[lider_key]["consultoras"].append({
+            "cb": cb,
+            "consultora_nombre": consultora_nombre,
+            "estado": estado,
+        })
+        if is_partial:
+            lider_groups[lider_key]["parciales"] += 1
+        else:
+            lider_groups[lider_key]["completos"] += 1
 
+        # Track for gerente aggregation
+        gn_key = (csv_row["mail_gn"], csv_row["nombre_gn"], csv_row["nombre_gerencia"])
+        gerente_groups[gn_key]["lideres_set"].add(lider_key)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI: Preview y test
-# ═══════════════════════════════════════════════════════════════════════════
+    # ── 5. Send líder emails ──
+    for (mail_lider, nombre_lider, nombre_sector), data in lider_groups.items():
+        if not mail_lider:
+            logger.warning("Líder '%s' has no email — skipped", nombre_lider)
+            continue
+        try:
+            orch.send_lider(
+                to=mail_lider,
+                lider_nombre=nombre_lider,
+                nombre_sector=nombre_sector,
+                total_completos=data["completos"],
+                total_parciales=data["parciales"],
+                consultoras=data["consultoras"],
+                evento=evento,
+            )
+            summary["lideres"]["sent"] += 1
+        except Exception as e:
+            logger.error("Error sending to líder %s (%s): %s", nombre_lider, mail_lider, e)
+            summary["errors"].append({"level": "lider", "nombre": nombre_lider, "email": mail_lider, "error": str(e)})
 
-_SAMPLE_CONSULTORAS = [
-    {"cb": "2373", "consultora_nombre": "Maria Alejandra Celedon Fuenzalida", "estado": "Cargado"},
-    {"cb": "4165", "consultora_nombre": "Angelina Isabel Cortes Moya", "estado": "No Cargado"},
-    {"cb": "5891", "consultora_nombre": "Carmen Rosa Perez Gutierrez", "estado": "Cargado"},
-]
+    # ── 6. Send gerente emails ──
+    for (mail_gn, nombre_gn, nombre_gerencia), gn_data in gerente_groups.items():
+        if not mail_gn:
+            logger.warning("GN '%s' has no email — skipped", nombre_gn)
+            continue
 
-_SAMPLE_LIDERES = [
-    {"lider_nombre": "Constanza Mariela Acevedo", "nombre_sector": "Acacia",
-     "carritos_listos": 15, "no_cargados": 2},
-    {"lider_nombre": "Maryorie Priscilla Cortes", "nombre_sector": "Acacia",
-     "carritos_listos": 8, "no_cargados": 0},
-]
+        lideres_list = []
+        for lider_key in gn_data["lideres_set"]:
+            lider_data = lider_groups[lider_key]
+            lideres_list.append({
+                "lider_nombre": lider_key[1],
+                "nombre_sector": lider_key[2],
+                "completos": lider_data["completos"],
+                "parciales": lider_data["parciales"],
+            })
 
+        try:
+            orch.send_gerente(
+                to=mail_gn,
+                gn_nombre=nombre_gn,
+                nombre_gerencia=nombre_gerencia,
+                lideres=lideres_list,
+                evento=evento,
+            )
+            summary["gerentes"]["sent"] += 1
+        except Exception as e:
+            logger.error("Error sending to GN %s (%s): %s", nombre_gn, mail_gn, e)
+            summary["errors"].append({"level": "gerente", "nombre": nombre_gn, "email": mail_gn, "error": str(e)})
 
-def _preview_mode(output_dir: str = "."):
-    """Genera las 3 plantillas como archivos HTML para revisar en navegador."""
-    out = Path(output_dir)
-    out.mkdir(parents=True, exist_ok=True)
-
-    # 1. Consultora
-    html1 = build_consultora_email(
-        consultora_nombre="Maria Alejandra Celedon Fuenzalida",
-        cb="2373",
-        ciclo="05-2026",
-        lider_nombre="Constanza Mariela Acevedo",
+    logger.info(
+        "Batch %d email summary: consultoras=%s, lideres=%s, gerentes=%s, errors=%d",
+        batch_id, summary["consultoras"], summary["lideres"], summary["gerentes"], len(summary["errors"]),
     )
-    f1 = out / "preview_consultora.html"
-    f1.write_text(html1, encoding="utf-8")
-
-    # 2. Líder
-    html2 = build_lider_email(
-        lider_nombre="Constanza Mariela Acevedo",
-        nombre_sector="Acacia",
-        total_exitosos=15,
-        total_errores=2,
-        consultoras=_SAMPLE_CONSULTORAS,
-    )
-    f2 = out / "preview_lider.html"
-    f2.write_text(html2, encoding="utf-8")
-
-    # 3. Gerente
-    html3 = build_gerente_email(
-        gn_nombre="Carolina Andrea Mendez Rivera",
-        nombre_gerencia="Gerencia Sur",
-        lideres=_SAMPLE_LIDERES,
-    )
-    f3 = out / "preview_gerente.html"
-    f3.write_text(html3, encoding="utf-8")
-
-    print("═" * 50)
-    print("  PREVIEW GENERADO")
-    print("═" * 50)
-    print(f"  1. {f1}")
-    print(f"  2. {f2}")
-    print(f"  3. {f3}")
-    print()
-    print("  Abre cualquiera en el navegador para ver el resultado.")
-    print("═" * 50)
-
-
-def _test_send(to_email: str, token_path: Optional[str] = None):
-    """Envía las 3 plantillas de ejemplo a un email de prueba."""
-    orch = EmailOrchestrator(token_path=token_path)
-
-    print("═" * 50)
-    print("  ENVÍO DE PRUEBA")
-    print(f"  Destino: {to_email}")
-    print("═" * 50)
-
-    # 1. Consultora
-    print("\n[1/3] Enviando plantilla Consultora...")
-    orch.send_consultora(
-        to=to_email,
-        consultora_nombre="Maria Alejandra Celedon Fuenzalida",
-        cb="2373",
-        ciclo="05-2026",
-        lider_nombre="Constanza Mariela Acevedo",
-    )
-    print("  ✅ Enviado")
-
-    # 2. Líder
-    print("[2/3] Enviando plantilla Líder...")
-    orch.send_lider(
-        to=to_email,
-        lider_nombre="Constanza Mariela Acevedo",
-        nombre_sector="Acacia",
-        total_exitosos=15,
-        total_errores=2,
-        consultoras=_SAMPLE_CONSULTORAS,
-    )
-    print("  ✅ Enviado")
-
-    # 3. Gerente
-    print("[3/3] Enviando plantilla Gerente...")
-    orch.send_gerente(
-        to=to_email,
-        gn_nombre="Carolina Andrea Mendez Rivera",
-        nombre_gerencia="Gerencia Sur",
-        lideres=_SAMPLE_LIDERES,
-    )
-    print("  ✅ Enviado")
-
-    print()
-    print("═" * 50)
-    print(f"  3 correos enviados a {to_email}")
-    print("═" * 50)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Envío de correos GSP Bot v5 — preview y test"
-    )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "--preview", action="store_true",
-        help="Genera archivos HTML de preview (sin enviar)"
-    )
-    group.add_argument(
-        "--test", type=str, metavar="EMAIL",
-        help="Envía las 3 plantillas de ejemplo a este email"
-    )
-    group.add_argument(
-        "--token-status", action="store_true",
-        help="Muestra el estado actual del token"
-    )
-
-    parser.add_argument(
-        "--token-path", type=str, default=None,
-        help="Ruta al token.json (default: shared/email/token.json)"
-    )
-    parser.add_argument(
-        "--output-dir", type=str, default=".",
-        help="Directorio para archivos de preview (default: directorio actual)"
-    )
-
-    args = parser.parse_args()
-
-    # Configurar logging para CLI
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-7s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    if args.preview:
-        _preview_mode(args.output_dir)
-    elif args.test:
-        _test_send(args.test, token_path=args.token_path)
-    elif args.token_status:
-        sender = GmailSender(token_path=args.token_path)
-        status = sender.token_status()
-        print("═" * 50)
-        print("  ESTADO DEL TOKEN")
-        print("═" * 50)
-        for key, value in status.items():
-            print(f"  {key:20s}: {value}")
-        print("═" * 50)
-
-
-if __name__ == "__main__":
-    main()
+    return summary

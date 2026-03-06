@@ -18,6 +18,7 @@ from shared.models import Batch, Order, OrderProduct, OrderLog, OrderStatus, Bat
 from shared.schemas import (
     BatchCreate, BatchOut, BatchDetail, BatchStats,
     OrderOut, OrderLogOut, SystemStats,
+    EmailSendResult,
 )
 from master.orchestrator import Orchestrator
 from master.loader import load_from_csv, load_single_order
@@ -188,6 +189,35 @@ async def cancel_batch(batch_id: int):
 async def retry_batch(batch_id: int):
     """Retry all failed orders in a batch."""
     result = orchestrator.retry_batch_failures(batch_id)
+    return result
+
+
+# ── Batch Email Notifications ─────────────────
+
+@app.post("/batches/{batch_id}/send-emails", response_model=EmailSendResult)
+async def send_batch_emails(
+    batch_id: int,
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+    db: Session = Depends(get_db),
+):
+    """Send email notifications for a completed batch at 3 levels.
+
+    1. Consultora — individual email per order (Completo / Parcialmente Completo)
+    2. Líder — aggregated summary per sector
+    3. Gerente — aggregated summary per gerencia
+
+    Orders with FAILED status are skipped. Consultoras without email in the
+    CSV matriz are skipped with a warning.
+    """
+    from shared.email.send_emails import send_batch_notifications
+
+    result = send_batch_notifications(
+        batch_id=batch_id,
+        db=db,
+        evento=evento,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
     return result
 
 
