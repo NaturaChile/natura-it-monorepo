@@ -2,16 +2,11 @@
 Plantillas HTML de correo para GSP Bot v5.
 
 3 niveles de notificación:
-  1. Consultora  — notificación individual de carrito listo
+  1. Consultora  — notificación individual (Completo o Parcialmente Completo)
   2. Líder       — resumen de su sector (tabla por consultora)
   3. Gerente     — resumen gerencial (tabla por líder/sector)
 
-⚠️  INACTIVO — estas funciones solo generan HTML.
-    No envían correos ni están conectadas al proceso principal.
-
-Placeholders pendientes de definir:
-  - De dónde se obtiene `consultora_nombre`, `cb`, `ciclo`, etc.
-  - Si se usa Celery results, BD, o archivo de input como fuente.
+Fuente de datos: DB orders/products + CSV consultoras_matriz.csv
 """
 
 from typing import Dict, List, Optional
@@ -78,75 +73,432 @@ def _wrapper_close() -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. PLANTILLA CONSULTORA  (Notificación individual)
+# 1. PLANTILLA CONSULTORA  (Diseño Comunicaciones — Día de las Madres)
+#    Template único para carritos completos y parciales.
+#    Imágenes alojadas en GitHub público: NaturaChile/images
 # ═══════════════════════════════════════════════════════════════════════════
+
+_IMG_BASE = "https://raw.githubusercontent.com/NaturaChile/images/main"
+
+# ── Template HTML (str.replace para evitar conflictos con {} de CSS) ─────
+
+_CONSULTORA_TEMPLATE = """<!DOCTYPE html>
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" lang="es">
+<head>
+<title></title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--[if mso]>
+<xml><w:WordDocument xmlns:w="urn:schemas-microsoft-com:office:word"><w:DontUseAdvancedTypographyReadingMail/></w:WordDocument>
+<o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch><o:AllowPNG/></o:OfficeDocumentSettings></xml>
+<![endif]-->
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; }
+a[x-apple-data-detectors] { color: inherit !important; text-decoration: inherit !important; }
+#MessageViewBody a { color: inherit; text-decoration: none; }
+p { line-height: inherit; }
+.desktop_hide, .desktop_hide table { mso-hide: all; display: none; max-height: 0px; overflow: hidden; }
+.image_block img+div { display: none; }
+sup, sub { font-size: 75%; line-height: 0; }
+@media (max-width:620px) {
+  .mobile_hide { display: none; }
+  .row-content { width: 100% !important; }
+  .stack .column { width: 100%; display: block; }
+  .mobile_hide { min-height: 0; max-height: 0; max-width: 0; overflow: hidden; font-size: 0px; }
+  .desktop_hide, .desktop_hide table { display: table !important; max-height: none !important; }
+  .row-2 .column-1 .block-1.heading_block h1 { font-size: 18px !important; }
+  .row-4 .column-1 .block-1.heading_block h1 { font-size: 16px !important; }
+  .row-11 .column-1 .block-1.paragraph_block td.pad>div { font-size: 9px !important; }
+  .row-12 .column-1 .block-1.paragraph_block td.pad>div { font-size: 10px !important; }
+}
+</style>
+</head>
+<body class="body" style="margin:0;background-color:#ffffff;padding:0;-webkit-text-size-adjust:none;text-size-adjust:none;">
+<table class="nl-container" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;">
+<tbody><tr><td>
+
+<!-- Row 1: Header Image -->
+<table class="row row-1" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#fad169;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:600px;"><img src="%%IMG_BASE%%/1_HTML_MADRES_HEADER.jpg" style="display:block;height:auto;border:0;width:100%;" width="600" alt="" height="auto"></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 2: NOMBRE -->
+<table class="row row-2" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#a00031;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="heading_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad">
+<h1 style="margin:0;color:#ffffff;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:38px;font-weight:700;letter-spacing:normal;line-height:1.2;text-align:center;margin-top:0;margin-bottom:0;mso-line-height-alt:46px;">
+<span style="word-break:break-word;">%%NOMBRE%%</span></h1>
+</td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 3: Text Image -->
+<table class="row row-3" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#fad169;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:600px;"><img src="%%IMG_BASE%%/2_HTML_MADRES_TEXTO.jpg" style="display:block;height:auto;border:0;width:100%;" width="600" alt="" height="auto"></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 4: VARIABLE (mensaje dinámico completo/parcial) -->
+<table class="row row-4" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#a00031;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="heading_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad">
+<h1 style="margin:0;color:#ffffff;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:32px;font-weight:700;letter-spacing:normal;line-height:1.2;text-align:center;margin-top:0;margin-bottom:0;mso-line-height-alt:38px;">
+<span style="word-break:break-word;">%%VARIABLE%%</span></h1>
+</td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+%%PRODUCT_DETAIL%%
+
+<!-- Row 5: Bottom Image -->
+<table class="row row-5" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#fad169;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:600px;"><img src="%%IMG_BASE%%/3_HTML_MADRES_BOTTOM.jpg" style="display:block;height:auto;border:0;width:100%;" width="600" alt="" height="auto"></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 6: Facebook + Instagram -->
+<table class="row row-6" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="50%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:300px;"><a href="https://www.facebook.com/natura.chile" target="_blank"><img src="%%IMG_BASE%%/4_fb_10.png" style="display:block;height:auto;border:0;width:100%;" width="300" alt="" height="auto"></a></div>
+</div></td></tr>
+</table>
+</td>
+<td class="column column-2" width="50%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:300px;"><a href="https://www.instagram.com/natura.chile/" target="_blank"><img src="%%IMG_BASE%%/5_insta_8.png" style="display:block;height:auto;border:0;width:100%;" width="300" alt="" height="auto"></a></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 7: Mi Negocio -->
+<table class="row row-7" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content stack" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:600px;"><a href="https://minegocio.natura.cl/ingreso/cl?return_url=home" target="_blank"><img src="%%IMG_BASE%%/6_minegocio-html.png" style="display:block;height:auto;border:0;width:100%;" width="600" alt="" height="auto"></a></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 8: App Store + Google Play -->
+<table class="row row-8" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="50%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:300px;"><a href="https://apps.apple.com/ar/app/minegocio-natura/id1197578002" target="_blank"><img src="%%IMG_BASE%%/7_app-store_4.png" style="display:block;height:auto;border:0;width:100%;" width="300" alt="" height="auto"></a></div>
+</div></td></tr>
+</table>
+</td>
+<td class="column column-2" width="50%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="image_block block-1" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="pad" style="width:100%;"><div class="alignment" align="center">
+<div style="max-width:300px;"><a href="https://play.google.com/store/apps/details?id=net.natura.minegocionatura" target="_blank"><img src="%%IMG_BASE%%/8_app-google.png" style="display:block;height:auto;border:0;width:100%;" width="300" alt="" height="auto"></a></div>
+</div></td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 9: Copyright (Desktop) -->
+<table class="row row-9 mobile_hide" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;background-size:auto;">
+<tbody><tr><td>
+<table class="row-content stack" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#a00031;background-size:auto;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="col-pad" style="padding-bottom:5px;padding-top:5px;">
+<table class="text_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;word-break:break-word;">
+<tr><td class="pad">
+<div style="font-family:Arial,sans-serif">
+<div style="font-size:12px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;mso-line-height-alt:14.4px;color:#555555;line-height:1.2;">
+<p style="margin:0;font-size:12px;text-align:center;mso-line-height-alt:14.4px;"><span style="word-break:break-word;font-size:18px;color:#ffffff;"><strong>&copy; Natura 2026</strong></span></p>
+</div></div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+<!--[if !mso]><!-->
+<table class="row row-10 desktop_hide" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;mso-hide:all;display:none;max-height:0;overflow:hidden;background-color:#ffffff;background-size:auto;">
+<tbody><tr><td>
+<table class="row-content stack" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;mso-hide:all;display:none;max-height:0;overflow:hidden;background-color:#a00031;background-size:auto;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;mso-hide:all;display:none;max-height:0;overflow:hidden;">
+<tr><td class="col-pad" style="padding-bottom:5px;padding-top:5px;">
+<table class="text_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;word-break:break-word;mso-hide:all;display:none;max-height:0;overflow:hidden;">
+<tr><td class="pad">
+<div style="font-family:Arial,sans-serif">
+<div style="font-size:12px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;mso-line-height-alt:14.4px;color:#555555;line-height:1.2;">
+<p style="margin:0;font-size:12px;text-align:center;mso-line-height-alt:14.4px;"><span style="word-break:break-word;font-size:14px;color:#ffffff;"><strong>&copy; Natura 2026</strong></span></p>
+</div></div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+<!--<![endif]-->
+
+<!-- Row 11: Legal -->
+<table class="row row-11" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content stack" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tr><td class="col-pad" style="padding-bottom:5px;padding-top:5px;">
+<table class="paragraph_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;word-break:break-word;">
+<tr><td class="pad">
+<div style="color:#101112;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:11px;font-weight:400;letter-spacing:0px;line-height:1.2;text-align:center;mso-line-height-alt:13px;">
+<p style="margin:0;margin-bottom:12px;">2026 Natura. Todos los derechos reservados.</p>
+<p style="margin:0;margin-bottom:12px;">NATURA COSMETICOS S.A., con domicilio en Av. Apoquindo 5950, piso 7, Las Condes, Regi&oacute;n Metropolitana.</p>
+<p style="margin:0;margin-bottom:12px;">Con tel&eacute;fono <a href="tel:22731832" target="_blank" style="text-decoration:underline;color:#ee901a;">22731832</a> o <a href="tel:800115566" target="_blank" style="text-decoration:underline;color:#ee901a;">800115566</a>.</p>
+<p style="margin:0;margin-bottom:12px;">Habla con nosotros en: <a href="http://www.natura.cl" target="_blank" style="text-decoration:underline;color:#ee901a;">www.natura.cl</a></p>
+<p style="margin:0;">Opciones de autogesti&oacute;n disponibles las 24 horas del d&iacute;a los 7 d&iacute;as de la semana.</p>
+</div>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+<!-- Row 12: Footer -->
+<table class="row row-12" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
+<tbody><tr><td>
+<table class="row-content" align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;background-color:#ffffff;color:#000000;width:600px;margin:0 auto;" width="600">
+<tbody><tr>
+<td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
+<table class="paragraph_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;word-break:break-word;">
+<tr><td class="pad">
+<div style="color:#13241f;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;font-weight:400;letter-spacing:0px;line-height:1.5;text-align:center;mso-line-height-alt:18px;">
+<p style="margin:0;">Natura Cosm&eacute;ticos - Mensaje autom&aacute;tico, por favor no respondas a este correo.</p>
+</div>
+</td></tr>
+</table>
+<div class="spacer_block block-2" style="height:20px;line-height:20px;font-size:1px;">&#8202;</div>
+</td>
+</tr></tbody>
+</table>
+</td></tr></tbody>
+</table>
+
+</td></tr></tbody>
+</table>
+</body>
+</html>""".replace("%%IMG_BASE%%", _IMG_BASE)
+
+
+def _build_product_rows(products: List[Dict[str, str]], status_filter: str) -> str:
+    """Build <tr> rows for a product table filtered by status."""
+    rows = ""
+    for p in products:
+        if p.get("status") != status_filter:
+            continue
+        code = p.get("product_code", "—")
+        name = p.get("product_name") or "—"
+        if status_filter == "ok":
+            icon = "&#10003;"
+            color = "#2e7d32"
+        else:
+            icon = "&#10007;"
+            color = "#c62828"
+        rows += (
+            f'<tr>'
+            f'<td style="border:1px solid #ddd;padding:8px;">{code}</td>'
+            f'<td style="border:1px solid #ddd;padding:8px;">{name}</td>'
+            f'<td style="border:1px solid #ddd;padding:8px;text-align:center;color:{color};font-weight:bold;">{icon}</td>'
+        )
+        if status_filter != "ok":
+            reason = p.get("error_message", "")
+            rows += f'<td style="border:1px solid #ddd;padding:8px;font-size:12px;color:#777;">{reason}</td>'
+        rows += '</tr>\n'
+    return rows
+
+
+def _build_product_detail_section(products: List[Dict[str, str]]) -> str:
+    """Build HTML section with product tables for partial orders.
+
+    Inserted between Row 4 (VARIABLE) and Row 5 (bottom image) in the template.
+    """
+    ok_rows = _build_product_rows(products, "ok")
+    fail_rows = _build_product_rows(products, "failed")
+    ok_count = sum(1 for p in products if p.get("status") == "ok")
+    fail_count = sum(1 for p in products if p.get("status") == "failed")
+
+    html = (
+        '<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" '
+        'role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">\n'
+        '<tbody><tr><td>\n'
+        '<table align="center" border="0" cellpadding="0" cellspacing="0" '
+        'role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;'
+        'background-color:#ffffff;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">\n'
+        '<tbody><tr>\n'
+        '<td style="padding:20px 30px;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n'
+        '<p style="font-size:14px;color:#333;margin:0 0 15px 0;">'
+        'Revisa el detalle a continuaci&oacute;n. Si necesitas ayuda, comun&iacute;cate con tu L&iacute;der.</p>\n'
+    )
+
+    if ok_count > 0:
+        html += (
+            f'<p style="font-size:13px;font-weight:bold;color:#2e7d32;margin:0 0 5px 0;">'
+            f'Productos cargados ({ok_count})</p>\n'
+            '<table width="100%" border="0" cellspacing="0" cellpadding="8" '
+            'style="border-collapse:collapse;font-size:13px;margin-bottom:15px;">\n'
+            '<thead><tr style="background-color:#4caf50;color:#fff;">'
+            '<th style="border:1px solid #ddd;">C&oacute;digo</th>'
+            '<th style="border:1px solid #ddd;">Producto</th>'
+            '<th style="border:1px solid #ddd;text-align:center;">Estado</th>'
+            '</tr></thead>\n'
+            f'<tbody>{ok_rows}</tbody>\n'
+            '</table>\n'
+        )
+
+    if fail_count > 0:
+        html += (
+            f'<p style="font-size:13px;font-weight:bold;color:#c62828;margin:0 0 5px 0;">'
+            f'Productos no disponibles ({fail_count})</p>\n'
+            '<table width="100%" border="0" cellspacing="0" cellpadding="8" '
+            'style="border-collapse:collapse;font-size:13px;margin-bottom:15px;">\n'
+            '<thead><tr style="background-color:#e53935;color:#fff;">'
+            '<th style="border:1px solid #ddd;">C&oacute;digo</th>'
+            '<th style="border:1px solid #ddd;">Producto</th>'
+            '<th style="border:1px solid #ddd;text-align:center;">Estado</th>'
+            '<th style="border:1px solid #ddd;">Motivo</th>'
+            '</tr></thead>\n'
+            f'<tbody>{fail_rows}</tbody>\n'
+            '</table>\n'
+        )
+
+    html += (
+        '</td>\n</tr></tbody>\n</table>\n'
+        '</td></tr></tbody>\n</table>'
+    )
+    return html
+
 
 def build_consultora_email(
     consultora_nombre: str,
     cb: str,
-    ciclo: str,
     lider_nombre: str,
+    products: Optional[List[Dict[str, str]]] = None,
+    is_partial: bool = False,
     evento: str = "Preventa del Día de las Madres",
 ) -> str:
     """
-    Genera el HTML de notificación individual para una consultora.
+    Genera HTML con diseño de Comunicaciones (Día de las Madres).
 
-    Le avisa que su carrito fue cargado exitosamente y que debe
-    ingresar a finalizar su compra.
+    Template único para carritos completos y parciales.
+    - %%NOMBRE%%  → nombre consultora (banner rojo)
+    - %%VARIABLE%% → mensaje estado (banner rojo)
+    - %%PRODUCT_DETAIL%% → tablas de productos (solo parcial)
 
     Args:
         consultora_nombre: Nombre completo de la consultora.
-        cb: Código de negocio (CB) de la consultora.
-        ciclo: Ciclo de la preventa (ej: "05-2026").
+        cb: Código de negocio (CB).
         lider_nombre: Nombre de su Líder de Negocio.
+        products: Lista de dicts {product_code, product_name, status, error_message}.
+        is_partial: True si el carrito quedó parcialmente completo.
         evento: Nombre del evento/campaña.
-
-    Returns:
-        String HTML completo listo para enviar.
-
-    Ejemplo::
-
-        html = build_consultora_email(
-            consultora_nombre="Maria Alejandra Celedon",
-            cb="2373",
-            ciclo="05-2026",
-            lider_nombre="Constanza Acevedo",
-        )
     """
-    return f"""{_wrapper_open()}
+    if is_partial:
+        variable_text = "Tu carrito se cargó parcialmente"
+    else:
+        variable_text = "¡Todos tus productos fueron cargados!"
 
-          {_header_block()}
+    product_detail = ""
+    if is_partial and products:
+        product_detail = _build_product_detail_section(products)
 
-          <tr>
-            <td style="padding: 30px; color: #333333; line-height: 1.6;">
-              <h2 style="color: #F47920; margin-top: 0; text-align: center;">¡Tu carrito está listo! 🎁</h2>
-              <p>Hola <strong>{consultora_nombre}</strong> (CB: {cb}),</p>
-              <p>¡Gracias por participar en nuestro Live Shopping de la {evento}!</p>
-
-              <div style="background-color: #e8f5e9; border-left: 4px solid #4caf50; padding: 15px; margin-bottom: 20px; border-radius: 4px;">
-                <p style="margin: 0; color: #2e7d32;">
-                  <strong>¡Excelente noticia!</strong> Ya hemos cargado exitosamente en tu
-                  carrito los increíbles productos que elegiste durante el evento
-                  (Ciclo <strong>{ciclo}</strong>).
-                  <br><br>
-                  Solo debes ingresar a tu cuenta y finalizar tu compra para asegurar
-                  tus regalos.
-                </p>
-              </div>
-
-              <p style="margin-bottom: 0;">
-                Si tienes alguna duda o necesitas ayuda, por favor comunícate con tu
-                Líder de Negocio, <strong>{lider_nombre}</strong>.
-              </p>
-              <p style="margin-top: 20px; text-align: center; font-weight: bold; color: #F47920;">
-                ¡Vamos con todo en este Día de las Madres!
-              </p>
-            </td>
-          </tr>
-
-          {_footer_block()}
-
-{_wrapper_close()}"""
+    html = _CONSULTORA_TEMPLATE
+    html = html.replace("%%NOMBRE%%", consultora_nombre)
+    html = html.replace("%%VARIABLE%%", variable_text)
+    html = html.replace("%%PRODUCT_DETAIL%%", product_detail)
+    return html
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -160,7 +512,7 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
     Cada dict debe tener:
         cb:                código de negocio
         consultora_nombre: nombre completo
-        estado:            "Cargado" | "No Cargado"
+        estado:            "Completo" | "Parcialmente Completo"
     """
     rows_html = ""
     for c in consultoras:
@@ -168,10 +520,10 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
         nombre = c.get("consultora_nombre", "—")
         estado = c.get("estado", "—")
 
-        if estado.lower() == "cargado":
+        if estado == "Completo":
             estado_style = "color: #2e7d32; font-weight: bold;"
         else:
-            estado_style = "color: #c62828; font-weight: bold;"
+            estado_style = "color: #e65100; font-weight: bold;"
 
         rows_html += f"""                    <tr>
                       <td style="border: 1px solid #ddd;">{cb}</td>
@@ -185,8 +537,8 @@ def _build_lider_rows(consultoras: List[Dict[str, str]]) -> str:
 def build_lider_email(
     lider_nombre: str,
     nombre_sector: str,
-    total_exitosos: int,
-    total_errores: int,
+    total_completos: int,
+    total_parciales: int,
     consultoras: List[Dict[str, str]],
     evento: str = "Preventa del Día de las Madres",
 ) -> str:
@@ -196,26 +548,14 @@ def build_lider_email(
     Args:
         lider_nombre: Nombre de la líder.
         nombre_sector: Nombre del sector.
-        total_exitosos: Cantidad de carritos cargados correctamente.
-        total_errores: Cantidad que requieren apoyo.
-        consultoras: Lista de dicts con {cb, consultora_nombre, estado}.
+        total_completos: Carritos 100% cargados.
+        total_parciales: Carritos parcialmente completos.
+        consultoras: Lista de dicts {cb, consultora_nombre, estado}.
+                     estado = "Completo" | "Parcialmente Completo"
         evento: Nombre del evento/campaña.
 
     Returns:
         String HTML completo.
-
-    Ejemplo::
-
-        html = build_lider_email(
-            lider_nombre="Constanza Acevedo",
-            nombre_sector="Acacia",
-            total_exitosos=15,
-            total_errores=2,
-            consultoras=[
-                {"cb": "2373", "consultora_nombre": "Maria Celedon", "estado": "Cargado"},
-                {"cb": "4165", "consultora_nombre": "Angelina Cortes", "estado": "No Cargado"},
-            ],
-        )
     """
     rows = _build_lider_rows(consultoras)
 
@@ -238,18 +578,18 @@ def build_lider_email(
               <table width="100%" style="margin-bottom: 20px; text-align: center;">
                 <tr>
                   <td style="background-color: #e8f5e9; color: #2e7d32; padding: 10px; border-radius: 4px; width: 48%;">
-                    <strong>{total_exitosos}</strong><br>Carritos Listos
+                    <strong>{total_completos}</strong><br>Completos
                   </td>
                   <td style="width: 4%;"></td>
-                  <td style="background-color: #ffebee; color: #c62828; padding: 10px; border-radius: 4px; width: 48%;">
-                    <strong>{total_errores}</strong><br>Requieren Apoyo
+                  <td style="background-color: #fff3e0; color: #e65100; padding: 10px; border-radius: 4px; width: 48%;">
+                    <strong>{total_parciales}</strong><br>Parcialmente Completos
                   </td>
                 </tr>
               </table>
 
               <p style="font-size: 14px;">
-                Revisa el detalle a continuación para ayudar a las consultoras que
-                tuvieron inconvenientes con la carga de su carrito:
+                Revisa el detalle a continuación. Las consultoras con carrito
+                parcial tuvieron productos sin stock al momento de la carga:
               </p>
 
               <div style="overflow-x: auto;">
@@ -283,25 +623,25 @@ def _build_gerente_rows(lideres: List[Dict[str, str]]) -> str:
     Genera filas <tr> de la tabla del gerente.
 
     Cada dict debe tener:
-        lider_nombre:    nombre de la líder
-        nombre_sector:   nombre del sector
-        carritos_listos: int
-        no_cargados:     int
+        lider_nombre:      nombre de la líder
+        nombre_sector:     nombre del sector
+        completos:         int
+        parciales:         int
     """
     rows_html = ""
     for l in lideres:
         nombre = l.get("lider_nombre", "—")
         sector = l.get("nombre_sector", "—")
-        listos = l.get("carritos_listos", 0)
-        fallidos = l.get("no_cargados", 0)
+        completos = l.get("completos", 0)
+        parciales = l.get("parciales", 0)
 
         rows_html += f"""                    <tr>
                       <td style="border: 1px solid #ddd;">
                         <strong>{nombre}</strong><br>
                         <span style="font-size: 12px; color: #777;">Sector: {sector}</span>
                       </td>
-                      <td style="border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: bold;">{listos}</td>
-                      <td style="border: 1px solid #ddd; text-align: center; color: #c62828;">{fallidos}</td>
+                      <td style="border: 1px solid #ddd; text-align: center; color: #2e7d32; font-weight: bold;">{completos}</td>
+                      <td style="border: 1px solid #ddd; text-align: center; color: #e65100; font-weight: bold;">{parciales}</td>
                     </tr>
 """
     return rows_html
@@ -319,24 +659,11 @@ def build_gerente_email(
     Args:
         gn_nombre: Nombre del Gerente de Negocio.
         nombre_gerencia: Nombre de la gerencia.
-        lideres: Lista de dicts con {lider_nombre, nombre_sector, carritos_listos, no_cargados}.
+        lideres: Lista de dicts {lider_nombre, nombre_sector, completos, parciales}.
         evento: Nombre del evento/campaña.
 
     Returns:
         String HTML completo.
-
-    Ejemplo::
-
-        html = build_gerente_email(
-            gn_nombre="Carolina Mendez",
-            nombre_gerencia="Gerencia Sur",
-            lideres=[
-                {"lider_nombre": "Constanza Acevedo", "nombre_sector": "Acacia",
-                 "carritos_listos": 15, "no_cargados": 2},
-                {"lider_nombre": "Maryorie Cortes", "nombre_sector": "Acacia",
-                 "carritos_listos": 8,  "no_cargados": 0},
-            ],
-        )
     """
     rows = _build_gerente_rows(lideres)
 
@@ -356,8 +683,8 @@ def build_gerente_email(
               </p>
 
               <p style="font-size: 14px;">
-                A continuación, el detalle de cuántos carritos logramos dejar listos
-                para compra por cada una de tus líderes:
+                A continuación, el detalle por cada una de tus líderes. Los carritos
+                "parciales" tuvieron productos sin stock al momento de la carga:
               </p>
 
               <div style="overflow-x: auto; margin-top: 20px;">
@@ -366,8 +693,8 @@ def build_gerente_email(
                   <thead>
                     <tr style="background-color: #6c757d; color: #ffffff; text-align: left;">
                       <th style="border: 1px solid #ddd;">Líder / Sector</th>
-                      <th style="border: 1px solid #ddd; text-align: center;">Carritos Listos</th>
-                      <th style="border: 1px solid #ddd; text-align: center;">No Cargados</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Completos</th>
+                      <th style="border: 1px solid #ddd; text-align: center;">Parciales</th>
                     </tr>
                   </thead>
                   <tbody>

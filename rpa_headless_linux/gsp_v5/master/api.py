@@ -18,6 +18,7 @@ from shared.models import Batch, Order, OrderProduct, OrderLog, OrderStatus, Bat
 from shared.schemas import (
     BatchCreate, BatchOut, BatchDetail, BatchStats,
     OrderOut, OrderLogOut, SystemStats,
+    EmailSendResult,
 )
 from master.orchestrator import Orchestrator
 from master.loader import load_from_csv, load_single_order
@@ -189,6 +190,77 @@ async def retry_batch(batch_id: int):
     """Retry all failed orders in a batch."""
     result = orchestrator.retry_batch_failures(batch_id)
     return result
+
+
+# ── Batch Email Notifications ─────────────────
+
+@app.post("/batches/{batch_id}/send-emails", response_model=EmailSendResult)
+async def send_batch_emails(
+    batch_id: int,
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+    db: Session = Depends(get_db),
+):
+    """Send email notifications for a completed batch at 3 levels.
+
+    1. Consultora — individual email per order (Completo / Parcialmente Completo)
+    2. Líder — aggregated summary per sector
+    3. Gerente — aggregated summary per gerencia
+
+    Orders with FAILED status are skipped. Consultoras without email in the
+    CSV matriz are skipped with a warning.
+    """
+    from shared.email.send_emails import send_batch_notifications
+
+    result = send_batch_notifications(
+        batch_id=batch_id,
+        db=db,
+        evento=evento,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
+
+
+# ── Test Email ────────────────────────────────
+
+@app.post("/test-email")
+async def send_test_email(
+    to: str = Query(..., description="Email del destinatario de prueba"),
+    nombre: str = Query("Consultora de Prueba", description="Nombre de la consultora"),
+    cb: str = Query("9999", description="Código CB de prueba"),
+    is_partial: bool = Query(False, description="True para simular carrito parcial"),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+):
+    """Send a test email with sample product data to any email address.
+
+    Use is_partial=true to preview the partial variant (with product tables).
+    Use is_partial=false (default) to preview the complete variant.
+    """
+    from shared.email.send_emails import EmailOrchestrator
+
+    sample_products = [
+        {"product_code": "88934", "product_name": "Luna Absoluta Perfume de Mujer", "status": "ok", "error_message": ""},
+        {"product_code": "91205", "product_name": "Ekos Maracuyá Jabón Líquido", "status": "ok", "error_message": ""},
+        {"product_code": "76543", "product_name": "Tododia Crema Corporal Frambuesa", "status": "ok", "error_message": ""},
+    ]
+    if is_partial:
+        sample_products[2]["status"] = "failed"
+        sample_products[2]["error_message"] = "Sin stock"
+
+    try:
+        orch = EmailOrchestrator()
+        result = orch.send_consultora(
+            to=to,
+            consultora_nombre=nombre,
+            cb=cb,
+            lider_nombre="Líder de Prueba",
+            products=sample_products,
+            is_partial=is_partial,
+            evento=evento,
+        )
+        return {"status": "sent", "to": to, "is_partial": is_partial, "detail": result}
+    except Exception as e:
+        raise HTTPException(500, f"Error sending test email: {e}")
 
 
 # ── Orders ────────────────────────────────────
