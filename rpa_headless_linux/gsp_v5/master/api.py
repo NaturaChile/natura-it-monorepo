@@ -221,6 +221,48 @@ async def send_batch_emails(
     return result
 
 
+# ── Test Email ────────────────────────────────
+
+@app.post("/test-email")
+async def send_test_email(
+    to: str = Query(..., description="Email del destinatario de prueba"),
+    nombre: str = Query("Consultora de Prueba", description="Nombre de la consultora"),
+    cb: str = Query("9999", description="Código CB de prueba"),
+    is_partial: bool = Query(False, description="True para simular carrito parcial"),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+):
+    """Send a test email with sample product data to any email address.
+
+    Use is_partial=true to preview the partial variant (with product tables).
+    Use is_partial=false (default) to preview the complete variant.
+    """
+    from shared.email.send_emails import EmailOrchestrator
+
+    sample_products = [
+        {"product_code": "88934", "product_name": "Luna Absoluta Perfume de Mujer", "status": "ok", "error_message": ""},
+        {"product_code": "91205", "product_name": "Ekos Maracuyá Jabón Líquido", "status": "ok", "error_message": ""},
+        {"product_code": "76543", "product_name": "Tododia Crema Corporal Frambuesa", "status": "ok", "error_message": ""},
+    ]
+    if is_partial:
+        sample_products[2]["status"] = "failed"
+        sample_products[2]["error_message"] = "Sin stock"
+
+    try:
+        orch = EmailOrchestrator()
+        result = orch.send_consultora(
+            to=to,
+            consultora_nombre=nombre,
+            cb=cb,
+            lider_nombre="Líder de Prueba",
+            products=sample_products,
+            is_partial=is_partial,
+            evento=evento,
+        )
+        return {"status": "sent", "to": to, "is_partial": is_partial, "detail": result}
+    except Exception as e:
+        raise HTTPException(500, f"Error sending test email: {e}")
+
+
 # ── Orders ────────────────────────────────────
 
 @app.get("/orders/{order_id}", response_model=OrderOut)
