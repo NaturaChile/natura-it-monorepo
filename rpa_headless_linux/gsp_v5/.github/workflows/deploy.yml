@@ -5,6 +5,7 @@
 #   GSP_USER_CODE       → Código de supervisor GSP
 #   GSP_PASSWORD         → Password de supervisor GSP
 #   POSTGRES_PASSWORD    → Password para PostgreSQL
+#   GMAIL_TOKEN_JSON     → Contenido JSON del token OAuth2 de Gmail (una línea)
 #   DEPLOY_HOST          → IP/hostname del servidor (opcional, solo para deploy remoto)
 #   DEPLOY_USER          → Usuario SSH del servidor (opcional)
 #   DEPLOY_SSH_KE       → Llave SSH privada (opcional)
@@ -68,6 +69,7 @@ jobs:
           API_PORT=8000
           FLOWER_PORT=5555
           FLOWER_BASIC_AUTH=admin:changeme
+          GMAIL_TOKEN_JSON=${{ secrets.GMAIL_TOKEN_JSON }}
           HTTP_PROXY=${DETECTED_HTTP_PROXY}
           HTTPS_PROXY=${DETECTED_HTTPS_PROXY}
           http_proxy=${DETECTED_HTTP_PROXY}
@@ -132,6 +134,7 @@ jobs:
             API_PORT=8000
             FLOWER_PORT=5555
             FLOWER_BASIC_AUTH=admin:changeme
+            GMAIL_TOKEN_JSON=${{ secrets.GMAIL_TOKEN_JSON }}
             ENVEOF
             
             # Detect and append proxy settings from server environment

@@ -114,10 +114,28 @@ class GmailSender:
         return creds
 
     def _load_token(self) -> Optional[Credentials]:
-        """Carga token.json si existe y es válido."""
+        """Carga token.json si existe y es válido.
+
+        Si no existe en disco pero la variable de entorno GMAIL_TOKEN_JSON
+        contiene el JSON del token, lo escribe a disco automáticamente.
+        Esto permite inyectar el token via Docker/.env sin copiarlo a mano.
+        """
+        # Auto-crear token.json desde variable de entorno si no existe
         if not os.path.exists(self.token_path):
-            logger.info("No existe token.json en %s", self.token_path)
-            return None
+            env_token = os.environ.get("GMAIL_TOKEN_JSON", "").strip()
+            if env_token:
+                logger.info(
+                    "Creando token.json desde GMAIL_TOKEN_JSON env var → %s",
+                    self.token_path,
+                )
+                token_dir = os.path.dirname(self.token_path)
+                if token_dir:
+                    os.makedirs(token_dir, exist_ok=True)
+                with open(self.token_path, "w") as f:
+                    f.write(env_token)
+            else:
+                logger.info("No existe token.json en %s", self.token_path)
+                return None
         try:
             creds = Credentials.from_authorized_user_file(self.token_path, SCOPES)
             logger.info(
