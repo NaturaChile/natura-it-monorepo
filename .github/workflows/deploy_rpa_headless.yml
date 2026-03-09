@@ -61,43 +61,111 @@ jobs:
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente en $dest"
 
-      - name: Levantar WSL2 + Docker Engine (si no está corriendo)
+      - name: Verificar Docker WSL2 (Linux containers via TCP)
         shell: powershell
         run: |
-          $env:DOCKER_HOST = "tcp://localhost:2375"
-          Write-Host "[INFO] Iniciando Docker service en WSL2..."
+          # 1. Despertar WSL2
+          Write-Host "[1/5] Despertando WSL2 Ubuntu..."
+          $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
+          if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
+          Write-Host "[OK] WSL2 respondio"
 
-          # 1. Iniciar docker daemon (bloqueante, sale rapido)
-          wsl -d Ubuntu -- bash -c "sudo service docker start 2>/dev/null; echo '[WSL2] docker service OK'"
+          # 2. Detener Windows Docker Engine (puede ocupar :2375)
+          Write-Host "[2/5] Deteniendo servicio Windows Docker Engine..."
+          $svc = Get-Service -Name "docker" -ErrorAction SilentlyContinue
+          if ($svc -and $svc.Status -eq 'Running') {
+            Stop-Service docker -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Write-Host "[OK] Servicio Docker Windows detenido"
+          } else { Write-Host "[OK] Servicio Docker Windows no estaba corriendo" }
 
-          # 2. Matar socat previo (bloqueante, sale rapido)
-          wsl -d Ubuntu -- bash -c "sudo pkill -f 'socat.*2375' 2>/dev/null || true; echo '[WSL2] socat previo limpiado'"
+          # 3. Matar socat (wsl.conf boot lo inicia y ocupa :2375 antes que dockerd)
+          Write-Host "[3/5] Matando socat dentro de WSL2..."
+          $pk = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","socat") -NoNewWindow -PassThru
+          if (-not $pk.WaitForExit(8000)) { $pk.Kill() }
+          Start-Sleep -Seconds 2
 
-          # 3. Lanzar socat DETACHED con Start-Process (PowerShell NO espera, no cuelga)
-          Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", "Ubuntu", "--", "sudo", "socat", "TCP-LISTEN:2375,reuseaddr,fork", "UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
-          Write-Host "[INFO] socat lanzado en background, esperando 5s..."
+          # 4. Restart docker para que rebindee tcp://0.0.0.0:2375 sin socat
+          Write-Host "[4/5] Reiniciando docker daemon en WSL2..."
+          $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker restart" -NoNewWindow -PassThru
+          if (-not $p3.WaitForExit(45000)) { $p3.Kill(); Write-Host "[WARN] docker restart timeout" }
+
+          # Docker 29.x agrega ~1s de delay intencional por deprecation warning (TCP sin TLS)
+          Write-Host "[5/5] Esperando deprecation delay de dockerd..."
           Start-Sleep -Seconds 5
 
-          # 4. Verificar (cmd /c evita NativeCommandError en PS)
-          $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "[OK] Docker Engine: $version"
+          # 6. Obtener IP real de WSL2 (eth0, no docker0)
+          $wslIp = (wsl -d Ubuntu -u root -- ip -4 addr show eth0 2>$null | Select-String 'inet (\d+\.\d+\.\d+\.\d+)').Matches.Groups[1].Value
+          if (-not $wslIp) {
+            $wslIp = (wsl -d Ubuntu -u root -- hostname -I).Trim().Split()[0]
+          }
+          Write-Host "[INFO] WSL2 eth0 IP: $wslIp"
+
+          # 7. Abrir firewall Win11 Pro (Hyper-V Firewall bloquea trafico Host<->WSL2)
+          Write-Host "[INFO] Configurando reglas de firewall para Docker WSL2..."
+          # Regla clasica: permitir TCP 2375 inbound (portproxy) y outbound (WSL2 IP)
+          Remove-NetFirewallRule -DisplayName "WSL2 Docker TCP" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP Out" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress $wslIp -RemotePort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          # Hyper-V Firewall (Win11 22H2+): permitir trafico WSL2
+          if (Get-Command Set-NetFirewallHyperVVMSetting -ErrorAction SilentlyContinue) {
+            Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow -DefaultOutboundAction Allow -ErrorAction SilentlyContinue
+            Write-Host "[OK] Hyper-V Firewall configurado para WSL2"
+          } else { Write-Host "[INFO] Hyper-V Firewall cmdlet no disponible (version anterior)" }
+
+          # 8. Probar conexion: primero localhost, luego IP directa de WSL2
+          $dockerHost = $null
+          Write-Host "[INFO] Probando tcp://localhost:2375..."
+          $tcp1 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+          if ($tcp1) {
+            Write-Host "[OK] localhost:2375 accesible"
+            $dockerHost = "tcp://localhost:2375"
           } else {
-            Write-Host "[WARN] No responde aun, reintentando en 10s..."
-            Start-Sleep -Seconds 10
-            $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "[OK] Docker Engine: $version"
+            Write-Host "[INFO] localhost no responde. Probando tcp://${wslIp}:2375..."
+            $tcp2 = (Test-NetConnection -ComputerName $wslIp -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+            if ($tcp2) {
+              Write-Host "[OK] ${wslIp}:2375 accesible"
+              $dockerHost = "tcp://${wslIp}:2375"
             } else {
-              Write-Error "[ERROR] No se pudo iniciar Docker Engine en WSL2."
-              exit 1
+              # Ultimo intento: portproxy forzado
+              Write-Host "[INFO] IP directa tampoco responde. Forzando portproxy..."
+              netsh interface portproxy delete v4tov4 listenport=2375 listenaddress=127.0.0.1 2>$null
+              netsh interface portproxy add v4tov4 listenport=2375 listenaddress=127.0.0.1 connectport=2375 connectaddress=$wslIp
+              Start-Sleep -Seconds 3
+              $tcp3 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+              if ($tcp3) {
+                Write-Host "[OK] localhost:2375 accesible via portproxy"
+                $dockerHost = "tcp://localhost:2375"
+              }
             }
           }
+
+          if (-not $dockerHost) {
+            Write-Host "[DIAG] pgrep dockerd:"
+            wsl -d Ubuntu -u root -- pgrep -a dockerd
+            Write-Host "[DIAG] ss -tlnp :2375:"
+            wsl -d Ubuntu -u root -- ss -tlnp sport = :2375
+            Write-Host "[DIAG] ip addr:"
+            wsl -d Ubuntu -u root -- ip -4 addr
+            Write-Host "[DIAG] Windows firewall rules Docker:"
+            Get-NetFirewallRule -DisplayName "*Docker*" -ErrorAction SilentlyContinue | Format-Table DisplayName,Direction,Action,Enabled
+            Write-Host "[DIAG] portproxy:"
+            netsh interface portproxy show v4tov4
+            Write-Error "[ERROR] Docker no accesible en localhost ni en $wslIp"; exit 1
+          }
+
+          # 9. Exportar DOCKER_HOST para pasos siguientes
+          Write-Host "[OK] DOCKER_HOST=$dockerHost"
+          echo "DOCKER_HOST=$dockerHost" >> $env:GITHUB_ENV
+          $env:DOCKER_HOST = $dockerHost
+
+          $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
+          Write-Host "[OK] Docker Engine WSL2 Linux: $version"
 
       - name: Deploy GSP Bot v5 (docker compose up --build)
         shell: powershell
         env:
-          DOCKER_HOST: "tcp://localhost:2375"
+          # DOCKER_HOST viene de GITHUB_ENV (paso anterior lo detecta dinamicamente)
           GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
           GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
