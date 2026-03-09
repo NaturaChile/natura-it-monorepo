@@ -67,41 +67,58 @@ jobs:
           $env:DOCKER_HOST = "tcp://localhost:2375"
 
           # 1. Despertar WSL2
-          Write-Host "[1/3] Despertando WSL2 Ubuntu..."
+          Write-Host "[1/4] Despertando WSL2 Ubuntu..."
           $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
           if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
           Write-Host "[OK] WSL2 respondio"
 
-          # 2. Matar socat previo (si quedo de intentos anteriores, ocupa :2375)
-          Write-Host "[2/3] Limpiando socat previo..."
-          $p2 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","-x","socat") -NoNewWindow -PassThru
-          if (-not $p2.WaitForExit(8000)) { $p2.Kill() }
-          Start-Sleep -Seconds 2
+          # 2. Detener Windows Docker Engine (ocupa :2375 y bloquea WSL2 port-forwarding)
+          Write-Host "[2/4] Deteniendo servicio Windows Docker Engine..."
+          $svc = Get-Service -Name "docker" -ErrorAction SilentlyContinue
+          if ($svc -and $svc.Status -eq 'Running') {
+            Stop-Service docker -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Write-Host "[OK] Servicio Docker Windows detenido"
+          } else { Write-Host "[OK] Servicio Docker Windows no estaba corriendo" }
 
-          # 3. Iniciar docker daemon.
-          #    daemon.json ya tiene: "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2375"]
-          #    WSL2 hace port-forwarding automatico -> localhost:2375 en Windows.
-          #    NO se necesita socat.
-          Write-Host "[3/3] Iniciando docker daemon..."
+          # 3. Matar socat previo + iniciar docker daemon en WSL2
+          Write-Host "[3/4] Limpiando socat previo..."
+          $pk = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","-x","socat") -NoNewWindow -PassThru
+          if (-not $pk.WaitForExit(8000)) { $pk.Kill() }
+          Start-Sleep -Seconds 1
+
+          Write-Host "[4/4] Iniciando docker daemon en WSL2..."
           $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker start" -NoNewWindow -PassThru
           if (-not $p3.WaitForExit(30000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
 
-          # 4. Esperar TCP 2375 directamente (dockerd escucha en tcp://0.0.0.0:2375)
-          Write-Host "[INFO] Esperando que Docker responda en tcp://localhost:2375..."
+          # 5. Esperar TCP 2375 (WSL2 port-forwarding + dockerd tcp://0.0.0.0:2375)
+          Write-Host "[INFO] Esperando Docker en tcp://localhost:2375..."
           $ready = $false
-          for ($i = 1; $i -le 30; $i++) {
+          for ($i = 1; $i -le 20; $i++) {
             $tcp = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
             if ($tcp) { Write-Host "[OK] Puerto 2375 abierto (iter $i)"; $ready = $true; break }
             Start-Sleep -Seconds 2
           }
+
+          # Fallback: portproxy manual si WSL2 auto-forwarding no funciona
+          if (-not $ready) {
+            Write-Host "[INFO] WSL2 auto-forwarding no detecto el puerto. Configurando portproxy..."
+            $wslIp = (wsl -d Ubuntu -u root -- hostname -I).Trim().Split()[0]
+            Write-Host "[INFO] WSL2 IP: $wslIp"
+            netsh interface portproxy add v4tov4 listenport=2375 listenaddress=127.0.0.1 connectport=2375 connectaddress=$wslIp
+            Start-Sleep -Seconds 3
+            $tcp2 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+            if ($tcp2) { Write-Host "[OK] Puerto 2375 abierto via portproxy"; $ready = $true }
+          }
+
           if (-not $ready) {
             Write-Host "[DIAG] pgrep dockerd:"
             $pD = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pgrep","-a","dockerd") -NoNewWindow -PassThru
             $pD.WaitForExit(5000)
-            Write-Host "[DIAG] tail docker.log:"
-            $pL = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- tail -20 /var/log/docker.log" -NoNewWindow -PassThru
-            $pL.WaitForExit(5000)
-            Write-Error "[ERROR] Docker no accesible en tcp://localhost:2375 tras 60s"; exit 1
+            Write-Host "[DIAG] netstat 2375:"
+            $pN = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- ss -tlnp sport = :2375" -NoNewWindow -PassThru
+            $pN.WaitForExit(5000)
+            Write-Error "[ERROR] Docker no accesible en tcp://localhost:2375"; exit 1
           }
           $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
           Write-Host "[OK] Docker Engine WSL2 Linux: $version"
