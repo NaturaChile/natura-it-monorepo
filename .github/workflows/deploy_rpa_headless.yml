@@ -97,12 +97,23 @@ jobs:
           # 6. Obtener IP real de WSL2 (eth0, no docker0)
           $wslIp = (wsl -d Ubuntu -u root -- ip -4 addr show eth0 2>$null | Select-String 'inet (\d+\.\d+\.\d+\.\d+)').Matches.Groups[1].Value
           if (-not $wslIp) {
-            # fallback: hostname -I (primer IP)
             $wslIp = (wsl -d Ubuntu -u root -- hostname -I).Trim().Split()[0]
           }
           Write-Host "[INFO] WSL2 eth0 IP: $wslIp"
 
-          # 7. Probar conexion: primero localhost, luego IP directa de WSL2
+          # 7. Abrir firewall Win11 Pro (Hyper-V Firewall bloquea trafico Host<->WSL2)
+          Write-Host "[INFO] Configurando reglas de firewall para Docker WSL2..."
+          # Regla clasica: permitir TCP 2375 inbound (portproxy) y outbound (WSL2 IP)
+          Remove-NetFirewallRule -DisplayName "WSL2 Docker TCP" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP Out" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress $wslIp -RemotePort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          # Hyper-V Firewall (Win11 22H2+): permitir trafico WSL2
+          if (Get-Command Set-NetFirewallHyperVVMSetting -ErrorAction SilentlyContinue) {
+            Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow -DefaultOutboundAction Allow -ErrorAction SilentlyContinue
+            Write-Host "[OK] Hyper-V Firewall configurado para WSL2"
+          } else { Write-Host "[INFO] Hyper-V Firewall cmdlet no disponible (version anterior)" }
+
+          # 8. Probar conexion: primero localhost, luego IP directa de WSL2
           $dockerHost = $null
           Write-Host "[INFO] Probando tcp://localhost:2375..."
           $tcp1 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
@@ -110,11 +121,22 @@ jobs:
             Write-Host "[OK] localhost:2375 accesible"
             $dockerHost = "tcp://localhost:2375"
           } else {
-            Write-Host "[INFO] localhost:2375 no responde. Probando tcp://${wslIp}:2375..."
+            Write-Host "[INFO] localhost no responde. Probando tcp://${wslIp}:2375..."
             $tcp2 = (Test-NetConnection -ComputerName $wslIp -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
             if ($tcp2) {
               Write-Host "[OK] ${wslIp}:2375 accesible"
               $dockerHost = "tcp://${wslIp}:2375"
+            } else {
+              # Ultimo intento: portproxy forzado
+              Write-Host "[INFO] IP directa tampoco responde. Forzando portproxy..."
+              netsh interface portproxy delete v4tov4 listenport=2375 listenaddress=127.0.0.1 2>$null
+              netsh interface portproxy add v4tov4 listenport=2375 listenaddress=127.0.0.1 connectport=2375 connectaddress=$wslIp
+              Start-Sleep -Seconds 3
+              $tcp3 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+              if ($tcp3) {
+                Write-Host "[OK] localhost:2375 accesible via portproxy"
+                $dockerHost = "tcp://localhost:2375"
+              }
             }
           }
 
@@ -123,12 +145,16 @@ jobs:
             wsl -d Ubuntu -u root -- pgrep -a dockerd
             Write-Host "[DIAG] ss -tlnp :2375:"
             wsl -d Ubuntu -u root -- ss -tlnp sport = :2375
-            Write-Host "[DIAG] ip addr show eth0:"
-            wsl -d Ubuntu -u root -- ip -4 addr show eth0
+            Write-Host "[DIAG] ip addr:"
+            wsl -d Ubuntu -u root -- ip -4 addr
+            Write-Host "[DIAG] Windows firewall rules Docker:"
+            Get-NetFirewallRule -DisplayName "*Docker*" -ErrorAction SilentlyContinue | Format-Table DisplayName,Direction,Action,Enabled
+            Write-Host "[DIAG] portproxy:"
+            netsh interface portproxy show v4tov4
             Write-Error "[ERROR] Docker no accesible en localhost ni en $wslIp"; exit 1
           }
 
-          # 8. Exportar DOCKER_HOST para pasos siguientes
+          # 9. Exportar DOCKER_HOST para pasos siguientes
           Write-Host "[OK] DOCKER_HOST=$dockerHost"
           echo "DOCKER_HOST=$dockerHost" >> $env:GITHUB_ENV
           $env:DOCKER_HOST = $dockerHost
