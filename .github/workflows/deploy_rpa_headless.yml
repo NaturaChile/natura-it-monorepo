@@ -78,19 +78,29 @@ jobs:
           if (-not $p2.WaitForExit(8000)) { $p2.Kill() }
           Start-Sleep -Seconds 2
 
-          # 3. Iniciar docker daemon (ruta completa /usr/sbin/service, no 'service' que no existe como binario)
-          Write-Host "[3/4] Iniciando docker daemon..."
+          # 3. Iniciar docker daemon (ruta completa /usr/sbin/service)
+          Write-Host "[3/5] Iniciando docker daemon..."
           $p3 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/sbin/service","docker","start") -NoNewWindow -PassThru
           if (-not $p3.WaitForExit(25000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
           else { Write-Host "[OK] docker start (exit $($p3.ExitCode))" }
-          Start-Sleep -Seconds 3
 
-          # 4. Lanzar socat fresco ASYNC (PS NO espera, step continua)
-          Write-Host "[4/4] Lanzando socat TCP bridge..."
+          # 4. Esperar /var/run/docker.sock (hasta 15s) — sin socket socat sale instantáneo
+          Write-Host "[4/5] Esperando /var/run/docker.sock..."
+          $socketReady = $false
+          for ($i = 1; $i -le 15; $i++) {
+            $ps = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","test","-S","/var/run/docker.sock") -NoNewWindow -PassThru
+            if ($ps.WaitForExit(3000) -and $ps.ExitCode -eq 0) {
+              Write-Host "[OK] Socket listo (iter $i)"; $socketReady = $true; break
+            }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $socketReady) { Write-Error "[ERROR] /var/run/docker.sock no disponible en 15s"; exit 1 }
+
+          # 5. Lanzar socat fresco ASYNC — socket ya confirmado
+          Write-Host "[5/5] Lanzando socat TCP bridge..."
           Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 4
 
-          # 5. Verificar
           $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
           if (-not $ok) {
             Write-Error "[ERROR] Puerto 2375 no disponible. Docker socket no accesible."
