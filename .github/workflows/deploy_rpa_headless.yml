@@ -67,13 +67,13 @@ jobs:
           $env:DOCKER_HOST = "tcp://localhost:2375"
 
           # 1. Despertar WSL2
-          Write-Host "[1/4] Despertando WSL2 Ubuntu..."
+          Write-Host "[1/5] Despertando WSL2 Ubuntu..."
           $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
           if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
           Write-Host "[OK] WSL2 respondio"
 
           # 2. Detener Windows Docker Engine (ocupa :2375 y bloquea WSL2 port-forwarding)
-          Write-Host "[2/4] Deteniendo servicio Windows Docker Engine..."
+          Write-Host "[2/5] Deteniendo servicio Windows Docker Engine..."
           $svc = Get-Service -Name "docker" -ErrorAction SilentlyContinue
           if ($svc -and $svc.Status -eq 'Running') {
             Stop-Service docker -Force -ErrorAction SilentlyContinue
@@ -81,23 +81,28 @@ jobs:
             Write-Host "[OK] Servicio Docker Windows detenido"
           } else { Write-Host "[OK] Servicio Docker Windows no estaba corriendo" }
 
-          # 3. Matar socat previo + iniciar docker daemon en WSL2
-          Write-Host "[3/4] Limpiando socat previo..."
-          $pk = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","-x","socat") -NoNewWindow -PassThru
+          # 3. Matar socat (wsl.conf boot lo inicia y ocupa :2375 antes que dockerd)
+          Write-Host "[3/5] Matando socat dentro de WSL2..."
+          $pk = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","socat") -NoNewWindow -PassThru
           if (-not $pk.WaitForExit(8000)) { $pk.Kill() }
-          Start-Sleep -Seconds 1
+          Start-Sleep -Seconds 2
 
-          Write-Host "[4/4] Iniciando docker daemon en WSL2..."
-          $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker start" -NoNewWindow -PassThru
-          if (-not $p3.WaitForExit(30000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
+          # 4. Restart docker (no start) para que rebindee tcp://0.0.0.0:2375 sin socat
+          Write-Host "[4/5] Reiniciando docker daemon en WSL2 (restart, no start)..."
+          $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker restart" -NoNewWindow -PassThru
+          if (-not $p3.WaitForExit(45000)) { $p3.Kill(); Write-Host "[WARN] docker restart timeout" }
 
-          # 5. Esperar TCP 2375 (WSL2 port-forwarding + dockerd tcp://0.0.0.0:2375)
+          # Docker 29.x agrega ~1s de delay intencional por deprecation warning (TCP sin TLS)
+          Write-Host "[5/5] Esperando que dockerd complete el bind TCP (deprecation delay)..."
+          Start-Sleep -Seconds 5
+
+          # 6. Esperar TCP 2375 (WSL2 port-forwarding + dockerd tcp://0.0.0.0:2375)
           Write-Host "[INFO] Esperando Docker en tcp://localhost:2375..."
           $ready = $false
-          for ($i = 1; $i -le 20; $i++) {
+          for ($i = 1; $i -le 15; $i++) {
             $tcp = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
             if ($tcp) { Write-Host "[OK] Puerto 2375 abierto (iter $i)"; $ready = $true; break }
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 3
           }
 
           # Fallback: portproxy manual si WSL2 auto-forwarding no funciona
