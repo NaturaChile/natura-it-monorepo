@@ -82,52 +82,40 @@ jobs:
           $env:DOCKER_HOST = "tcp://localhost:2375"
 
           # 1. Despertar WSL2
-          Write-Host "[1/4] Despertando WSL2 Ubuntu..."
+          Write-Host "[1/3] Despertando WSL2 Ubuntu..."
           $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
           if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
-          Write-Host "[OK] WSL2 respondio (exit $($p1.ExitCode))"
+          Write-Host "[OK] WSL2 respondio"
 
-          # 2. Matar socat previo en :2375 (puede quedar de boot cmd con docker muerto)
-          Write-Host "[2/4] Limpiando socat previo en :2375..."
+          # 2. Matar socat previo (si quedo de intentos anteriores)
+          Write-Host "[2/3] Limpiando socat previo..."
           $p2 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","-x","socat") -NoNewWindow -PassThru
           if (-not $p2.WaitForExit(8000)) { $p2.Kill() }
           Start-Sleep -Seconds 2
 
-          # 3. Iniciar docker daemon (-- usa shell completo; --exec falla silenciosamente)
-          Write-Host "[3/5] Iniciando docker daemon..."
+          # 3. Iniciar docker daemon.
+          #    daemon.json ya tiene: "hosts": ["unix:///var/run/docker.sock", "tcp://0.0.0.0:2375"]
+          #    WSL2 hace port-forwarding automatico -> localhost:2375 en Windows.
+          Write-Host "[3/3] Iniciando docker daemon..."
           $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker start" -NoNewWindow -PassThru
           if (-not $p3.WaitForExit(30000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
-          else { Write-Host "[INFO] service docker start exited ($($p3.ExitCode))" }
 
-          # 4. Esperar /var/run/docker.sock (hasta 20s)
-          Write-Host "[4/5] Esperando /var/run/docker.sock..."
-          $socketReady = $false
-          for ($i = 1; $i -le 20; $i++) {
-            $ps = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","test","-S","/var/run/docker.sock") -NoNewWindow -PassThru
-            if ($ps.WaitForExit(3000) -and $ps.ExitCode -eq 0) {
-              Write-Host "[OK] Socket listo (iter $i)"; $socketReady = $true; break
-            }
-            Start-Sleep -Seconds 1
+          # 4. Esperar TCP 2375 directamente (dockerd escucha en tcp://0.0.0.0:2375)
+          Write-Host "[INFO] Esperando que Docker responda en tcp://localhost:2375..."
+          $ready = $false
+          for ($i = 1; $i -le 30; $i++) {
+            $tcp = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+            if ($tcp) { Write-Host "[OK] Puerto 2375 abierto (iter $i)"; $ready = $true; break }
+            Start-Sleep -Seconds 2
           }
-          if (-not $socketReady) {
-            Write-Host "[DIAG] Proceso dockerd:"
+          if (-not $ready) {
+            Write-Host "[DIAG] pgrep dockerd:"
             $pD = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pgrep","-a","dockerd") -NoNewWindow -PassThru
             $pD.WaitForExit(5000)
-            Write-Host "[DIAG] Docker log:"
+            Write-Host "[DIAG] tail docker.log:"
             $pL = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- tail -20 /var/log/docker.log" -NoNewWindow -PassThru
             $pL.WaitForExit(5000)
-            Write-Error "[ERROR] /var/run/docker.sock no disponible en 20s"; exit 1
-          }
-
-          # 5. Lanzar socat fresco ASYNC (TCP4 fuerza IPv4 — WSL2 forwarding)
-          Write-Host "[5/5] Lanzando socat TCP4 bridge..."
-          Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP4-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
-          Start-Sleep -Seconds 4
-
-          $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
-          if (-not $ok) {
-            Write-Error "[ERROR] Puerto 2375 no disponible. Docker socket no accesible."
-            exit 1
+            Write-Error "[ERROR] Docker no accesible en tcp://localhost:2375 tras 60s"; exit 1
           }
           $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
           Write-Host "[OK] Docker Engine WSL2 Linux: $version"
