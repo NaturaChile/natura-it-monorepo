@@ -35,6 +35,9 @@ jobs:
     env:
       COMPOSE_DIR: rpa_headless_linux/gsp_v5
 
+      # --- Docker Engine (WSL2 via socat TCP) ---
+      DOCKER_HOST: "tcp://localhost:2375"
+
       # --- Credenciales GSP (SECRETS) ---
       GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
       GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
@@ -72,22 +75,35 @@ jobs:
       - name: Descargar código del repositorio
         uses: actions/checkout@v4
 
-      # ── 2. Verificar Docker ────────────────────
-      - name: Verificar que Docker está corriendo
+      # ── 2. Verificar Docker (WSL2 Engine via TCP) ────────────────────
+      - name: Levantar WSL2 + Docker Engine (si no está corriendo)
         shell: powershell
         run: |
-          Write-Host "[INFO] Verificando Docker Desktop..."
-          try {
-            $version = docker version --format '{{.Server.Version}}' 2>&1
-            if ($LASTEXITCODE -ne 0) { throw "Docker no responde" }
-            Write-Host "[OK] Docker Engine version: $version"
-            
-            $composeVersion = docker compose version --short 2>&1
-            Write-Host "[OK] Docker Compose version: $composeVersion"
-          } catch {
-            Write-Error "[ERROR] Docker Desktop no esta corriendo. Inicialo antes de ejecutar este workflow."
-            exit 1
+          $env:DOCKER_HOST = "tcp://localhost:2375"
+          Write-Host "[INFO] Iniciando WSL2 + Docker Engine (socat TCP bridge)..."
+
+          # Siempre reiniciar socat: mata instancia anterior y levanta nueva (idempotente)
+          # Nota: cmd /c suprime stderr de docker a nivel cmd.exe, evita NativeCommandError en PS
+          wsl -d Ubuntu -- bash -c "sudo service docker start 2>/dev/null; sleep 2; sudo pkill socat 2>/dev/null; sleep 1; nohup sudo socat TCP-LISTEN:2375,reuseaddr,fork UNIX-CLIENT:/var/run/docker.sock </dev/null >/dev/null 2>&1 & sleep 2; echo '[WSL2] docker + socat OK'"
+
+          Start-Sleep -Seconds 5
+          $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Docker Engine: $version"
+          } else {
+            Write-Host "[WARN] Primer intento fallido, reintentando en 10s..."
+            Start-Sleep -Seconds 10
+            $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "[OK] Docker Engine: $version"
+            } else {
+              Write-Error "[ERROR] No se pudo iniciar Docker Engine en WSL2."
+              exit 1
+            }
           }
+
+          $composeVersion = cmd /c "docker compose version --short 2>NUL"
+          Write-Host "[OK] Docker Compose: $composeVersion"
 
       # ══════════════════════════════════════════════
       # DETECCION DE PROXY (antes de build)
