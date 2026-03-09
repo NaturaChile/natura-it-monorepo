@@ -81,29 +81,27 @@ jobs:
         run: |
           $env:DOCKER_HOST = "tcp://localhost:2375"
 
-          Write-Host "[INFO] Despertando WSL2 Ubuntu..."
-          $p = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","WSL2 OK") -NoNewWindow -PassThru
-          if (-not $p.WaitForExit(30000)) {
-            $p.Kill()
-            Write-Host "[WARN] WSL2 tardo >30s, continuando..."
-          } else {
-            Write-Host "[OK] WSL2 Ubuntu respondio (exit $($p.ExitCode))"
-          }
-          Start-Sleep -Seconds 5
+          Write-Host "[1/4] Despertando WSL2 Ubuntu..."
+          $p = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec echo ok" -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Host "[WARN] WSL2 tardo >30s" }
+          else { Write-Host "[OK] WSL2 respondio (exit $($p.ExitCode))" }
 
+          Write-Host "[2/4] Iniciando docker daemon en WSL2..."
+          $p2 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec service docker start" -NoNewWindow -PassThru
+          if (-not $p2.WaitForExit(25000)) { $p2.Kill(); Write-Host "[WARN] docker start timeout" }
+          else { Write-Host "[OK] docker service start (exit $($p2.ExitCode))" }
+          Start-Sleep -Seconds 3
+
+          Write-Host "[3/4] Lanzando socat TCP bridge (async)..."
+          Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec /usr/bin/socat TCP-LISTEN:2375,reuseaddr,fork UNIX-CLIENT:/var/run/docker.sock" -NoNewWindow
+          Start-Sleep -Seconds 8
+
+          Write-Host "[4/4] Verificando conexion docker..."
           $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
           if (-not $ok) {
-            Write-Host "[INFO] Puerto 2375 cerrado. Lanzando socat en background (async)..."
-            Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
-            Start-Sleep -Seconds 10
-            $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
-          }
-
-          if (-not $ok) {
-            Write-Error "[ERROR] Docker (WSL2) no accesible en tcp://localhost:2375"
+            Write-Error "[ERROR] Puerto 2375 no disponible. Docker socket no accesible."
             exit 1
           }
-
           $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
           Write-Host "[OK] Docker Engine WSL2 Linux: $version"
           $cv = cmd /c "docker compose version --short 2>NUL"
