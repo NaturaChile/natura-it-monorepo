@@ -80,18 +80,25 @@ jobs:
         shell: powershell
         run: |
           $env:DOCKER_HOST = "tcp://localhost:2375"
-          Write-Host "[INFO] Iniciando WSL2 + Docker Engine (socat TCP bridge)..."
+          Write-Host "[INFO] Iniciando Docker service en WSL2..."
 
-          # Siempre reiniciar socat: mata instancia anterior y levanta nueva (idempotente)
-          # Nota: cmd /c suprime stderr de docker a nivel cmd.exe, evita NativeCommandError en PS
-          wsl -d Ubuntu -- bash -c "sudo service docker start 2>/dev/null; sleep 2; sudo pkill socat 2>/dev/null; sleep 1; nohup sudo socat TCP-LISTEN:2375,reuseaddr,fork UNIX-CLIENT:/var/run/docker.sock </dev/null >/dev/null 2>&1 & sleep 2; echo '[WSL2] docker + socat OK'"
+          # 1. Iniciar docker daemon (bloqueante, sale rapido)
+          wsl -d Ubuntu -- bash -c "sudo service docker start 2>/dev/null; echo '[WSL2] docker service OK'"
 
+          # 2. Matar socat previo (bloqueante, sale rapido)
+          wsl -d Ubuntu -- bash -c "sudo pkill -f 'socat.*2375' 2>/dev/null || true; echo '[WSL2] socat previo limpiado'"
+
+          # 3. Lanzar socat DETACHED con Start-Process (PowerShell NO espera, no cuelga)
+          Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", "Ubuntu", "--", "sudo", "socat", "TCP-LISTEN:2375,reuseaddr,fork", "UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
+          Write-Host "[INFO] socat lanzado en background, esperando 5s..."
           Start-Sleep -Seconds 5
+
+          # 4. Verificar (cmd /c evita NativeCommandError en PS)
           $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
           if ($LASTEXITCODE -eq 0) {
             Write-Host "[OK] Docker Engine: $version"
           } else {
-            Write-Host "[WARN] Primer intento fallido, reintentando en 10s..."
+            Write-Host "[WARN] No responde aun, reintentando en 10s..."
             Start-Sleep -Seconds 10
             $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
             if ($LASTEXITCODE -eq 0) {
