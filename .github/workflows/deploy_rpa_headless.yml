@@ -61,43 +61,34 @@ jobs:
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente en $dest"
 
-      - name: Levantar WSL2 + Docker Engine (si no está corriendo)
+      - name: Verificar Docker Engine (servicio Windows)
         shell: powershell
         run: |
-          $env:DOCKER_HOST = "tcp://localhost:2375"
-          Write-Host "[INFO] Iniciando Docker service en WSL2..."
+          $svc = Get-Service -Name "Docker" -ErrorAction SilentlyContinue
+          if ($null -eq $svc) { $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue }
 
-          # 1. Iniciar docker daemon (bloqueante, sale rapido)
-          wsl -d Ubuntu -- bash -c "sudo service docker start 2>/dev/null; echo '[WSL2] docker service OK'"
-
-          # 2. Matar socat previo (bloqueante, sale rapido)
-          wsl -d Ubuntu -- bash -c "sudo pkill -f 'socat.*2375' 2>/dev/null || true; echo '[WSL2] socat previo limpiado'"
-
-          # 3. Lanzar socat DETACHED con Start-Process (PowerShell NO espera, no cuelga)
-          Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", "Ubuntu", "--", "sudo", "socat", "TCP-LISTEN:2375,reuseaddr,fork", "UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
-          Write-Host "[INFO] socat lanzado en background, esperando 5s..."
-          Start-Sleep -Seconds 5
-
-          # 4. Verificar (cmd /c evita NativeCommandError en PS)
-          $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "[OK] Docker Engine: $version"
-          } else {
-            Write-Host "[WARN] No responde aun, reintentando en 10s..."
-            Start-Sleep -Seconds 10
-            $version = cmd /c "docker version --format `"{{.Server.Version}}`" 2>NUL"
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "[OK] Docker Engine: $version"
-            } else {
-              Write-Error "[ERROR] No se pudo iniciar Docker Engine en WSL2."
-              exit 1
-            }
+          if ($null -eq $svc) {
+            Write-Error "[ERROR] Servicio Docker Engine no encontrado en este servidor."
+            exit 1
           }
+
+          Write-Host "[INFO] Servicio: '$($svc.Name)' - Estado: $($svc.Status)"
+
+          if ($svc.Status -ne 'Running') {
+            Write-Host "[INFO] Iniciando Docker Engine..."
+            Start-Service -Name $svc.Name
+            $svc.WaitForStatus('Running', '00:00:30')
+            Write-Host "[OK] Docker Engine iniciado."
+          } else {
+            Write-Host "[OK] Docker Engine ya está corriendo."
+          }
+
+          $version = docker version --format "{{.Server.Version}}"
+          Write-Host "[OK] Docker Engine version: $version"
 
       - name: Deploy GSP Bot v5 (docker compose up --build)
         shell: powershell
         env:
-          DOCKER_HOST: "tcp://localhost:2375"
           GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
           GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
