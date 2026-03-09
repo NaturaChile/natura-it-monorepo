@@ -113,7 +113,7 @@ jobs:
 
           # 5. Lanzar socat fresco ASYNC — socket ya confirmado
           Write-Host "[5/5] Lanzando socat TCP bridge..."
-          Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
+          Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP4-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
           Start-Sleep -Seconds 4
 
           $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
