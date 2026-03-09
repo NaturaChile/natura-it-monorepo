@@ -64,6 +64,9 @@ jobs:
       - name: Verificar Docker Engine (servicio Windows)
         shell: powershell
         run: |
+          # Forzar named pipe (anula cualquier DOCKER_HOST residual apuntando a TCP/WSL2)
+          $env:DOCKER_HOST = "npipe:////./pipe/docker_engine"
+
           $svc = Get-Service -Name "Docker" -ErrorAction SilentlyContinue
           if ($null -eq $svc) { $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue }
 
@@ -84,11 +87,16 @@ jobs:
           }
 
           $version = docker version --format "{{.Server.Version}}"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] docker version falló. Verifica que '$env:USERNAME' esté en el grupo 'docker-users'."
+            exit 1
+          }
           Write-Host "[OK] Docker Engine version: $version"
 
       - name: Deploy GSP Bot v5 (docker compose up --build)
         shell: powershell
         env:
+          DOCKER_HOST: "npipe:////./pipe/docker_engine"
           GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
           GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}

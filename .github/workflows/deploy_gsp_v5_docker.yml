@@ -35,6 +35,9 @@ jobs:
     env:
       COMPOSE_DIR: rpa_headless_linux/gsp_v5
 
+      # Forzar named pipe: anula DOCKER_HOST residual (TCP/WSL2) que puede estar a nivel de máquina
+      DOCKER_HOST: "npipe:////./pipe/docker_engine"
+
       # --- Credenciales GSP (SECRETS) ---
       GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
       GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
@@ -76,6 +79,9 @@ jobs:
       - name: Verificar Docker Engine (servicio Windows)
         shell: powershell
         run: |
+          # Forzar named pipe (anula cualquier DOCKER_HOST residual apuntando a TCP/WSL2)
+          $env:DOCKER_HOST = "npipe:////./pipe/docker_engine"
+
           $svc = Get-Service -Name "Docker" -ErrorAction SilentlyContinue
           if ($null -eq $svc) { $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue }
 
@@ -96,6 +102,10 @@ jobs:
           }
 
           $version = docker version --format "{{.Server.Version}}"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "[ERROR] docker version falló. Verifica que '$env:USERNAME' esté en el grupo 'docker-users'."
+            exit 1
+          }
           Write-Host "[OK] Docker Engine version: $version"
 
           $composeVersion = docker compose version --short
