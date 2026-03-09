@@ -48,6 +48,9 @@ jobs:
       # --- Redis (SECRET) ---
       REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
 
+      # --- Gmail OAuth2 Token (SECRET) ---
+      GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+
       # --- Workers / Celery (VARIABLES) ---
       WORKER_COUNT: ${{ github.event.inputs.scale_workers || '3' }}
       CELERY_CONCURRENCY: ${{ vars.CELERY_CONCURRENCY || '1' }}
