@@ -263,6 +263,70 @@ async def send_test_email(
         raise HTTPException(500, f"Error sending test email: {e}")
 
 
+@app.post("/test-email/lider")
+async def send_test_email_lider(
+    to: str = Query(..., description="Email del destinatario de prueba"),
+    lider: str = Query("María González", description="Nombre de la líder"),
+    sector: str = Query("Sector Oriente", description="Nombre del sector"),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+):
+    """Send a test líder email with sample consultora data."""
+    from shared.email.send_emails import EmailOrchestrator
+
+    sample_consultoras = [
+        {"cb": "10028439", "consultora_nombre": "Ana Pérez", "estado": "Completo"},
+        {"cb": "10031245", "consultora_nombre": "Carla Muñoz", "estado": "Completo"},
+        {"cb": "10045678", "consultora_nombre": "Luisa Rojas", "estado": "Parcialmente Completo"},
+        {"cb": "10052301", "consultora_nombre": "Patricia Silva", "estado": "Completo"},
+        {"cb": "10067890", "consultora_nombre": "Daniela Torres", "estado": "Parcialmente Completo"},
+    ]
+
+    try:
+        orch = EmailOrchestrator()
+        result = orch.send_lider(
+            to=to,
+            lider_nombre=lider,
+            nombre_sector=sector,
+            total_completos=3,
+            total_parciales=2,
+            consultoras=sample_consultoras,
+            evento=evento,
+        )
+        return {"status": "sent", "to": to, "type": "lider", "detail": result}
+    except Exception as e:
+        raise HTTPException(500, f"Error sending test líder email: {e}")
+
+
+@app.post("/test-email/gerente")
+async def send_test_email_gerente(
+    to: str = Query(..., description="Email del destinatario de prueba"),
+    gerente: str = Query("Roberto Fernández", description="Nombre del gerente"),
+    gerencia: str = Query("Gerencia Zona Central", description="Nombre de la gerencia"),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+):
+    """Send a test gerente email with sample líder/sector data."""
+    from shared.email.send_emails import EmailOrchestrator
+
+    sample_lideres = [
+        {"lider_nombre": "María González", "nombre_sector": "Sector Oriente", "completos": 12, "parciales": 3},
+        {"lider_nombre": "Carmen Vidal", "nombre_sector": "Sector Poniente", "completos": 8, "parciales": 5},
+        {"lider_nombre": "Francisca López", "nombre_sector": "Sector Norte", "completos": 15, "parciales": 1},
+    ]
+
+    try:
+        orch = EmailOrchestrator()
+        result = orch.send_gerente(
+            to=to,
+            gn_nombre=gerente,
+            nombre_gerencia=gerencia,
+            lideres=sample_lideres,
+            evento=evento,
+        )
+        return {"status": "sent", "to": to, "type": "gerente", "detail": result}
+    except Exception as e:
+        raise HTTPException(500, f"Error sending test gerente email: {e}")
+
+
 # ── Orders ────────────────────────────────────
 
 @app.get("/orders/{order_id}", response_model=OrderOut)
