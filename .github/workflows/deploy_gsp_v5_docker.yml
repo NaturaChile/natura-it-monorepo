@@ -75,28 +75,37 @@ jobs:
       - name: Descargar código del repositorio
         uses: actions/checkout@v4
 
-      # ── 2. Verificar Docker Engine (servicio Windows) ────────────────────
+      # ── 2. Verificar Docker (WSL2 Engine via TCP) ────────────────────
       - name: Verificar Docker WSL2 (Linux containers via TCP)
         shell: powershell
         run: |
           $env:DOCKER_HOST = "tcp://localhost:2375"
 
+          # 1. Despertar WSL2
           Write-Host "[1/4] Despertando WSL2 Ubuntu..."
-          $p = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec echo ok" -NoNewWindow -PassThru
-          if (-not $p.WaitForExit(30000)) { $p.Kill(); Write-Host "[WARN] WSL2 tardo >30s" }
-          else { Write-Host "[OK] WSL2 respondio (exit $($p.ExitCode))" }
+          $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
+          if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
+          Write-Host "[OK] WSL2 respondio (exit $($p1.ExitCode))"
 
-          Write-Host "[2/4] Iniciando docker daemon en WSL2..."
-          $p2 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec service docker start" -NoNewWindow -PassThru
-          if (-not $p2.WaitForExit(25000)) { $p2.Kill(); Write-Host "[WARN] docker start timeout" }
-          else { Write-Host "[OK] docker service start (exit $($p2.ExitCode))" }
+          # 2. Matar socat previo en :2375 (puede quedar de boot cmd con docker muerto)
+          Write-Host "[2/4] Limpiando socat previo en :2375..."
+          $p2 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","-x","socat") -NoNewWindow -PassThru
+          if (-not $p2.WaitForExit(8000)) { $p2.Kill() }
+          Start-Sleep -Seconds 2
+
+          # 3. Iniciar docker daemon (ruta completa /usr/sbin/service, no 'service' que no existe como binario)
+          Write-Host "[3/4] Iniciando docker daemon..."
+          $p3 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/sbin/service","docker","start") -NoNewWindow -PassThru
+          if (-not $p3.WaitForExit(25000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
+          else { Write-Host "[OK] docker start (exit $($p3.ExitCode))" }
           Start-Sleep -Seconds 3
 
-          Write-Host "[3/4] Lanzando socat TCP bridge (async)..."
-          Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root --exec /usr/bin/socat TCP-LISTEN:2375,reuseaddr,fork UNIX-CLIENT:/var/run/docker.sock" -NoNewWindow
+          # 4. Lanzar socat fresco ASYNC
+          Write-Host "[4/4] Lanzando socat TCP bridge..."
+          Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
           Start-Sleep -Seconds 8
 
-          Write-Host "[4/4] Verificando conexion docker..."
+          # 5. Verificar
           $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
           if (-not $ok) {
             Write-Error "[ERROR] Puerto 2375 no disponible. Docker socket no accesible."
