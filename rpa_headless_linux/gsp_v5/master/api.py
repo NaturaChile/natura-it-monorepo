@@ -236,7 +236,7 @@ async def send_test_email(
     Use is_partial=true to preview the partial variant (with product tables).
     Use is_partial=false (default) to preview the complete variant.
     """
-    from shared.email.send_emails import EmailOrchestrator
+    from shared.email.send_emails import EmailOrchestrator, DEFAULT_CC
 
     sample_products = [
         {"product_code": "88934", "product_name": "Luna Absoluta Perfume de Mujer", "status": "ok", "error_message": ""},
@@ -257,10 +257,38 @@ async def send_test_email(
             products=sample_products,
             is_partial=is_partial,
             evento=evento,
+            cc=DEFAULT_CC,
         )
         return {"status": "sent", "to": to, "is_partial": is_partial, "detail": result}
     except Exception as e:
         raise HTTPException(500, f"Error sending test email: {e}")
+
+
+@app.post("/test-email/batch/{batch_id}")
+async def send_test_email_batch(
+    batch_id: int,
+    to: str = Query("ignaciosolar.experis@natura.net", description="Email de prueba (todos los correos van aquí)"),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+    db: Session = Depends(get_db),
+):
+    """Send real batch notifications (data real de productos y consultoras)
+    pero redirigidos a un solo correo de prueba.
+
+    Usa los datos reales del batch_id (órdenes, productos, CSV) pero TODOS
+    los correos (consultora, líder, gerente) se envían al email indicado
+    en el parámetro 'to', sin CC.
+    """
+    from shared.email.send_emails import send_batch_notifications
+
+    result = send_batch_notifications(
+        batch_id=batch_id,
+        db=db,
+        evento=evento,
+        override_to=to,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    return result
 
 
 @app.post("/test-email/lider")
@@ -271,7 +299,7 @@ async def send_test_email_lider(
     evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
 ):
     """Send a test líder email with sample consultora data."""
-    from shared.email.send_emails import EmailOrchestrator
+    from shared.email.send_emails import EmailOrchestrator, DEFAULT_CC
 
     sample_consultoras = [
         {"cb": "10028439", "consultora_nombre": "Ana Pérez", "estado": "Completo"},
@@ -291,6 +319,7 @@ async def send_test_email_lider(
             total_parciales=2,
             consultoras=sample_consultoras,
             evento=evento,
+            cc=DEFAULT_CC,
         )
         return {"status": "sent", "to": to, "type": "lider", "detail": result}
     except Exception as e:
@@ -305,7 +334,7 @@ async def send_test_email_gerente(
     evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
 ):
     """Send a test gerente email with sample líder/sector data."""
-    from shared.email.send_emails import EmailOrchestrator
+    from shared.email.send_emails import EmailOrchestrator, DEFAULT_CC
 
     sample_lideres = [
         {"lider_nombre": "María González", "nombre_sector": "Sector Oriente", "completos": 12, "parciales": 3},
@@ -321,6 +350,7 @@ async def send_test_email_gerente(
             nombre_gerencia=gerencia,
             lideres=sample_lideres,
             evento=evento,
+            cc=DEFAULT_CC,
         )
         return {"status": "sent", "to": to, "type": "gerente", "detail": result}
     except Exception as e:
