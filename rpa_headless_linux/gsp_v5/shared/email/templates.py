@@ -178,7 +178,7 @@ sup, sub { font-size: 75%; line-height: 0; }
 <td class="column column-1" width="100%" style="mso-table-lspace:0pt;mso-table-rspace:0pt;font-weight:400;text-align:left;vertical-align:top;">
 <table class="heading_block block-1" width="100%" border="0" cellpadding="10" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
 <tr><td class="pad">
-<h1 style="margin:0;color:#ffffff;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:32px;font-weight:700;letter-spacing:normal;line-height:1.2;text-align:center;margin-top:0;margin-bottom:0;mso-line-height-alt:38px;">
+<h1 style="margin:0;color:#ffffff;direction:ltr;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:normal;line-height:1.4;text-align:center;margin-top:0;margin-bottom:0;mso-line-height-alt:22px;">
 <span style="word-break:break-word;">%%VARIABLE%%</span></h1>
 </td></tr>
 </table>
