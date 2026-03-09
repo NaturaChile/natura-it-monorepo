@@ -35,8 +35,8 @@ jobs:
     env:
       COMPOSE_DIR: rpa_headless_linux/gsp_v5
 
-      # Forzar named pipe: anula DOCKER_HOST residual (TCP/WSL2) que puede estar a nivel de máquina
-      DOCKER_HOST: "npipe:////./pipe/docker_engine"
+      # WSL2 Linux containers via socat TCP bridge
+      DOCKER_HOST: "tcp://localhost:2375"
 
       # --- Credenciales GSP (SECRETS) ---
       GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
@@ -76,40 +76,38 @@ jobs:
         uses: actions/checkout@v4
 
       # ── 2. Verificar Docker Engine (servicio Windows) ────────────────────
-      - name: Verificar Docker Engine (servicio Windows)
+      - name: Verificar Docker WSL2 (Linux containers via TCP)
         shell: powershell
         run: |
-          # Forzar named pipe (anula cualquier DOCKER_HOST residual apuntando a TCP/WSL2)
-          $env:DOCKER_HOST = "npipe:////./pipe/docker_engine"
+          $env:DOCKER_HOST = "tcp://localhost:2375"
 
-          $svc = Get-Service -Name "Docker" -ErrorAction SilentlyContinue
-          if ($null -eq $svc) { $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue }
-
-          if ($null -eq $svc) {
-            Write-Error "[ERROR] Servicio Docker Engine no encontrado en este servidor."
-            exit 1
-          }
-
-          Write-Host "[INFO] Servicio: '$($svc.Name)' - Estado: $($svc.Status)"
-
-          if ($svc.Status -ne 'Running') {
-            Write-Host "[INFO] Iniciando Docker Engine..."
-            Start-Service -Name $svc.Name
-            $svc.WaitForStatus('Running', '00:00:30')
-            Write-Host "[OK] Docker Engine iniciado."
+          Write-Host "[INFO] Despertando WSL2 Ubuntu..."
+          $p = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","WSL2 OK") -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(30000)) {
+            $p.Kill()
+            Write-Host "[WARN] WSL2 tardo >30s, continuando..."
           } else {
-            Write-Host "[OK] Docker Engine ya está corriendo."
+            Write-Host "[OK] WSL2 Ubuntu respondio (exit $($p.ExitCode))"
+          }
+          Start-Sleep -Seconds 5
+
+          $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+          if (-not $ok) {
+            Write-Host "[INFO] Puerto 2375 cerrado. Lanzando socat en background (async)..."
+            Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
+            Start-Sleep -Seconds 10
+            $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
           }
 
-          $version = docker version --format "{{.Server.Version}}"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "[ERROR] docker version falló. Verifica que '$env:USERNAME' esté en el grupo 'docker-users'."
+          if (-not $ok) {
+            Write-Error "[ERROR] Docker (WSL2) no accesible en tcp://localhost:2375"
             exit 1
           }
-          Write-Host "[OK] Docker Engine version: $version"
 
-          $composeVersion = docker compose version --short
-          Write-Host "[OK] Docker Compose: $composeVersion"
+          $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
+          Write-Host "[OK] Docker Engine WSL2 Linux: $version"
+          $cv = cmd /c "docker compose version --short 2>NUL"
+          Write-Host "[OK] Docker Compose: $cv"
 
       # ══════════════════════════════════════════════
       # DETECCION DE PROXY (antes de build)

@@ -61,42 +61,48 @@ jobs:
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente en $dest"
 
-      - name: Verificar Docker Engine (servicio Windows)
+      - name: Verificar Docker WSL2 (Linux containers via TCP)
         shell: powershell
         run: |
-          # Forzar named pipe (anula cualquier DOCKER_HOST residual apuntando a TCP/WSL2)
-          $env:DOCKER_HOST = "npipe:////./pipe/docker_engine"
+          # WSL2 Ubuntu corre dockerd Linux + socat TCP-LISTEN:2375 -> /var/run/docker.sock
+          # El Windows Docker Engine (npipe) corre en modo Windows containers -> NO sirve para Linux images
+          $env:DOCKER_HOST = "tcp://localhost:2375"
 
-          $svc = Get-Service -Name "Docker" -ErrorAction SilentlyContinue
-          if ($null -eq $svc) { $svc = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue }
-
-          if ($null -eq $svc) {
-            Write-Error "[ERROR] Servicio Docker Engine no encontrado en este servidor."
-            exit 1
-          }
-
-          Write-Host "[INFO] Servicio: '$($svc.Name)' - Estado: $($svc.Status)"
-
-          if ($svc.Status -ne 'Running') {
-            Write-Host "[INFO] Iniciando Docker Engine..."
-            Start-Service -Name $svc.Name
-            $svc.WaitForStatus('Running', '00:00:30')
-            Write-Host "[OK] Docker Engine iniciado."
+          # 1. Despertar WSL2 con timeout (el boot cmd de wsl.conf inicia docker+socat)
+          # --exec echo no invoca login shell => retorna rapido; WaitForExit evita hang infinito
+          Write-Host "[INFO] Despertando WSL2 Ubuntu..."
+          $p = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","WSL2 OK") -NoNewWindow -PassThru
+          if (-not $p.WaitForExit(30000)) {
+            $p.Kill()
+            Write-Host "[WARN] WSL2 tardo >30s, continuando..."
           } else {
-            Write-Host "[OK] Docker Engine ya está corriendo."
+            Write-Host "[OK] WSL2 Ubuntu respondio (exit $($p.ExitCode))"
+          }
+          Start-Sleep -Seconds 5
+
+          # 2. Verificar si socat esta escuchando en :2375
+          $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+          if (-not $ok) {
+            Write-Host "[INFO] Puerto 2375 cerrado. Lanzando socat en background (async)..."
+            # Start-Process sin -Wait => PowerShell NO espera, el step continua
+            Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","socat","TCP-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
+            Start-Sleep -Seconds 10
+            $ok = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
           }
 
-          $version = docker version --format "{{.Server.Version}}"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "[ERROR] docker version falló. Verifica que '$env:USERNAME' esté en el grupo 'docker-users'."
+          if (-not $ok) {
+            Write-Error "[ERROR] Docker (WSL2) no accesible en tcp://localhost:2375"
             exit 1
           }
-          Write-Host "[OK] Docker Engine version: $version"
+
+          # cmd /c evita NativeCommandError de PowerShell con stderr de docker
+          $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
+          Write-Host "[OK] Docker Engine WSL2 Linux: $version"
 
       - name: Deploy GSP Bot v5 (docker compose up --build)
         shell: powershell
         env:
-          DOCKER_HOST: "npipe:////./pipe/docker_engine"
+          DOCKER_HOST: "tcp://localhost:2375"
           GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
           GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
