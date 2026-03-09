@@ -78,26 +78,34 @@ jobs:
           if (-not $p2.WaitForExit(8000)) { $p2.Kill() }
           Start-Sleep -Seconds 2
 
-          # 3. Iniciar docker daemon (ruta completa /usr/sbin/service)
+          # 3. Iniciar docker daemon (-- usa shell completo; --exec falla silenciosamente)
           Write-Host "[3/5] Iniciando docker daemon..."
-          $p3 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/sbin/service","docker","start") -NoNewWindow -PassThru
-          if (-not $p3.WaitForExit(25000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
-          else { Write-Host "[OK] docker start (exit $($p3.ExitCode))" }
+          $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker start" -NoNewWindow -PassThru
+          if (-not $p3.WaitForExit(30000)) { $p3.Kill(); Write-Host "[WARN] docker start timeout" }
+          else { Write-Host "[INFO] service docker start exited ($($p3.ExitCode))" }
 
-          # 4. Esperar /var/run/docker.sock (hasta 15s) — sin socket socat sale instantáneo
+          # 4. Esperar /var/run/docker.sock (hasta 20s)
           Write-Host "[4/5] Esperando /var/run/docker.sock..."
           $socketReady = $false
-          for ($i = 1; $i -le 15; $i++) {
+          for ($i = 1; $i -le 20; $i++) {
             $ps = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","test","-S","/var/run/docker.sock") -NoNewWindow -PassThru
             if ($ps.WaitForExit(3000) -and $ps.ExitCode -eq 0) {
               Write-Host "[OK] Socket listo (iter $i)"; $socketReady = $true; break
             }
             Start-Sleep -Seconds 1
           }
-          if (-not $socketReady) { Write-Error "[ERROR] /var/run/docker.sock no disponible en 15s"; exit 1 }
+          if (-not $socketReady) {
+            Write-Host "[DIAG] Proceso dockerd:"
+            $pD = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pgrep","-a","dockerd") -NoNewWindow -PassThru
+            $pD.WaitForExit(5000)
+            Write-Host "[DIAG] Docker log:"
+            $pL = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- tail -20 /var/log/docker.log" -NoNewWindow -PassThru
+            $pL.WaitForExit(5000)
+            Write-Error "[ERROR] /var/run/docker.sock no disponible en 20s"; exit 1
+          }
 
-          # 5. Lanzar socat fresco ASYNC — socket ya confirmado
-          Write-Host "[5/5] Lanzando socat TCP bridge..."
+          # 5. Lanzar socat fresco ASYNC (TCP4 fuerza IPv4 — WSL2 forwarding)
+          Write-Host "[5/5] Lanzando socat TCP4 bridge..."
           Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","/usr/bin/socat","TCP4-LISTEN:2375,reuseaddr,fork","UNIX-CLIENT:/var/run/docker.sock") -NoNewWindow
           Start-Sleep -Seconds 4
 
