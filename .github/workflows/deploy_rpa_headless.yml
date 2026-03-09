@@ -61,15 +61,43 @@ jobs:
           
           Write-Host "[SUCCESS] Archivos copiados exitosamente en $dest"
 
-      - name: Verificar Docker Desktop
+      - name: Levantar WSL2 + Docker Engine (si no está corriendo)
         shell: powershell
         run: |
-          Write-Host "[INFO] Verificando Docker Desktop..."
-          try {
-            $version = docker version --format '{{.Server.Version}}' 2>&1
-            if ($LASTEXITCODE -ne 0) { throw "Docker no responde" }
-            Write-Host "[OK] Docker Engine version: $version"
-          } catch {
-            Write-Host "[WARN] Docker Desktop no esta corriendo. El deploy de archivos fue exitoso pero Docker no esta disponible."
-            Write-Host "[WARN] Para levantar GSP Bot v5 ejecuta el workflow manual: GSP Bot v5 - Deploy Docker"
+          # Forzar contexto WSL2 (dockerd via socat TCP)
+          $env:DOCKER_HOST = "tcp://localhost:2375"
+
+          Write-Host "[INFO] Verificando Docker Engine (WSL2)..."
+          $version = docker version --format "{{.Server.Version}}" 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Docker Engine ya está corriendo: $version"
+          } else {
+            Write-Host "[INFO] Docker no responde, iniciando WSL2 + docker..."
+            wsl -d Ubuntu -- sudo /usr/local/bin/start-docker-tcp.sh
+            Start-Sleep -Seconds 8
+            $version = docker version --format "{{.Server.Version}}" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "[OK] Docker Engine iniciado: $version"
+            } else {
+              Write-Error "[ERROR] No se pudo iniciar Docker Engine en WSL2."
+              exit 1
+            }
           }
+
+      - name: Deploy GSP Bot v5 (docker compose up --build)
+        shell: powershell
+        env:
+          DOCKER_HOST: "tcp://localhost:2375"
+          GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
+          GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          FLOWER_BASIC_AUTH: ${{ secrets.FLOWER_BASIC_AUTH }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+        working-directory: rpa_headless_linux/gsp_v5
+        run: |
+          Write-Host "[INFO] Desplegando GSP Bot v5..."
+          docker compose up -d --build
+          Start-Sleep -Seconds 10
+          docker compose ps
+          Write-Host "[OK] Deploy completado."
