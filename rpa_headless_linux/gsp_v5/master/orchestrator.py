@@ -160,6 +160,48 @@ class Orchestrator:
         finally:
             db.close()
 
+    def reprocess_orders_with_missing_products(self, batch_id: int) -> dict:
+        """Re-queue orders in a batch that contain products with
+        status OUT_OF_STOCK or NOT_FOUND.
+
+        This will set the order status to `retrying`, increment retry_count
+        and dispatch `process_order` for each matching order.
+        """
+        db = self._db()
+        try:
+            orders = (
+                db.query(Order)
+                .join(Order.products)
+                .filter(
+                    Order.batch_id == batch_id,
+                    OrderProduct.status.in_([ProductStatus.OUT_OF_STOCK, ProductStatus.NOT_FOUND]),
+                )
+                .distinct()
+                .all()
+            )
+
+            requeued = 0
+            for order in orders:
+                # Prevent requeuing orders currently in progress
+                if order.status == OrderStatus.IN_PROGRESS:
+                    continue
+
+                order.status = OrderStatus.RETRYING
+                order.retry_count = (order.retry_count or 0) + 1
+                order.error_message = None
+                order.error_step = None
+                db.commit()
+
+                task = process_order.apply_async(args=[order.id], queue="orders")
+                order.celery_task_id = task.id
+                db.commit()
+                requeued += 1
+
+            logger.info("reprocess_missing_requested", batch_id=batch_id, requeued=requeued)
+            return {"success": True, "batch_id": batch_id, "requeued": requeued}
+        finally:
+            db.close()
+
     # ── Queries ───────────────────────────────
 
     def get_batch(self, batch_id: int) -> Optional[Batch]:

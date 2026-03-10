@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from config.settings import get_settings
 from shared.database import get_db, init_db
 from shared.logging_config import setup_logging, get_logger
-from shared.models import Batch, Order, OrderProduct, OrderLog, OrderStatus, BatchStatus
+from shared.models import Batch, Order, OrderProduct, OrderLog, OrderStatus, BatchStatus, ProductStatus
 from shared.schemas import (
     BatchCreate, BatchOut, BatchDetail, BatchStats,
     OrderOut, OrderLogOut, SystemStats,
@@ -189,6 +189,31 @@ async def cancel_batch(batch_id: int):
 async def retry_batch(batch_id: int):
     """Retry all failed orders in a batch."""
     result = orchestrator.retry_batch_failures(batch_id)
+    return result
+
+
+@app.post("/batches/{batch_id}/reprocess-missing")
+async def reprocess_missing_products(batch_id: int):
+    """Reprocess orders that contain products with status OUT_OF_STOCK or NOT_FOUND.
+
+    This will requeue orders (set to `retrying`) and dispatch them to workers.
+    """
+    result = orchestrator.reprocess_orders_with_missing_products(batch_id)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error"))
+    return result
+
+
+@app.post("/admin/batches/{batch_id}/reprocess-failed")
+async def admin_reprocess_failed(batch_id: int):
+    """Admin endpoint: trigger reprocessing of all failed orders in a batch.
+
+    This is equivalent to the public `/batches/{batch_id}/retry` but exposed
+    under the `/admin` namespace for operational use.
+    """
+    result = orchestrator.retry_batch_failures(batch_id)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error"))
     return result
 
 
@@ -575,3 +600,212 @@ async def get_screenshot(filename: str):
     if not path.exists():
         raise HTTPException(404, "Screenshot not found")
     return FileResponse(path, media_type="image/png")
+
+
+@app.post("/admin/orders/fail/upload")
+async def upload_orders_fail_csv(
+    file: UploadFile = File(...),
+    reason: str = Query("Marked as failed via CSV upload", description="Motivo opcional para el fallo"),
+    db: Session = Depends(get_db),
+):
+    """Upload a CSV/Excel file with `order_id` column and mark those orders as FAILED.
+
+    Expected file format:
+        order_id,reason(optional)
+        123
+        456,No stock
+        ...
+
+    For each found order the endpoint will:
+      - set `order.status = OrderStatus.FAILED`
+      - set `order.error_message` (from file or `reason`)
+      - set `order.finished_at` to now
+      - insert an `OrderLog` entry with level=ERROR and step='admin_mark_failed'
+    Returns a summary with counts and any not-found ids.
+    """
+    import pandas as pd
+    from datetime import datetime, timezone
+
+    if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(400, "Only CSV and Excel files are supported")
+
+    # Save uploaded file
+    upload_dir = settings.base_dir / "data" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    dest = upload_dir / f"orders_fail_{ts}_{file.filename}"
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Parse file
+    try:
+        if dest.suffix in (".xlsx", ".xls"):
+            df = pd.read_excel(dest)
+        else:
+            df = pd.read_csv(dest)
+
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+        if "order_id" not in df.columns:
+            raise ValueError(f"Missing 'order_id' column. Found: {list(df.columns)}")
+
+        # If there's a per-row reason column use it; otherwise use query `reason`
+        per_row_reason = "reason" in df.columns
+
+        ids = df["order_id"].astype(str).str.strip().unique().tolist()
+        ids = [i for i in ids if i and i != "nan"]
+
+        if not ids:
+            raise ValueError("No valid order_id values found in file")
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("orders_fail_upload_parse_failed", error=str(e))
+        raise HTTPException(500, f"Failed to parse file: {e}")
+
+    # Apply updates
+    now = datetime.now(timezone.utc)
+    updated = []
+    not_found = []
+    skipped = []
+
+    for oid in ids:
+        try:
+            oid_int = int(oid)
+        except Exception:
+            not_found.append(oid)
+            continue
+
+        order = db.query(Order).filter(Order.id == oid_int).first()
+        if not order:
+            not_found.append(oid_int)
+            continue
+
+        # Determine reason for this row
+        row_reason = reason
+        if per_row_reason:
+            # find first matching row for this order id
+            matches = df[df["order_id"].astype(str).str.strip() == str(oid)]
+            if not matches.empty and "reason" in matches.columns:
+                val = str(matches.iloc[0]["reason"]).strip()
+                if val and val.lower() != "nan":
+                    row_reason = val
+
+        # Only update if not already failed
+        if order.status == OrderStatus.FAILED:
+            skipped.append(oid_int)
+            continue
+
+        order.status = OrderStatus.FAILED
+        order.error_message = row_reason
+        order.finished_at = now
+
+        # increment batch failed count if applicable
+        try:
+            if order.batch is not None:
+                order.batch.failed_orders = (order.batch.failed_orders or 0) + 1
+        except Exception:
+            pass
+
+        # add an order log
+        log = OrderLog(
+            order_id=order.id,
+            level="ERROR",
+            step="admin_mark_failed",
+            message=row_reason or "Marked failed via CSV upload",
+            details={"source": file.filename},
+            timestamp=now,
+        )
+        db.add(log)
+        updated.append(order.id)
+
+    # Commit all changes
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error("orders_fail_commit_error", error=str(e))
+        db.rollback()
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    return {
+        "action": "mark_orders_failed",
+        "source_file": file.filename,
+        "processed": len(ids),
+        "updated": len(updated),
+        "skipped_already_failed": len(skipped),
+        "not_found": not_found,
+        "updated_ids": updated,
+    }
+
+
+
+@app.post("/admin/orders/{order_id}/confirm")
+async def admin_mark_order_complete(
+    order_id: int,
+    note: str = Query("Marked complete via admin", description="Optional note for the audit log"),
+    db: Session = Depends(get_db),
+):
+    """Admin endpoint: mark a single order as COMPLETED and set all products as ADDED/ok.
+
+    This forcibly updates the order and its product lines, clears error messages,
+    sets timestamps and inserts an `OrderLog` entry with step `admin_mark_complete`.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    # If already completed, skip
+    if order.status == OrderStatus.COMPLETED:
+        return {"action": "mark_order_complete", "order_id": order.id, "status": "already_completed"}
+
+    # Update order
+    order.status = OrderStatus.COMPLETED
+    order.error_message = None
+    order.error_step = None
+    order.finished_at = now
+
+    # Update products to reflect they were successfully added
+    updated_products = []
+    for p in order.products:
+        p.status = ProductStatus.ADDED
+        p.error_message = None
+        p.added_at = now
+        updated_products.append(p.id)
+
+    # Increment batch counters if applicable
+    try:
+        if order.batch is not None:
+            order.batch.completed_orders = (order.batch.completed_orders or 0) + 1
+    except Exception:
+        pass
+
+    # Add an audit log
+    log = OrderLog(
+        order_id=order.id,
+        level="INFO",
+        step="admin_mark_complete",
+        message=note or "Marked complete via admin",
+        details={"updated_products": updated_products},
+        timestamp=now,
+    )
+    db.add(log)
+
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error("admin_mark_complete_commit_error", error=str(e))
+        db.rollback()
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    return {
+        "action": "mark_order_complete",
+        "order_id": order.id,
+        "updated_products": updated_products,
+        "status": "completed",
+    }
