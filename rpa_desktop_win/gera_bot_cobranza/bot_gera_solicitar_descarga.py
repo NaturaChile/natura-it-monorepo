@@ -4,17 +4,20 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError
 
+# 1. Cargar configuración desde .env
 load_dotenv()
 
 URL_SGI = os.getenv("URL_SGI")
 USUARIO = os.getenv("USUARIO")
 CONTRASENA = os.getenv("CONTRASENA")
 
+# Definición de los dos rangos solicitados
 RANGOS = [{"inicio": "15", "fin": "180"}, {"inicio": "181", "fin": "9000"}]
 
 async def solicitar_reportes():
-    print("🚀 Iniciando Bot Solicitador con Horarios Escalonados...")
+    print("🚀 Iniciando Bot Solicitador (Corrección de formato de hora)...")
     async with async_playwright() as p:
+        # slow_mo ayuda a que el sistema procese cada tecla enviada
         browser = await p.chromium.launch(headless=False, slow_mo=800)
         page = await browser.new_page()
         
@@ -22,7 +25,7 @@ async def solicitar_reportes():
             print(f"🔗 Conectando a {URL_SGI}...")
             await page.goto(URL_SGI, timeout=60000)
             
-            # Login
+            # Proceso de Login
             await page.fill("input#txtUsuario_T2", USUARIO)
             await page.fill("input#txtSenha_T2", CONTRASENA)
             await page.click("a#btnLogin_btn")
@@ -30,89 +33,85 @@ async def solicitar_reportes():
             print("✅ Sesión iniciada.")
 
             # --- LÓGICA DE HORA ESCALONADA ---
-            # Empezamos a las 04:00
             hora_base = datetime.strptime("04:00", "%H:%M")
 
             for index, rango in enumerate(RANGOS):
-                # Calculamos la hora para este rango: el primero 04:00, el segundo 04:05
-                hora_agendada = (hora_base + timedelta(minutes=5 * index)).strftime("%H:%M")
+                # Generamos los 4 caracteres exactos: "0400" o "0405"
+                hora_objeto = hora_base + timedelta(minutes=5 * index)
+                hora_agendada_input = hora_objeto.strftime("%H%M") 
                 
                 print(f"\n📂 Procesando rango {rango['inicio']} a {rango['fin']}...")
-                print(f"⏰ Horario asignado para este reporte: {hora_agendada}")
+                print(f"⏰ Horario objetivo: {hora_objeto.strftime('%H:%M')}")
                 
                 # Navegación
                 await page.click('a:has-text("Recibir")')
-                await page.wait_for_timeout(2000)
+                await asyncio.sleep(2)
                 await page.click('a.accordionLink:has-text("Control Títulos")')
-                await page.wait_for_timeout(2000)
+                await asyncio.sleep(2)
                 await page.click('span:has-text("Administrar Deudas")', force=True)
                 
-                # Filtros de días de atraso
+                # Filtros
                 await page.wait_for_selector("input#ContentPlaceHolder1_ControleBuscaTitulo_txtDiasAtrasoInicio_T2")
                 await page.fill("input#ContentPlaceHolder1_ControleBuscaTitulo_txtDiasAtrasoInicio_T2", rango['inicio'])
                 await page.fill("input#ContentPlaceHolder1_ControleBuscaTitulo_txtDiasAtrasoFim_T2", rango['fin'])
                 
-                # Selección 'Pendientes'
                 try:
-                    # Usando el selector select_option que definimos anteriormente para Situación de Pago
                     await page.select_option("select#ContentPlaceHolder1_ControleBuscaTitulo_ddlSituacaoPagamento_d1", "1")
-                    print("🔔 Selección 'Pendientes' aplicada.")
                 except:
                     pass
 
-                print("🔎 Consultando...")
                 await page.click("a#ContentPlaceHolder1_ControleBuscaTitulo_btnBuscar_btn")
                 
-                # Esperar botón Exportar visible
+                # Esperar Exportar
                 selector_exportar = "a#ContentPlaceHolder1_ControleBuscaTitulo_btnExportar_btn"
-                print("⏳ Esperando que el servidor habilite el botón de Exportar...")
                 await page.wait_for_selector(selector_exportar, state="visible", timeout=600000)
-                
-                # Clic en Exportar
                 await page.click(selector_exportar)
-                print("⚙️ Abriendo configuración de agenda...")
-
-                # Esperar popup/agendamiento
+                
+                # Configuración de Agendamiento
                 selector_radio_async = "input#agendamentoExportacao_rbnExcelAssincrono"
-                await page.wait_for_selector(selector_radio_async, state="visible", timeout=30000)
+                await page.wait_for_selector(selector_radio_async, state="visible")
                 await page.click(selector_radio_async, force=True)
 
-                # Seleccionar ejecución agendada
                 selector_exec_agendar = "input#agendamentoExportacao_rbnExecucaoExcelAgendar"
-                await page.wait_for_selector(selector_exec_agendar, state="visible", timeout=15000)
+                await page.wait_for_selector(selector_exec_agendar, state="visible")
                 await page.click(selector_exec_agendar, force=True)
 
-                # Calcular fecha de mañana
+                # --- CORRECCIÓN DEFINITIVA DE HORA (4 CARACTERES) ---
                 fecha_mañana = (datetime.now() + timedelta(days=1)).strftime("%d%m%Y")
                 selector_fecha = "input#agendamentoExportacao_dataAgendamentoExcelAssincrono_T2"
                 selector_hora = "input#agendamentoExportacao_horarioAgendamentoExcelAssincrono_T2"
 
-                # Rellenar fecha y LA NUEVA HORA DINÁMICA
+                # Llenar fecha normalmente
                 await page.fill(selector_fecha, fecha_mañana)
-                await page.fill(selector_hora, hora_agendada) # <--- Aquí usa 04:00 o 04:05
+
+                # Para la hora: Enfocar, limpiar y escribir carácter por carácter
+                print(f"✍️ Escribiendo hora: {hora_agendada_input}")
+                await page.click(selector_hora)
+                # Borrar contenido previo por si acaso
+                await page.keyboard.press("Control+A")
+                await page.keyboard.press("Backspace")
+                # Escribir los 4 dígitos uno a uno
+                await page.type(selector_hora, hora_agendada_input, delay=100)
 
                 await page.wait_for_timeout(500)
-                print(f"📅 Agendado para {fecha_mañana} a las {hora_agendada}")
-
-                # Confirmar agendamiento
+                
+                # Confirmar
                 await page.click("a#agendamentoExportacao_okButton_btn")
                 
-                # Confirmación final
                 try:
                     await page.wait_for_selector("a#popupOkButton", state="visible", timeout=15000)
                     await page.click("a#popupOkButton", force=True)
-                    print(f"✔️ Solicitud exitosa para las {hora_agendada}.")
+                    print(f"✔️ Programado correctamente para las {hora_agendada_input}")
                 except:
                     print("⚠️ No apareció el botón OK final.")
                 
-                # Volver a Home
                 await page.goto(URL_SGI)
                 await page.wait_for_load_state("networkidle")
 
-            print("\n🎉 Proceso terminado. Los archivos aparecerán escalonados mañana.")
+            print("\n🎉 Proceso terminado con éxito.")
 
         except Exception as e:
-            print(f"❌ Error durante la solicitud: {e}")
+            print(f"❌ Error: {e}")
         finally:
             await browser.close()
 

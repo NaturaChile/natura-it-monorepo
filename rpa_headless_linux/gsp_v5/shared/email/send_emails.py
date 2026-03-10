@@ -34,14 +34,6 @@ from shared.email.templates import (
 
 logger = logging.getLogger(__name__)
 
-# ── CC por defecto para todos los correos ─────
-DEFAULT_CC = [
-    "emersonsuarez@natura.net",
-    "jorgemorandin@natura.net",
-    "franciscaramirez@natura.net",
-    "paulafarias@natura.net",
-]
-
 # ── CSV loader ────────────────────────────────
 
 _MATRIZ_PATH = Path(__file__).resolve().parents[2] / "data" / "consultoras_matriz.csv"
@@ -188,7 +180,6 @@ def send_batch_notifications(
     batch_id: int,
     db: Session,
     evento: str = "Preventa del Día de las Madres",
-    override_to: Optional[str] = None,
 ) -> dict:
     """
     Send email notifications for a completed batch at 3 levels.
@@ -201,11 +192,6 @@ def send_batch_notifications(
     6. Aggregates by GN → sends gerente emails
 
     Orders with status FAILED are skipped (no email sent).
-
-    Args:
-        override_to: If set, ALL emails (consultora/líder/gerente) are sent
-                     to this address instead of the real recipients, and CC
-                     is disabled.  Useful for testing with real batch data.
 
     Returns:
         Summary dict with counts per level + error list.
@@ -233,9 +219,6 @@ def send_batch_notifications(
         return {"error": f"No orders found in batch {batch_id}"}
 
     orch = EmailOrchestrator()
-
-    # En modo test, redirigir todo al correo de prueba y sin CC
-    _cc = None if override_to else DEFAULT_CC
 
     summary = {
         "batch_id": batch_id,
@@ -302,14 +285,13 @@ def send_batch_notifications(
         # Send consultora email
         try:
             orch.send_consultora(
-                to=override_to or email,
+                to=email,
                 consultora_nombre=consultora_nombre,
                 cb=cb,
                 lider_nombre=lider_nombre,
                 products=all_products if all_products else None,
                 is_partial=is_partial,
                 evento=evento,
-                cc=_cc,
             )
             summary["consultoras"]["sent"] += 1
         except Exception as e:
@@ -340,14 +322,13 @@ def send_batch_notifications(
             continue
         try:
             orch.send_lider(
-                to=override_to or mail_lider,
+                to=mail_lider,
                 lider_nombre=nombre_lider,
                 nombre_sector=nombre_sector,
                 total_completos=data["completos"],
                 total_parciales=data["parciales"],
                 consultoras=data["consultoras"],
                 evento=evento,
-                cc=_cc,
             )
             summary["lideres"]["sent"] += 1
         except Exception as e:
@@ -372,12 +353,11 @@ def send_batch_notifications(
 
         try:
             orch.send_gerente(
-                to=override_to or mail_gn,
+                to=mail_gn,
                 gn_nombre=nombre_gn,
                 nombre_gerencia=nombre_gerencia,
                 lideres=lideres_list,
                 evento=evento,
-                cc=_cc,
             )
             summary["gerentes"]["sent"] += 1
         except Exception as e:

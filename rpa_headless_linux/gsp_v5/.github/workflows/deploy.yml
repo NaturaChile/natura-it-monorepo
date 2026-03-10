@@ -8,7 +8,7 @@
 #   GMAIL_TOKEN_JSON     → Contenido JSON del token OAuth2 de Gmail (una línea)
 #   DEPLOY_HOST          → IP/hostname del servidor (opcional, solo para deploy remoto)
 #   DEPLOY_USER          → Usuario SSH del servidor (opcional)
-#   DEPLOY_SSH_KEY       → Llave SSH privada (opcional)
+#   DEPLOY_SSH_KE       → Llave SSH privada (opcional)
 # ──────────────────────────────────────────────
 
 name: Deploy GSP Bot
@@ -52,8 +52,8 @@ jobs:
           POSTGRES_USER=gsp
           POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           # Leave CELERY urls unset so docker-compose interpolation uses the
-          # `x-common-env` defaults in docker-compose.yml which already provide
-          # a safe fallback (uses ${REDIS_PASSWORD:-clave}).
+          # \`x-common-env\` defaults in docker-compose.yml which already provide
+          # a safe fallback (uses \${REDIS_PASSWORD:-clave}).
           CELERY_CONCURRENCY=3
           CELERY_MAX_RETRIES=3
           CELERY_RETRY_DELAY=30
