@@ -248,6 +248,130 @@ async def send_batch_emails(
     return result
 
 
+# ── Send Consultora-Only Emails via CSV ───────
+
+@app.post("/emails/consultora/upload")
+async def send_consultora_emails_csv(
+    file: UploadFile = File(...),
+    evento: str = Query("Preventa del Día de las Madres", description="Nombre del evento"),
+):
+    """Upload a CSV with consultora codes and send a 'Completo' email to each one.
+
+    Expected CSV format (one column is enough):
+        consultora_code
+        10023683
+        10045678
+        ...
+
+    For each code the endpoint:
+    1. Looks up the consultora in `consultoras_matriz.csv` (email, name, líder).
+    2. Sends the "Completo" (non-partial) consultora email — no líder/GN emails.
+    3. Reports sent / skipped / errors.
+
+    This is useful for confirming carts that were loaded outside the batch system
+    or when you only need to notify consultoras without líder and GN.
+    """
+    import pandas as pd
+    from shared.email.send_emails import EmailOrchestrator, _load_consultora_matriz
+
+    if not file.filename.endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(400, "Only CSV and Excel files are supported")
+
+    # Save uploaded file
+    upload_dir = settings.base_dir / "data" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    dest = upload_dir / f"email_consultora_{ts}_{file.filename}"
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    # Parse uploaded file
+    try:
+        if dest.suffix in (".xlsx", ".xls"):
+            df = pd.read_excel(dest)
+        else:
+            df = pd.read_csv(dest)
+
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+        if "consultora_code" not in df.columns:
+            raise ValueError(f"Missing 'consultora_code' column. Found: {list(df.columns)}")
+
+        codes = df["consultora_code"].astype(str).str.strip().unique().tolist()
+        codes = [c for c in codes if c and c != "nan"]
+
+        if not codes:
+            raise ValueError("No valid consultora codes found in file")
+
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("consultora_email_csv_parse_failed", error=str(e))
+        raise HTTPException(500, f"Failed to parse file: {e}")
+
+    # Load the consultoras matriz (CB → email, name, líder, etc.)
+    try:
+        matriz = _load_consultora_matriz()
+    except FileNotFoundError:
+        raise HTTPException(500, "consultoras_matriz.csv not found on server")
+
+    orch = EmailOrchestrator()
+
+    sent = []
+    skipped_not_in_csv = []
+    skipped_no_email = []
+    errors = []
+
+    for cb in codes:
+        csv_row = matriz.get(cb)
+        if not csv_row:
+            skipped_not_in_csv.append(cb)
+            continue
+
+        email = csv_row["mail_cb"]
+        if not email:
+            skipped_no_email.append(cb)
+            continue
+
+        consultora_nombre = csv_row["nombre"] or cb
+        lider_nombre = csv_row["nombre_lider"] or "tu Líder"
+
+        try:
+            orch.send_consultora(
+                to=email,
+                consultora_nombre=consultora_nombre,
+                cb=cb,
+                lider_nombre=lider_nombre,
+                products=None,
+                is_partial=False,
+                evento=evento,
+            )
+            sent.append({"cb": cb, "nombre": consultora_nombre, "email": email})
+        except Exception as e:
+            logger.error("consultora_email_error", cb=cb, email=email, error=str(e))
+            errors.append({"cb": cb, "email": email, "error": str(e)})
+
+    logger.info("consultora_emails_csv_done", total=len(codes), sent=len(sent),
+                skipped_not_in_csv=len(skipped_not_in_csv), skipped_no_email=len(skipped_no_email),
+                errors=len(errors))
+
+    return {
+        "action": "send_consultora_emails",
+        "source_file": file.filename,
+        "evento": evento,
+        "total_codes": len(codes),
+        "sent": len(sent),
+        "skipped_not_in_csv": len(skipped_not_in_csv),
+        "skipped_no_email": len(skipped_no_email),
+        "errors_count": len(errors),
+        "sent_details": sent,
+        "not_found_in_csv": skipped_not_in_csv,
+        "no_email": skipped_no_email,
+        "errors": errors,
+    }
+
+
 # ── Test Email ────────────────────────────────
 
 @app.post("/test-email")
@@ -992,6 +1116,87 @@ async def admin_mark_products_added(
         pass
 
     return {"action": "mark_products_added", "order_id": order_id, "updated": len(updated_ids), "updated_ids": updated_ids}
+
+
+# ── Admin: Unstick Stuck Orders ───────────────
+
+@app.post("/admin/orders/unstick")
+async def admin_unstick_orders(
+    minutes: int = Query(12, description="Mark orders stuck in IN_PROGRESS longer than N minutes"),
+    db: Session = Depends(get_db),
+):
+    """Find orders stuck in IN_PROGRESS for longer than `minutes` and mark them FAILED.
+
+    Use this after a worker crash or Playwright hang leaves orders in a zombie state.
+    The orders can then be retried normally via /admin/orders/{id}/reprocess.
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    stuck = (
+        db.query(Order)
+        .filter(
+            Order.status == OrderStatus.IN_PROGRESS,
+            Order.started_at < cutoff,
+        )
+        .all()
+    )
+
+    if not stuck:
+        return {"action": "unstick_orders", "found": 0, "message": f"No orders stuck > {minutes} min"}
+
+    now = datetime.now(timezone.utc)
+    cleaned_ids = []
+    for order in stuck:
+        order.status = OrderStatus.FAILED
+        order.error_message = f"Timeout: stuck in IN_PROGRESS > {minutes} min (admin unstick)"
+        order.error_step = "admin_unstick"
+        order.finished_at = now
+
+        log = OrderLog(
+            order_id=order.id,
+            level="ERROR",
+            step="admin_unstick",
+            message=f"Unstuck by admin — was IN_PROGRESS since {order.started_at.isoformat()}",
+            details={"started_at": order.started_at.isoformat(), "worker_id": order.worker_id, "minutes_threshold": minutes},
+            timestamp=now,
+        )
+        db.add(log)
+        cleaned_ids.append(order.id)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("admin_unstick_commit_error", error=str(e))
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    # Update batch counters for affected batches
+    batch_ids = {o.batch_id for o in stuck if o.batch_id}
+    for bid in batch_ids:
+        try:
+            from master.orchestrator import Orchestrator
+            _o = Orchestrator()
+            # Recalculate via direct query to be safe
+            batch = db.query(Batch).filter(Batch.id == bid).first()
+            if batch:
+                batch.failed_orders = db.query(Order).filter(
+                    Order.batch_id == bid, Order.status == OrderStatus.FAILED
+                ).count()
+                batch.completed_orders = db.query(Order).filter(
+                    Order.batch_id == bid, Order.status == OrderStatus.COMPLETED
+                ).count()
+                db.commit()
+        except Exception:
+            pass
+
+    logger.info("admin_unstick_orders", found=len(cleaned_ids), order_ids=cleaned_ids)
+    return {
+        "action": "unstick_orders",
+        "found": len(cleaned_ids),
+        "order_ids": cleaned_ids,
+        "message": f"Marked {len(cleaned_ids)} stuck orders as FAILED. You can now reprocess them.",
+    }
 
 
 # ── Admin: Bulk Mark Orders Completed ─────────
