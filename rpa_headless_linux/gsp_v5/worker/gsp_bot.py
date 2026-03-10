@@ -1139,10 +1139,16 @@ class GSPBot:
         self._log_step(step, "Clicked Vaciar carrito, waiting for Eliminar confirmation...")
 
         # ── Wait for and click the "Eliminar" confirmation button ──
+        # The button uses natds structure (not MUI): button.Button-gaya > div[aria-hidden] > span > span
         self.page.wait_for_timeout(1500)
         eliminar_clicked = False
         confirm_selectors = [
+            # natds structure: button with nested span containing "Eliminar"
+            'button.Button-gaya:has(span:has-text("Eliminar"))',
+            'button[class*="natdsbutton"]:has(span:has-text("Eliminar"))',
+            # MUI fallback (in case GSP changes back)
             'button:has(span.MuiButton-label:has-text("Eliminar"))',
+            # Generic text match
             'button:has(span:has-text("Eliminar"))',
             'button:has-text("Eliminar")',
         ]
@@ -1162,13 +1168,13 @@ class GSPBot:
                 continue
 
         if not eliminar_clicked:
-            # Try JS approach for confirmation dialog
+            # JS fallback: find visible button whose text is "Eliminar" (works regardless of aria-hidden)
             try:
                 js_confirm = self.page.evaluate('''
                     () => {
                         const btns = document.querySelectorAll('button');
                         for (const btn of btns) {
-                            const text = (btn.innerText || '').trim().toLowerCase();
+                            const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
                             if ((text === 'eliminar' || text === 'confirmar') && btn.offsetParent !== null) {
                                 btn.click();
                                 return text;
@@ -1199,7 +1205,24 @@ class GSPBot:
         if not eliminar_clicked:
             self._log_step(step, "Eliminar confirmation not found; cart may have cleared without dialog", level="WARNING")
 
-        self.page.wait_for_timeout(3000)
+        # ── After clearing: dismiss "Entendido" toast/dialog if it appears ──
+        self.page.wait_for_timeout(2000)
+        for entendido_sel in [
+            'button.Button-gaya:has(span:has-text("Entendido"))',
+            'button[class*="natdsbutton"]:has(span:has-text("Entendido"))',
+            'button:has(span:has-text("Entendido"))',
+            'button:has-text("Entendido")',
+        ]:
+            try:
+                loc = self.page.locator(entendido_sel)
+                if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                    loc.first.click(timeout=5000)
+                    self._log_step(step, "Dismissed 'Entendido' dialog after cart clear ✓")
+                    break
+            except Exception:
+                continue
+
+        self.page.wait_for_timeout(2000)
         return True
 
     def _delete_items_one_by_one(self, step: str) -> int:
