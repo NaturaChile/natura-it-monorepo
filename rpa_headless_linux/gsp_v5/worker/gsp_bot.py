@@ -540,75 +540,8 @@ class GSPBot:
     # ── STEP 6b: Clear cart ─────────────────────
 
     def clear_cart(self) -> int:
-        """Remove all products checking for the confirmation toast."""
-        step = "clear_cart"
-        self._log_step(step, "Checking for existing products in cart")
-
-        delete_buttons = self.page.query_selector_all('a[data-testid^="remove-product-"]')
-
-        if not delete_buttons:
-            self._log_step(step, "Cart is empty, nothing to clear")
-            return 0
-
-        removed_count = 0
-        removed_codes: list[str] = []
-
-        # Recopilar códigos para el log
-        for btn in delete_buttons:
-            testid = btn.get_attribute("data-testid") or ""
-            product_code = testid.replace("remove-product-", "") if testid else "unknown"
-            removed_codes.append(product_code)
-
-        self._log_step(
-            step,
-            f"Found {len(delete_buttons)} product(s) in cart to remove: {removed_codes}",
-            details={"products_in_cart": removed_codes},
-        )
-
-        # Borrar uno por uno verificando el Toast
-        while True:
-            # Re-consultar el botón porque el DOM cambia tras cada borrado
-            btn = self.page.query_selector('a[data-testid^="remove-product-"]')
-            if not btn:
-                break
-
-            testid = btn.get_attribute("data-testid") or ""
-            product_code = testid.replace("remove-product-", "") if testid else "unknown"
-
-            try:
-                btn.click()
-
-                # NUEVO: Esperar explícitamente al Toast de confirmación
-                # Usamos el texto exacto que nos diste
-                try:
-                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="visible", timeout=5000)
-                    self._log_step(step, f"Confirmed removal toast for {product_code}")
-
-                    # Esperar a que el toast desaparezca para no tapar otros elementos (opcional pero recomendado)
-                    self.page.wait_for_selector("text=¡Producto eliminado con éxito!", state="hidden", timeout=3000)
-
-                except PWTimeout:
-                    self._log_step(step, f"Warning: Removal toast not detected for {product_code}", level="WARNING")
-
-                removed_count += 1
-
-            except Exception as e:
-                self._log_step(step, f"Failed to remove {product_code}: {e}", level="WARNING")
-                break
-
-        self._log_step(step, f"Cart cleared: {removed_count} items removed ✓")
-        # Save HTML snapshot after successful clear for post-mortem review
-        try:
-            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
-            html_path = self.settings.screenshot_dir / f"cart_after_clear_{ts}_{self.order_id}.html"
-            html_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(html_path, 'w', encoding='utf-8') as hf:
-                hf.write(self.page.content())
-            self._log_step(step, f"Saved cart HTML after clear: {html_path}")
-        except Exception as save_html_ex:
-            self._log_step(step, f"Failed saving cart HTML after clear: {save_html_ex}", level="WARNING")
-
-        return removed_count
+        """Remove all products from cart. Delegates to robust _cleanup_cart."""
+        return self._cleanup_cart("clear_cart")
 
     # ── STEP 7: Add product to cart ───────────
 
@@ -679,24 +612,8 @@ class GSPBot:
         url = self.page.url or ""
         return "/cart" in url
 
-    def _cleanup_cart(self, step: str) -> int:
-        """Audit and remove existing products from the cart.
-
-        Flow:
-          1. Wait for cart content to render (up to 10s for item rows)
-          2. Audit every item: code, name, qty → log
-          3. Click "Vaciar carrito" to bulk-clear (wait for button visibility)
-          4. Handle confirmation dialog if present
-          5. Verify items disappeared from DOM
-          6. Fallback: delete individually via trash icon
-
-        Real GSP cart DOM structure:
-          li.row-products__container              → each product row
-            span.row-products__info__title         → product name
-            span.row-products__info__data >> span  → product code
-            input.form-control[value]              → quantity
-          button:has-text("Vaciar carrito")        → bulk clear (only when items exist)
-        """
+    def _cleanup_cart_DEPRECATED(self, step: str) -> int:
+        """DEPRECATED — replaced by new _cleanup_cart + helpers. Kept for reference."""
         try:
             # ── Wait for cart content to fully render ──
             self._log_step(step, "Waiting for cart content to render...")
@@ -1026,14 +943,487 @@ class GSPBot:
                 self._log_step(step, f"Individual cleanup done: {removed} removed, {remaining} remaining")
 
             # If we reach this point, return any observed removed counts
-            if 'removed_count' in locals():
-                return removed_count
-            if 'removed' in locals():
-                return removed
-            return 0
+            return removed if 'removed' in dir() else 0
         except Exception as audit_ex:
             self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
             return 0
+
+    # ── Cart Cleanup Helpers (v2 — robust) ────────────────────
+
+    def _count_cart_items(self) -> int:
+        """Count product rows currently in the cart DOM."""
+        for sel in [
+            'li.row-products__container',
+            'ul.bag-items li.row-products__container',
+            'li[class*="row-products"]',
+        ]:
+            try:
+                count = self.page.locator(sel).count()
+                if count > 0:
+                    return count
+            except Exception:
+                continue
+        return 0
+
+    def _audit_cart_items(self, step: str) -> list[dict]:
+        """Log every item currently in the cart. Returns list of {code, name, qty}."""
+        rows = self.page.locator('li.row-products__container')
+        if rows.count() == 0:
+            rows = self.page.locator('ul.bag-items li.row-products__container')
+        count = rows.count()
+        items = []
+        for i in range(count):
+            row = rows.nth(i)
+            try:
+                name = row.locator('span.row-products__info__title').first.inner_text(timeout=3000)
+            except Exception:
+                name = "(unknown)"
+            try:
+                code = row.locator('span.row-products__info__data >> span').first.inner_text(timeout=3000)
+            except Exception:
+                code = "(unknown)"
+            try:
+                qty = row.locator('input.form-control').first.get_attribute('value') or "?"
+            except Exception:
+                qty = "?"
+            items.append({"code": code.strip(), "name": name.strip(), "qty": qty.strip()})
+            self._log_step(step, f"  Item {i + 1}: code={code.strip()} qty={qty.strip()} name={name.strip()}")
+        return items
+
+    def _try_vaciar_carrito(self, step: str, attempt: int) -> bool:
+        """Click 'Vaciar carrito' then wait for and click 'Eliminar' confirmation.
+
+        Returns True if the click sequence completed without error.
+        """
+        self._log_step(step, f"Vaciar carrito attempt {attempt}/3")
+
+        # ── Find the Vaciar carrito button ──
+        vaciar_btn = None
+        strategies = [
+            lambda: self.page.get_by_role('button', name='Vaciar carrito'),
+            lambda: self.page.locator('button:has-text("Vaciar carrito")'),
+            lambda: self.page.locator('button.MuiButtonBase-root:has-text("Vaciar carrito")'),
+            lambda: self.page.locator('button:has(span:has-text("Vaciar carrito"))'),
+        ]
+        for strategy_fn in strategies:
+            try:
+                loc = strategy_fn()
+                if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                    vaciar_btn = loc.first
+                    break
+            except Exception:
+                continue
+
+        if not vaciar_btn:
+            self._log_step(step, "Vaciar carrito button not found", level="WARNING")
+            return False
+
+        # Scroll into view
+        try:
+            vaciar_btn.evaluate('e => e.scrollIntoView({block: "center"})')
+        except Exception:
+            pass
+
+        # ── Click the button with fallbacks ──
+        clicked = False
+        for click_fn in [
+            lambda: vaciar_btn.click(timeout=5000),
+            lambda: vaciar_btn.evaluate('e => { e.focus(); e.click(); }'),
+            lambda: vaciar_btn.locator('span:has-text("Vaciar carrito")').first.click(timeout=4000),
+            lambda: vaciar_btn.click(force=True, timeout=5000),
+        ]:
+            try:
+                click_fn()
+                clicked = True
+                break
+            except Exception:
+                continue
+
+        if not clicked:
+            try:
+                bbox = vaciar_btn.bounding_box()
+                if bbox:
+                    self.page.mouse.click(bbox['x'] + bbox['width'] / 2, bbox['y'] + bbox['height'] / 2)
+                    clicked = True
+            except Exception:
+                pass
+
+        if not clicked:
+            self._log_step(step, "Failed to click Vaciar carrito button", level="WARNING")
+            return False
+
+        self._log_step(step, "Clicked Vaciar carrito, waiting for Eliminar confirmation...")
+
+        # ── Wait for and click the "Eliminar" confirmation button ──
+        self.page.wait_for_timeout(1500)
+        eliminar_clicked = False
+        for sel in [
+            'button:has(span:has-text("Eliminar"))',
+            'button:has-text("Eliminar")',
+        ]:
+            try:
+                loc = self.page.locator(sel)
+                loc.first.wait_for(state='visible', timeout=8000)
+                if loc.count() > 0 and loc.first.is_visible():
+                    try:
+                        loc.first.click(timeout=5000)
+                    except Exception:
+                        loc.first.evaluate('el => el.click()')
+                    eliminar_clicked = True
+                    self._log_step(step, f"Clicked Eliminar confirmation via '{sel}'")
+                    break
+            except Exception:
+                continue
+
+        if not eliminar_clicked:
+            # Try generic confirmation buttons
+            for text in ["Confirmar", "Aceptar", "Sí", "OK"]:
+                try:
+                    cb = self.page.locator(f'button:has-text("{text}")')
+                    if cb.count() > 0 and cb.first.is_visible(timeout=2000):
+                        cb.first.click(timeout=3000)
+                        eliminar_clicked = True
+                        self._log_step(step, f"Clicked confirmation '{text}'")
+                        break
+                except Exception:
+                    continue
+
+        if not eliminar_clicked:
+            self._log_step(step, "Eliminar confirmation not found; cart may have cleared without dialog", level="WARNING")
+
+        self.page.wait_for_timeout(3000)
+        return True
+
+    def _delete_items_one_by_one(self, step: str) -> int:
+        """Delete cart items individually via trash icon buttons.
+
+        Returns count of items successfully removed.
+        """
+        removed = 0
+        max_iter = 50  # safety limit
+
+        for _ in range(max_iter):
+            del_btns = self.page.locator('div.row-products__delete button')
+            if del_btns.count() == 0:
+                break
+
+            try:
+                btn = del_btns.first
+                btn.scroll_into_view_if_needed(timeout=3000)
+                btn.click(timeout=5000)
+                self._log_step(step, f"Clicked delete button for item {removed + 1}")
+
+                # Handle confirmation dialog if it appears
+                self.page.wait_for_timeout(1500)
+                for confirm_text in ["Eliminar", "Confirmar", "Sí", "OK"]:
+                    try:
+                        confirm_btn = self.page.locator(f'button:has-text("{confirm_text}")')
+                        if confirm_btn.count() > 0 and confirm_btn.first.is_visible(timeout=2000):
+                            confirm_btn.first.click(timeout=3000)
+                            self._log_step(step, f"Clicked confirmation '{confirm_text}' for item deletion")
+                            break
+                    except Exception:
+                        continue
+
+                self.page.wait_for_timeout(2000)
+                removed += 1
+            except Exception as e:
+                self._log_step(step, f"Failed to delete item: {e}", level="WARNING")
+                break
+
+        return removed
+
+    def _save_cart_snapshot(self, step: str, label: str) -> None:
+        """Save HTML + screenshot of current cart state for diagnostics."""
+        try:
+            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+            html_path = self.settings.screenshot_dir / f"cart_{label}_{ts}_{self.order_id}.html"
+            html_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(html_path, 'w', encoding='utf-8') as hf:
+                hf.write(self.page.content())
+            ss = self._take_screenshot(f"cart_{label}_{ts}")
+            self._log_step(step, f"Snapshot saved: html={html_path} screenshot={ss}")
+        except Exception as e:
+            self._log_step(step, f"Failed to save snapshot '{label}': {e}", level="WARNING")
+
+    def _remove_products_by_code(self, step: str, codes_to_remove: set[str]) -> int:
+        """Remove specific products from cart by their product code.
+
+        Iterates cart rows, finds matching codes, clicks their individual
+        delete button.  Returns count of successfully removed items.
+        """
+        removed = 0
+        for code in codes_to_remove:
+            try:
+                rows = self.page.locator('li.row-products__container')
+                if rows.count() == 0:
+                    rows = self.page.locator('ul.bag-items li.row-products__container')
+                found = False
+                for i in range(rows.count()):
+                    row = rows.nth(i)
+                    try:
+                        row_code = row.locator(
+                            "span.row-products__info__data:has-text('Código:') span"
+                        ).first.inner_text(timeout=3000).strip()
+                    except Exception:
+                        row_code = ""
+                    if row_code == code:
+                        # Click the trash button on this row
+                        del_btn = row.locator('div.row-products__delete button')
+                        if del_btn.count() > 0:
+                            del_btn.first.scroll_into_view_if_needed(timeout=3000)
+                            del_btn.first.click(timeout=5000)
+                            self._log_step(step, f"Clicked delete for extra product {code}")
+
+                            # Handle confirmation dialog
+                            self.page.wait_for_timeout(1500)
+                            for confirm_text in ["Eliminar", "Confirmar", "Sí", "OK"]:
+                                try:
+                                    cb = self.page.locator(f'button:has-text("{confirm_text}")')
+                                    if cb.count() > 0 and cb.first.is_visible(timeout=2000):
+                                        cb.first.click(timeout=3000)
+                                        break
+                                except Exception:
+                                    continue
+
+                            self.page.wait_for_timeout(2000)
+                            removed += 1
+                            found = True
+                            break
+                if not found:
+                    self._log_step(step, f"Could not locate row for extra code {code}", level="WARNING")
+            except Exception as e:
+                self._log_step(step, f"Failed to remove extra {code}: {e}", level="WARNING")
+        return removed
+
+    def _dismiss_stock_dialog(self, step: str) -> bool:
+        """Check for and dismiss stock limit / unavailable product dialogs.
+
+        Returns True if a dialog was found and dismissed (product is OOS/unavailable).
+        """
+        try:
+            dialog = self.page.locator('div[role="dialog"]')
+            if dialog.count() == 0:
+                return False
+
+            # Check if it's a stock-related dialog
+            is_stock_dialog = False
+            for text in ["Límite de unidades", "indisponible", "agotado", "sin stock"]:
+                try:
+                    if dialog.locator(f'*:has-text("{text}")').count() > 0:
+                        is_stock_dialog = True
+                        break
+                except Exception:
+                    continue
+
+            if not is_stock_dialog:
+                return False
+
+            self._log_step(step, "Stock limit dialog detected — dismissing", level="WARNING")
+            self._take_screenshot("stock_limit_dialog")
+
+            # Try clicking "Entendido" to dismiss
+            for sel in [
+                'button:has(span:has-text("Entendido"))',
+                'button:has-text("Entendido")',
+                'button[aria-label="CERRAR"]',
+            ]:
+                try:
+                    loc = self.page.locator(sel)
+                    if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                        loc.first.click(timeout=5000)
+                        self._log_step(step, f"Dismissed stock dialog via '{sel}'")
+                        self.page.wait_for_timeout(1500)
+                        return True
+                except Exception:
+                    continue
+
+            # Fallback: Escape key
+            self.page.keyboard.press("Escape")
+            self.page.wait_for_timeout(1500)
+            return True
+        except Exception:
+            return False
+
+    def _add_product_via_search_bar(self, product_code: str, quantity: int) -> dict:
+        """Add a single product using the cart page search bar (code-by-code).
+
+        Flow:
+          1. Type code in search input
+          2. Wait for Agregar button to become enabled (product loaded)
+          3. Set quantity in the qty input
+          4. Click Agregar to add to cart
+          5. Handle stock limit dialog if appears
+
+        Returns dict: {success, product_code, error, error_type}
+        """
+        step = "add_via_search"
+        result = {"success": False, "product_code": product_code, "error": None, "error_type": None}
+
+        try:
+            # 1. Find and fill search bar
+            search_input = None
+            for sel in [
+                'input[placeholder*="Digita el código"]',
+                'input[placeholder*="código o nombre"]',
+                'div.search-bar input',
+            ]:
+                try:
+                    loc = self.page.locator(sel)
+                    if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                        search_input = loc.first
+                        break
+                except Exception:
+                    continue
+
+            if not search_input:
+                result["error"] = "Search bar not found on cart page"
+                self._log_step(step, result["error"], level="ERROR")
+                return result
+
+            search_input.click()
+            search_input.fill(str(product_code))
+            self._log_step(step, f"Typed code {product_code} in search bar")
+
+            # 2. Wait for Agregar button to become enabled (product loads)
+            agregar_btn = None
+            for wait_tick in range(20):  # 20 × 500ms = 10s max
+                try:
+                    loc = self.page.locator(
+                        'button.MuiButton-containedPrimary:not(.Mui-disabled):has-text("Agregar")'
+                    )
+                    if loc.count() > 0 and loc.first.is_visible(timeout=500):
+                        agregar_btn = loc.first
+                        break
+                except Exception:
+                    pass
+                self.page.wait_for_timeout(500)
+
+            if not agregar_btn:
+                # Fallback: try broader selector
+                try:
+                    loc = self.page.locator('button:has-text("Agregar"):not([disabled])')
+                    if loc.count() > 0 and loc.first.is_visible(timeout=3000):
+                        agregar_btn = loc.first
+                except Exception:
+                    pass
+
+            if not agregar_btn:
+                result["error"] = f"Agregar button never enabled for code {product_code}"
+                result["error_type"] = "not_found"
+                self._log_step(step, result["error"], level="WARNING")
+                try:
+                    search_input.fill("")
+                except Exception:
+                    pass
+                return result
+
+            # 3. Set quantity if > 1
+            if quantity > 1:
+                try:
+                    qty_input = self.page.locator('input.form-control.input-caret-orange')
+                    if qty_input.count() > 0:
+                        qty_input.last.click()
+                        qty_input.last.fill("")
+                        qty_input.last.fill(str(quantity))
+                        self._log_step(step, f"Set qty={quantity} for {product_code}")
+                except Exception as e:
+                    self._log_step(step, f"Failed to set quantity: {e}; proceeding with default qty", level="WARNING")
+
+            # 4. Click Agregar to add product to cart
+            agregar_btn.click(timeout=5000)
+            self._log_step(step, f"Clicked Agregar for {product_code}")
+            self.page.wait_for_timeout(3000)
+
+            # 5. Check for stock limit dialog
+            if self._dismiss_stock_dialog(step):
+                result["error"] = f"Product {product_code} out of stock / limit reached"
+                result["error_type"] = "out_of_stock"
+                self._log_step(step, result["error"], level="WARNING")
+                return result
+
+            result["success"] = True
+            self._log_step(step, f"Product {product_code} x{quantity} added via search bar ✓")
+
+        except Exception as e:
+            result["error"] = str(e)
+            self._log_step(step, f"Error adding {product_code} via search bar: {e}", level="ERROR")
+
+        return result
+
+    def _cleanup_cart(self, step: str) -> int:
+        """Audit and remove all existing products from the cart.
+
+        Strategy:
+          1. Count and audit current items
+          2. Try 'Vaciar carrito' → 'Eliminar' confirmation (up to 3 attempts)
+          3. Verify items actually removed; double-check after brief wait
+          4. Fallback: delete item-by-item via trash icon buttons
+
+        Returns number of items removed.
+        """
+        self._log_step(step, "Waiting for cart content to render...")
+        self.page.wait_for_timeout(2000)
+
+        initial_count = self._count_cart_items()
+
+        # Double-check: Vaciar button may be visible even if rows aren't rendered yet
+        if initial_count == 0:
+            try:
+                vaciar_check = self.page.locator('button:has-text("Vaciar carrito")')
+                if vaciar_check.count() > 0 and vaciar_check.first.is_visible(timeout=3000):
+                    self._log_step(step, "'Vaciar carrito' visible but no item rows — waiting longer")
+                    self.page.wait_for_timeout(3000)
+                    initial_count = self._count_cart_items()
+            except Exception:
+                pass
+
+        if initial_count == 0:
+            self._log_step(step, "No existing items in cart ✓")
+            return 0
+
+        self.cart_initial_count = initial_count
+        items = self._audit_cart_items(step)
+        summary = [f"{it['code']} x{it['qty']}" for it in items]
+        self._log_step(step, f"Found {initial_count} item(s): {summary}", details={"cart_items": items})
+
+        # ── Phase 1: Bulk clear via "Vaciar carrito" (up to 3 attempts) ──
+        for attempt in range(1, 4):
+            if self._try_vaciar_carrito(step, attempt):
+                self.page.wait_for_timeout(3000)
+                remaining = self._count_cart_items()
+
+                # Double-check after brief wait
+                if remaining == 0:
+                    self.page.wait_for_timeout(2000)
+                    remaining = self._count_cart_items()
+
+                if remaining == 0:
+                    self._log_step(step, f"Cart emptied via Vaciar on attempt {attempt} ✓ ({initial_count} removed)")
+                    self._save_cart_snapshot(step, "after_vaciar_ok")
+                    return initial_count
+                else:
+                    self._log_step(step, f"Attempt {attempt}: {remaining} items still remain", level="WARNING")
+            else:
+                self._log_step(step, f"Attempt {attempt}: could not click Vaciar button", level="WARNING")
+
+        # ── Phase 2: Fallback — delete items one by one ──
+        remaining = self._count_cart_items()
+        if remaining > 0:
+            self._log_step(step, f"Bulk clear failed. Fallback: deleting {remaining} items individually", level="WARNING")
+            self._save_cart_snapshot(step, "before_itembyitem")
+            removed_individually = self._delete_items_one_by_one(step)
+            final_remaining = self._count_cart_items()
+
+            if final_remaining == 0:
+                self._log_step(step, f"Item-by-item deletion succeeded: {removed_individually} removed ✓")
+            else:
+                self._log_step(step, f"Item-by-item: {removed_individually} removed, {final_remaining} still remain", level="ERROR")
+                self._save_cart_snapshot(step, "after_itembyitem_fail")
+
+            return initial_count - final_remaining
+
+        return initial_count
 
     def navigate_to_cart_adaptively(self) -> int:
         """Adaptive navigation loop that ensures we reach the cart page.
@@ -1330,14 +1720,26 @@ class GSPBot:
                     except Exception:
                         pass
 
+                    # Read actual quantity from DOM input
+                    actual_qty = expected_codes.get(code, 1)
+                    try:
+                        qty_input = item.locator('input.form-control')
+                        if qty_input.count() > 0:
+                            val = qty_input.first.get_attribute('value')
+                            if val and val.strip().isdigit():
+                                actual_qty = int(val.strip())
+                    except Exception:
+                        pass
+
                     added_codes.add(code)
-                    qty = expected_codes.get(code, 1)
                     result["products_added"].append({
                         "product_code": code,
-                        "quantity": qty,
+                        "quantity": actual_qty,
                         "name": name,
                     })
-                    self._log_step(step, f"  ✓ In cart: {code} — {name}")
+                    expected_qty = expected_codes.get(code, 1)
+                    qty_match = "✓" if actual_qty == expected_qty else f"⚠ expected {expected_qty}"
+                    self._log_step(step, f"  ✓ In cart: {code} x{actual_qty} {qty_match} — {name}")
                 except Exception as e:
                     self._log_step(step, f"  Could not read cart item {i}: {e}", level="WARNING")
         except Exception as e:
@@ -1394,6 +1796,24 @@ class GSPBot:
                     "name": "",
                 })
                 self._log_step(step, f"  ? Missing from cart and unavailable: {code}", level="WARNING")
+
+        # ── 4. Detect extra products in cart that we didn't order ──
+        expected_code_set = {p["product_code"] for p in expected_products}
+        extra_codes = added_codes - expected_code_set
+        if extra_codes:
+            self._log_step(step, f"  ⚠ Extra products in cart NOT in order: {extra_codes}", level="WARNING")
+            result["extra_in_cart"] = list(extra_codes)
+
+        # ── 5. Check quantity mismatches for added products ──
+        qty_mismatches = []
+        for p in result["products_added"]:
+            code = p["product_code"]
+            if code in expected_codes:
+                if p["quantity"] != expected_codes[code]:
+                    qty_mismatches.append({"code": code, "expected": expected_codes[code], "actual": p["quantity"]})
+        if qty_mismatches:
+            self._log_step(step, f"  ⚠ Quantity mismatches: {qty_mismatches}", level="WARNING")
+            result["qty_mismatches"] = qty_mismatches
 
         # Take a screenshot of the final cart state
         result["cart_screenshot"] = self._take_screenshot("cart_verification")
@@ -1472,7 +1892,7 @@ class GSPBot:
             result["current_step"] = "cart_cleared"
 
             result["success"] = True
-            self._log_step("cart_cleared", f"Cart emptied for {consultora_code}: {removed} items removed ✓")
+            self._log_step("cart_cleared", f"Cart emptied for {consultora_code}: {total_removed} items removed ✓")
 
         except Exception as e:
             result["error"] = str(e)
@@ -1531,32 +1951,135 @@ class GSPBot:
             self.confirm_consultora()
             result["current_step"] = "consultora_confirmed"
 
-            # New bulk upload flow:
-            # Generate temporary Excel, navigate adaptively to cart, upload file
-            excel_path = self._generate_order_excel(products)
-            result["current_step"] = "excel_generated"
-
-            # Navigate adaptively to the cart page (handles popups, reloads, etc.)
+            # Navigate adaptively to the cart page (handles popups, cleanup, etc.)
             removed_nav = self.navigate_to_cart_adaptively()
             result["current_step"] = "cart_open"
 
-            # If the cart had pre-existing items, abort upload and mark as failed
-            try:
-                if getattr(self, 'cart_initial_count', 0) > 0:
-                    msg = f"Cart had pre-existing items ({self.cart_initial_count}) — aborting upload"
-                    self._log_step("cart_preexisting", msg, level="ERROR")
-                    result["error"] = msg
-                    result["error_step"] = "cart_preexisting"
-                    result["screenshot"] = self._take_screenshot("cart_preexisting")
-                    result["success"] = False
-                    return result
-            except Exception:
-                # Non-fatal: continue if attribute access fails
-                pass
+            # Generate temporary Excel for bulk upload
+            excel_path = self._generate_order_excel(products)
+            result["current_step"] = "excel_generated"
 
-            # Upload the generated Excel file
-            self.upload_order_file(excel_path)
-            result["current_step"] = "file_uploaded"
+            # ── Retry loop: upload → verify → reconcile (max 3 attempts) ──
+            MAX_LOAD_RETRIES = 3
+            final_verification = None
+
+            for load_attempt in range(1, MAX_LOAD_RETRIES + 1):
+                self._log_step("order_flow", f"Load attempt {load_attempt}/{MAX_LOAD_RETRIES}")
+
+                # On retries 2+: clear cart before re-uploading
+                if load_attempt > 1:
+                    self._log_step("order_flow", "Clearing cart before retry...")
+                    self._cleanup_cart("retry_clear")
+                    # Verify cart is actually empty
+                    remaining = self._count_cart_items()
+                    if remaining > 0:
+                        self._log_step("order_flow",
+                            f"Cart still has {remaining} items after cleanup — will attempt anyway",
+                            level="WARNING")
+                        self._save_cart_snapshot("retry_clear", "cart_not_empty_for_retry")
+
+                if load_attempt < MAX_LOAD_RETRIES:
+                    # Normal flow: upload Excel file
+                    self.upload_order_file(excel_path)
+                    result["current_step"] = f"file_uploaded_attempt_{load_attempt}"
+                else:
+                    # Last attempt: add products one by one via search bar
+                    self._log_step("order_flow",
+                        "Last attempt — using search bar for code-by-code addition")
+                    for p in products:
+                        add_result = self._add_product_via_search_bar(
+                            p["product_code"], p.get("quantity", 1)
+                        )
+                        if add_result.get("error_type") == "out_of_stock":
+                            self._log_step("order_flow",
+                                f"Product {p['product_code']} marked OOS during search-bar add",
+                                level="WARNING")
+                    result["current_step"] = f"search_bar_add_attempt_{load_attempt}"
+
+                # Verify cart contents
+                verification = self.verify_cart_contents(products)
+                result["current_step"] = f"cart_verified_attempt_{load_attempt}"
+
+                # Reconcile: check expected vs actual
+                added_codes = {p["product_code"] for p in verification["products_added"]}
+                expected_codes = {p["product_code"] for p in products}
+                oos_codes = {
+                    p["product_code"] for p in verification["products_failed"]
+                    if p.get("error") == "out_of_stock"
+                }
+                # Products that should be in cart but aren't (excluding OOS)
+                missing = expected_codes - added_codes - oos_codes
+
+                # Also check for extra products that shouldn't be there
+                extra = added_codes - expected_codes
+                if extra:
+                    self._log_step("reconciliation",
+                        f"Attempt {load_attempt}: extra products in cart not in order: {extra}",
+                        level="WARNING")
+
+                # Check quantity mismatches
+                qty_issues = verification.get("qty_mismatches", [])
+                has_qty_issues = len(qty_issues) > 0
+                if has_qty_issues:
+                    self._log_step("reconciliation",
+                        f"Attempt {load_attempt}: quantity mismatches: {qty_issues}",
+                        level="WARNING")
+
+                if not missing and not extra and not has_qty_issues:
+                    # All products accounted for (added or OOS)
+                    self._log_step("reconciliation",
+                        f"Attempt {load_attempt}: all products reconciled ✓ "
+                        f"({len(added_codes)} added, {len(oos_codes)} OOS)")
+                    final_verification = verification
+                    break
+
+                # ── Quick fix: only extras? Remove them surgically ──
+                if not missing and not has_qty_issues and extra:
+                    self._log_step("reconciliation",
+                        f"Only extra products detected — removing {len(extra)} item(s) individually")
+                    removed_extras = self._remove_products_by_code("reconciliation", extra)
+                    self._log_step("reconciliation", f"Removed {removed_extras}/{len(extra)} extra products")
+
+                    # Re-verify after surgical removal
+                    re_verify = self.verify_cart_contents(products)
+                    re_extra = {p["product_code"] for p in re_verify["products_added"]} - expected_codes
+                    re_missing = expected_codes - {p["product_code"] for p in re_verify["products_added"]} - oos_codes
+                    re_qty = re_verify.get("qty_mismatches", [])
+
+                    if not re_extra and not re_missing and not re_qty:
+                        self._log_step("reconciliation",
+                            f"Attempt {load_attempt}: reconciled after removing extras ✓")
+                        final_verification = re_verify
+                        break
+                    else:
+                        self._log_step("reconciliation",
+                            f"Still not reconciled after removing extras (missing={re_missing}, extra={re_extra}, qty={re_qty})",
+                            level="WARNING")
+                        final_verification = re_verify
+
+                # ── General mismatch: full clear + retry ──
+                if missing or has_qty_issues:
+                    self._log_step("reconciliation",
+                        f"Attempt {load_attempt}: {len(missing)} missing, {len(qty_issues)} qty issues",
+                        level="WARNING")
+                final_verification = final_verification or verification
+                if load_attempt < MAX_LOAD_RETRIES:
+                    self._log_step("reconciliation", "Will clear cart and retry...")
+                else:
+                    # Last attempt failed — leave cart EMPTY for idempotency
+                    self._log_step("reconciliation",
+                        "All retries exhausted and cart doesn't match — clearing cart to leave clean state",
+                        level="ERROR")
+                    self._save_cart_snapshot("reconciliation", "final_mismatch")
+                    self._cleanup_cart("final_safety_clear")
+                    extra_in_cart = self._count_cart_items()
+                    if extra_in_cart > 0:
+                        self._log_step("reconciliation",
+                            f"CRITICAL: {extra_in_cart} items STILL in cart after final clear",
+                            level="ERROR")
+                    else:
+                        self._log_step("reconciliation",
+                            "Cart emptied after failed reconciliation ✓")
 
             # Cleanup temp file
             try:
@@ -1564,34 +2087,37 @@ class GSPBot:
             except Exception:
                 pass
 
-            # ── Verify what actually landed in the cart ──
-            verification = self.verify_cart_contents(products)
-            result["current_step"] = "cart_verified"
-
-            result["products_added"] = verification["products_added"]
-            result["products_failed"] = verification["products_failed"]
-            result["has_out_of_stock"] = verification.get("has_out_of_stock", False)
-            result["cart_screenshot"] = verification.get("cart_screenshot")
-
-            # Determine success: order succeeds if at least one product was added
-            if len(verification["products_added"]) > 0:
-                result["success"] = True
-                if verification["has_out_of_stock"]:
-                    self._log_step("order_result",
-                        f"Order partially completed: {len(verification['products_added'])} added, "
-                        f"{len(verification['products_failed'])} failed (out of stock)",
-                        level="WARNING")
-                else:
-                    self._log_step("order_result",
-                        f"Order completed: all {len(verification['products_added'])} products added ✓")
-            else:
-                # No products were added at all
+            # ── Process final verification results ──
+            if final_verification is None:
                 result["success"] = False
-                result["error"] = "No products were added to cart — all may be out of stock"
+                result["error"] = "No verification results obtained"
                 result["error_step"] = "cart_verification"
                 self._log_step("order_result",
-                    "Order FAILED: zero products in cart after upload",
-                    level="ERROR")
+                    "Order FAILED: no verification results", level="ERROR")
+            else:
+                result["products_added"] = final_verification["products_added"]
+                result["products_failed"] = final_verification["products_failed"]
+                result["has_out_of_stock"] = final_verification.get("has_out_of_stock", False)
+                result["cart_screenshot"] = final_verification.get("cart_screenshot")
+                result["current_step"] = "cart_verified"
+
+                if len(final_verification["products_added"]) > 0:
+                    result["success"] = True
+                    if final_verification["has_out_of_stock"]:
+                        self._log_step("order_result",
+                            f"Order partially completed: {len(final_verification['products_added'])} added, "
+                            f"{len(final_verification['products_failed'])} failed (out of stock)",
+                            level="WARNING")
+                    else:
+                        self._log_step("order_result",
+                            f"Order completed: all {len(final_verification['products_added'])} products added ✓")
+                else:
+                    result["success"] = False
+                    result["error"] = "No products were added to cart after all retries"
+                    result["error_step"] = "cart_verification"
+                    self._log_step("order_result",
+                        "Order FAILED: zero products in cart after all attempts",
+                        level="ERROR")
 
         except Exception as e:
             result["error"] = str(e)
