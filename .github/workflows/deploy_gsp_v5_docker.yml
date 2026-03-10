@@ -35,6 +35,9 @@ jobs:
     env:
       COMPOSE_DIR: rpa_headless_linux/gsp_v5
 
+      # DOCKER_HOST se detecta dinamicamente en el paso "Verificar Docker WSL2"
+      # y se exporta via GITHUB_ENV (puede ser localhost o IP de WSL2)
+
       # --- Credenciales GSP (SECRETS) ---
       GSP_USER_CODE: ${{ secrets.GSP_USER_CODE }}
       GSP_PASSWORD: ${{ secrets.GSP_PASSWORD }}
@@ -72,22 +75,106 @@ jobs:
       - name: Descargar código del repositorio
         uses: actions/checkout@v4
 
-      # ── 2. Verificar Docker ────────────────────
-      - name: Verificar que Docker está corriendo
+      # ── 2. Verificar Docker (WSL2 Engine via TCP) ────────────────────
+      - name: Verificar Docker WSL2 (Linux containers via TCP)
         shell: powershell
         run: |
-          Write-Host "[INFO] Verificando Docker Desktop..."
-          try {
-            $version = docker version --format '{{.Server.Version}}' 2>&1
-            if ($LASTEXITCODE -ne 0) { throw "Docker no responde" }
-            Write-Host "[OK] Docker Engine version: $version"
-            
-            $composeVersion = docker compose version --short 2>&1
-            Write-Host "[OK] Docker Compose version: $composeVersion"
-          } catch {
-            Write-Error "[ERROR] Docker Desktop no esta corriendo. Inicialo antes de ejecutar este workflow."
-            exit 1
+          # 1. Despertar WSL2
+          Write-Host "[1/5] Despertando WSL2 Ubuntu..."
+          $p1 = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","echo","ok") -NoNewWindow -PassThru
+          if (-not $p1.WaitForExit(30000)) { $p1.Kill() }
+          Write-Host "[OK] WSL2 respondio"
+
+          # 2. Detener Windows Docker Engine (puede ocupar :2375)
+          Write-Host "[2/5] Deteniendo servicio Windows Docker Engine..."
+          $svc = Get-Service -Name "docker" -ErrorAction SilentlyContinue
+          if ($svc -and $svc.Status -eq 'Running') {
+            Stop-Service docker -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Write-Host "[OK] Servicio Docker Windows detenido"
+          } else { Write-Host "[OK] Servicio Docker Windows no estaba corriendo" }
+
+          # 3. Matar socat (wsl.conf boot lo inicia y ocupa :2375 antes que dockerd)
+          Write-Host "[3/5] Matando socat dentro de WSL2..."
+          $pk = Start-Process wsl.exe -ArgumentList @("-d","Ubuntu","-u","root","--exec","pkill","-9","socat") -NoNewWindow -PassThru
+          if (-not $pk.WaitForExit(8000)) { $pk.Kill() }
+          Start-Sleep -Seconds 2
+
+          # 4. Restart docker para que rebindee tcp://0.0.0.0:2375 sin socat
+          Write-Host "[4/5] Reiniciando docker daemon en WSL2..."
+          $p3 = Start-Process wsl.exe -ArgumentList "-d Ubuntu -u root -- service docker restart" -NoNewWindow -PassThru
+          if (-not $p3.WaitForExit(45000)) { $p3.Kill(); Write-Host "[WARN] docker restart timeout" }
+
+          # Docker 29.x agrega ~1s de delay intencional por deprecation warning (TCP sin TLS)
+          Write-Host "[5/5] Esperando deprecation delay de dockerd..."
+          Start-Sleep -Seconds 5
+
+          # 6. Obtener IP real de WSL2 (eth0, no docker0)
+          $wslIp = (wsl -d Ubuntu -u root -- ip -4 addr show eth0 2>$null | Select-String 'inet (\d+\.\d+\.\d+\.\d+)').Matches.Groups[1].Value
+          if (-not $wslIp) {
+            $wslIp = (wsl -d Ubuntu -u root -- hostname -I).Trim().Split()[0]
           }
+          Write-Host "[INFO] WSL2 eth0 IP: $wslIp"
+
+          # 7. Abrir firewall Win11 Pro (Hyper-V Firewall bloquea trafico Host<->WSL2)
+          Write-Host "[INFO] Configurando reglas de firewall para Docker WSL2..."
+          Remove-NetFirewallRule -DisplayName "WSL2 Docker TCP" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          New-NetFirewallRule -DisplayName "WSL2 Docker TCP Out" -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress $wslIp -RemotePort 2375 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+          if (Get-Command Set-NetFirewallHyperVVMSetting -ErrorAction SilentlyContinue) {
+            Set-NetFirewallHyperVVMSetting -Name '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -DefaultInboundAction Allow -DefaultOutboundAction Allow -ErrorAction SilentlyContinue
+            Write-Host "[OK] Hyper-V Firewall configurado para WSL2"
+          } else { Write-Host "[INFO] Hyper-V Firewall cmdlet no disponible" }
+
+          # 8. Probar conexion: primero localhost, luego IP directa de WSL2
+          $dockerHost = $null
+          Write-Host "[INFO] Probando tcp://localhost:2375..."
+          $tcp1 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+          if ($tcp1) {
+            Write-Host "[OK] localhost:2375 accesible"
+            $dockerHost = "tcp://localhost:2375"
+          } else {
+            Write-Host "[INFO] localhost no responde. Probando tcp://${wslIp}:2375..."
+            $tcp2 = (Test-NetConnection -ComputerName $wslIp -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+            if ($tcp2) {
+              Write-Host "[OK] ${wslIp}:2375 accesible"
+              $dockerHost = "tcp://${wslIp}:2375"
+            } else {
+              Write-Host "[INFO] IP directa tampoco responde. Forzando portproxy..."
+              netsh interface portproxy delete v4tov4 listenport=2375 listenaddress=127.0.0.1 2>$null
+              netsh interface portproxy add v4tov4 listenport=2375 listenaddress=127.0.0.1 connectport=2375 connectaddress=$wslIp
+              Start-Sleep -Seconds 3
+              $tcp3 = (Test-NetConnection -ComputerName 127.0.0.1 -Port 2375 -WarningAction SilentlyContinue).TcpTestSucceeded
+              if ($tcp3) {
+                Write-Host "[OK] localhost:2375 accesible via portproxy"
+                $dockerHost = "tcp://localhost:2375"
+              }
+            }
+          }
+
+          if (-not $dockerHost) {
+            Write-Host "[DIAG] pgrep dockerd:"
+            wsl -d Ubuntu -u root -- pgrep -a dockerd
+            Write-Host "[DIAG] ss -tlnp :2375:"
+            wsl -d Ubuntu -u root -- ss -tlnp sport = :2375
+            Write-Host "[DIAG] ip addr:"
+            wsl -d Ubuntu -u root -- ip -4 addr
+            Write-Host "[DIAG] Windows firewall rules Docker:"
+            Get-NetFirewallRule -DisplayName "*Docker*" -ErrorAction SilentlyContinue | Format-Table DisplayName,Direction,Action,Enabled
+            Write-Host "[DIAG] portproxy:"
+            netsh interface portproxy show v4tov4
+            Write-Error "[ERROR] Docker no accesible en localhost ni en $wslIp"; exit 1
+          }
+
+          # 9. Exportar DOCKER_HOST para pasos siguientes
+          Write-Host "[OK] DOCKER_HOST=$dockerHost"
+          echo "DOCKER_HOST=$dockerHost" >> $env:GITHUB_ENV
+          $env:DOCKER_HOST = $dockerHost
+
+          $version = cmd /c "docker version --format {{.Server.Version}} 2>NUL"
+          Write-Host "[OK] Docker Engine WSL2 Linux: $version"
+          $cv = cmd /c "docker compose version --short 2>NUL"
+          Write-Host "[OK] Docker Compose: $cv"
 
       # ══════════════════════════════════════════════
       # DETECCION DE PROXY (antes de build)
