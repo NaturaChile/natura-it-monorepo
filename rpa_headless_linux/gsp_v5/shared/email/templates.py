@@ -188,6 +188,8 @@ sup, sub { font-size: 75%; line-height: 0; }
 </td></tr></tbody>
 </table>
 
+%%PRODUCT_DETAIL%%
+
 <!-- Row 5: Bottom Image -->
 <table class="row row-5" align="center" width="100%" border="0" cellpadding="0" cellspacing="0" role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">
 <tbody><tr><td>
@@ -371,16 +373,93 @@ sup, sub { font-size: 75%; line-height: 0; }
 </html>""".replace("%%IMG_BASE%%", _IMG_BASE)
 
 
-def _build_failed_product_lines(products: List[Dict[str, str]]) -> str:
-    """Build line-break-separated list of failed products: 'code - name'."""
-    lines = []
+def _build_product_rows(products: List[Dict[str, str]], status_filter: str) -> str:
+    """Build <tr> rows for a product table filtered by status."""
+    rows = ""
     for p in products:
-        if p.get("status") != "failed":
+        if p.get("status") != status_filter:
             continue
         code = p.get("product_code", "—")
         name = p.get("product_name") or "—"
-        lines.append(f"{code} - {name}")
-    return "<br>".join(lines)
+        if status_filter == "ok":
+            icon = "&#10003;"
+            color = "#2e7d32"
+        else:
+            icon = "&#10007;"
+            color = "#c62828"
+        rows += (
+            f'<tr>'
+            f'<td style="border:1px solid #ddd;padding:8px;">{code}</td>'
+            f'<td style="border:1px solid #ddd;padding:8px;">{name}</td>'
+            f'<td style="border:1px solid #ddd;padding:8px;text-align:center;color:{color};font-weight:bold;">{icon}</td>'
+        )
+        if status_filter != "ok":
+            reason = p.get("error_message", "")
+            rows += f'<td style="border:1px solid #ddd;padding:8px;font-size:12px;color:#777;">{reason}</td>'
+        rows += '</tr>\n'
+    return rows
+
+
+def _build_product_detail_section(products: List[Dict[str, str]]) -> str:
+    """Build HTML section with product tables for partial orders.
+
+    Inserted between Row 4 (VARIABLE) and Row 5 (bottom image) in the template.
+    """
+    ok_rows = _build_product_rows(products, "ok")
+    fail_rows = _build_product_rows(products, "failed")
+    ok_count = sum(1 for p in products if p.get("status") == "ok")
+    fail_count = sum(1 for p in products if p.get("status") == "failed")
+
+    html = (
+        '<table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" '
+        'role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;">\n'
+        '<tbody><tr><td>\n'
+        '<table align="center" border="0" cellpadding="0" cellspacing="0" '
+        'role="presentation" style="mso-table-lspace:0pt;mso-table-rspace:0pt;'
+        'background-color:#ffffff;border-radius:0;color:#000000;width:600px;margin:0 auto;" width="600">\n'
+        '<tbody><tr>\n'
+        '<td style="padding:20px 30px;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">\n'
+        '<p style="font-size:14px;color:#333;margin:0 0 15px 0;">'
+        'Revisa el detalle a continuaci&oacute;n. Si necesitas ayuda, comun&iacute;cate con tu L&iacute;der.</p>\n'
+    )
+
+    if ok_count > 0:
+        html += (
+            f'<p style="font-size:13px;font-weight:bold;color:#2e7d32;margin:0 0 5px 0;">'
+            f'Productos cargados ({ok_count})</p>\n'
+            '<table width="100%" border="0" cellspacing="0" cellpadding="8" '
+            'style="border-collapse:collapse;font-size:13px;margin-bottom:15px;">\n'
+            '<thead><tr style="background-color:#4caf50;color:#fff;">'
+            '<th style="border:1px solid #ddd;">C&oacute;digo</th>'
+            '<th style="border:1px solid #ddd;">Producto</th>'
+            '<th style="border:1px solid #ddd;text-align:center;">Estado</th>'
+            '</tr></thead>\n'
+            f'<tbody>{ok_rows}</tbody>\n'
+            '</table>\n'
+        )
+
+    if fail_count > 0:
+        html += (
+            f'<p style="font-size:13px;font-weight:bold;color:#c62828;margin:0 0 5px 0;">'
+            f'Productos no disponibles ({fail_count})</p>\n'
+            '<table width="100%" border="0" cellspacing="0" cellpadding="8" '
+            'style="border-collapse:collapse;font-size:13px;margin-bottom:15px;">\n'
+            '<thead><tr style="background-color:#e53935;color:#fff;">'
+            '<th style="border:1px solid #ddd;">C&oacute;digo</th>'
+            '<th style="border:1px solid #ddd;">Producto</th>'
+            '<th style="border:1px solid #ddd;text-align:center;">Estado</th>'
+            '<th style="border:1px solid #ddd;">Motivo</th>'
+            '</tr></thead>\n'
+            f'<tbody>{fail_rows}</tbody>\n'
+            '</table>\n'
+        )
+
+    html += (
+        '</td>\n</tr></tbody>\n</table>\n'
+        '</td></tr></tbody>\n</table>'
+    )
+    return html
+
 
 def build_consultora_email(
     consultora_nombre: str,
@@ -395,7 +474,8 @@ def build_consultora_email(
 
     Template único para carritos completos y parciales.
     - %%NOMBRE%%  → nombre consultora (banner rojo)
-    - %%VARIABLE%% → mensaje estado o lista de productos fallidos
+    - %%VARIABLE%% → mensaje estado (banner rojo)
+    - %%PRODUCT_DETAIL%% → tablas de productos (solo parcial)
 
     Args:
         consultora_nombre: Nombre completo de la consultora.
@@ -405,16 +485,19 @@ def build_consultora_email(
         is_partial: True si el carrito quedó parcialmente completo.
         evento: Nombre del evento/campaña.
     """
-    if is_partial and products:
-        variable_text = _build_failed_product_lines(products)
-    elif is_partial:
+    if is_partial:
         variable_text = "Tu carrito se cargó parcialmente"
     else:
         variable_text = "¡Todos tus productos fueron cargados!"
 
+    product_detail = ""
+    if is_partial and products:
+        product_detail = _build_product_detail_section(products)
+
     html = _CONSULTORA_TEMPLATE
     html = html.replace("%%NOMBRE%%", consultora_nombre)
     html = html.replace("%%VARIABLE%%", variable_text)
+    html = html.replace("%%PRODUCT_DETAIL%%", product_detail)
     return html
 
 
