@@ -61,6 +61,8 @@ class GSPBot:
 
         self._step_log: list[dict] = []
         self.progress_callback: Optional[Callable] = None
+        # Tracks whether the cart had items at arrival (audit count)
+        self.cart_initial_count: int = 0
 
     # ── Context manager ───────────────────────
 
@@ -595,6 +597,17 @@ class GSPBot:
                 break
 
         self._log_step(step, f"Cart cleared: {removed_count} items removed ✓")
+        # Save HTML snapshot after successful clear for post-mortem review
+        try:
+            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+            html_path = self.settings.screenshot_dir / f"cart_after_clear_{ts}_{self.order_id}.html"
+            html_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(html_path, 'w', encoding='utf-8') as hf:
+                hf.write(self.page.content())
+            self._log_step(step, f"Saved cart HTML after clear: {html_path}")
+        except Exception as save_html_ex:
+            self._log_step(step, f"Failed saving cart HTML after clear: {save_html_ex}", level="WARNING")
+
         return removed_count
 
     # ── STEP 7: Add product to cart ───────────
@@ -666,7 +679,7 @@ class GSPBot:
         url = self.page.url or ""
         return "/cart" in url
 
-    def _cleanup_cart(self, step: str) -> None:
+    def _cleanup_cart(self, step: str) -> int:
         """Audit and remove existing products from the cart.
 
         Flow:
@@ -722,6 +735,11 @@ class GSPBot:
                 vaciar_check = self.page.locator('button:has-text("Vaciar carrito")')
                 if vaciar_check.count() > 0:
                     self._log_step(step, "'Vaciar carrito' button present despite no item rows — clicking to be safe")
+                    # Record that cart likely had items (button present)
+                    try:
+                        self.cart_initial_count = 1
+                    except Exception:
+                        pass
                     try:
                         vaciar_check.first.click(timeout=5000)
                         self.page.wait_for_timeout(3000)
@@ -729,7 +747,7 @@ class GSPBot:
                         self._log_step(step, f"Safety Vaciar click failed: {e}", level="WARNING")
                 else:
                     self._log_step(step, "No existing items in cart ✓")
-                return
+                return 0
 
             # Small extra wait for DOM to stabilize
             self.page.wait_for_timeout(1500)
@@ -748,6 +766,11 @@ class GSPBot:
                     except Exception:
                         continue
             count = rows.count()
+            # Record initial count observed during audit
+            try:
+                self.cart_initial_count = int(count)
+            except Exception:
+                self.cart_initial_count = count if isinstance(count, int) else 0
             self._log_step(step, f"Auditing {count} item(s) in cart...")
 
             cart_items: list[dict] = []
@@ -854,6 +877,16 @@ class GSPBot:
                         timeout=10000,
                     )
                     self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
+                    # Save HTML snapshot after successful bulk clear (alt path)
+                    try:
+                        ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                        html_path = self.settings.screenshot_dir / f"cart_after_clear_{ts}_{self.order_id}.html"
+                        html_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(html_path, 'w', encoding='utf-8') as hf:
+                            hf.write(self.page.content())
+                        self._log_step(step, f"Saved cart HTML after bulk clear: {html_path}")
+                    except Exception as save_ex:
+                        self._log_step(step, f"Failed saving HTML after bulk clear: {save_ex}", level="WARNING")
                 except Exception:
                     # Try alternative checks for remaining items
                     remaining = 0
@@ -867,6 +900,16 @@ class GSPBot:
 
                     if remaining == 0:
                         self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
+                        # Save HTML snapshot after successful bulk clear
+                        try:
+                            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            html_path = self.settings.screenshot_dir / f"cart_after_clear_{ts}_{self.order_id}.html"
+                            html_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(html_path, 'w', encoding='utf-8') as hf:
+                                hf.write(self.page.content())
+                            self._log_step(step, f"Saved cart HTML after bulk clear: {html_path}")
+                        except Exception as save_ex:
+                            self._log_step(step, f"Failed saving HTML after bulk clear: {save_ex}", level="WARNING")
                     else:
                         # Capture HTML snapshot and screenshot for diagnosis
                         try:
@@ -911,10 +954,17 @@ class GSPBot:
                         continue
                 self._log_step(step, f"Individual cleanup done: {removed} removed, {remaining} remaining")
 
+            # If we reach this point, return any observed removed counts
+            if 'removed_count' in locals():
+                return removed_count
+            if 'removed' in locals():
+                return removed
+            return 0
         except Exception as audit_ex:
             self._log_step(step, f"Cart audit/cleanup error: {audit_ex}", level="WARNING")
+            return 0
 
-    def navigate_to_cart_adaptively(self) -> None:
+    def navigate_to_cart_adaptively(self) -> int:
         """Adaptive navigation loop that ensures we reach the cart page.
 
         Flow:
@@ -929,156 +979,118 @@ class GSPBot:
         self._log_step(step, "Starting adaptive navigation to cart")
 
         max_attempts = 14
-
         for attempt in range(max_attempts):
-            current_url = self.page.url or "(blank)"
-            self._log_step(step, f"Attempt #{attempt+1}/{max_attempts} | URL: {current_url}")
             try:
+                current_url = self.page.url or "(blank)"
+                self._log_step(step, f"Attempt #{attempt+1}/{max_attempts} | URL: {current_url}")
                 self.page.wait_for_timeout(2500)
 
-                # ── Check: already at cart? ──
+                # If already at cart, audit & cleanup and return removed count
                 if self._is_at_cart():
-                    self._log_step(step, "Already at /cart URL; auditing and cleaning")
-                    self._cleanup_cart(step)
-                    self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop ✓")
-                    return
+                    removed = self._cleanup_cart(step)
+                    self._log_step(step, f"Already at cart: removed {removed} items")
+                    return removed
 
-                # ── 1. Cycle popup ──
+                # 1) Handle cycle popup
                 try:
-                    cycle_radios = self.page.locator('input[data-testid="cycle-radio-button"]')
-                    count = cycle_radios.count()
-                    if count > 0:
-                        selected = None
-                        for i in range(count):
+                    radios = self.page.locator('input[data-testid="cycle-radio-button"]')
+                    if radios.count() > 0:
+                        # click first visible option
+                        for i in range(radios.count()):
                             try:
-                                loc = cycle_radios.nth(i)
-                                if loc.is_visible(timeout=1500):
-                                    selected = loc
+                                r = radios.nth(i)
+                                if r.is_visible(timeout=1500):
+                                    r.evaluate('el => el.click()')
                                     break
                             except Exception:
                                 continue
-
-                        if selected is not None:
-                            val = selected.get_attribute('value')
-                            id_attr = selected.get_attribute('id')
-                            self._log_step(step, f"Cycle dialog detected, selecting first visible (value={val})")
-                            try:
-                                if id_attr:
-                                    lbl = self.page.locator(f'label[for="{id_attr}"]')
-                                    if lbl.count() > 0:
-                                        lbl.first.evaluate('el => el.click()')
-                                    else:
-                                        selected.evaluate('el => el.click()')
-                                else:
-                                    selected.evaluate('el => el.click()')
-                            except Exception:
-                                selected.evaluate('el => el.click()')
-
-                            self.page.wait_for_timeout(800)
-                            try:
-                                self.page.locator('[data-testid="cycle-accept-button"]').evaluate('el => el.click()')
-                            except Exception:
-                                try:
-                                    self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
-                                except Exception:
-                                    self._log_step(step, "Failed to click Aceptar for cycle", level="WARNING")
-                            self.page.wait_for_timeout(3000)
-                            continue
-                except Exception:
-                    pass
-
-                # ── 2. Venta directa ──
-                try:
-                    if self.page.locator('label[for="id_1"]').is_visible(timeout=2000):
-                        self._log_step(step, "Venta Directa popup detected; accepting")
-                        self.page.locator('label[for="id_1"]').evaluate('el => el.click()')
                         self.page.wait_for_timeout(800)
-                        self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                        try:
+                            self.page.locator('[data-testid="cycle-accept-button"]').evaluate('el => el.click()')
+                        except Exception:
+                            try:
+                                self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                            except Exception:
+                                self._log_step(step, "Failed to accept cycle popup", level="WARNING")
                         self.page.wait_for_timeout(3000)
                         continue
                 except Exception:
                     pass
 
-                # ── 3. Generic LISTO popup ──
+                # 2) Venta directa quick accept
                 try:
-                    listo_btn = self.page.locator('button:has-text("LISTO")')
-                    if listo_btn.count() > 0 and listo_btn.first.is_visible(timeout=2000):
-                        self._log_step(step, "Found 'LISTO' button; clicking via JS")
-                        listo_btn.first.evaluate('el => el.click()')
+                    if self.page.locator('label[for="id_1"]').is_visible(timeout=2000):
+                        self.page.locator('label[for="id_1"]').evaluate('el => el.click()')
+                        self.page.wait_for_timeout(800)
+                        try:
+                            self.page.get_by_role('button', name='Aceptar').first.evaluate('el => el.click()')
+                        except Exception:
+                            pass
+                        self.page.wait_for_timeout(3000)
+                        continue
+                except Exception:
+                    pass
+
+                # 3) Generic LISTO dialog
+                try:
+                    listo = self.page.locator('button:has-text("LISTO")')
+                    if listo.count() > 0 and listo.first.is_visible(timeout=2000):
+                        listo.first.evaluate('el => el.click()')
                         self.page.wait_for_timeout(2000)
                         continue
                 except Exception:
                     pass
 
-                # ── 4. Recuperar / eliminar pedido ──
+                # 4) Recover order dialog
                 try:
                     if self.page.get_by_text("Este pedido esta guardado").is_visible(timeout=2000):
-                        self._log_step(step, "Recover order detected; clicking 'Eliminar Pedido'")
-                        self.page.get_by_role('button', name='Eliminar Pedido').evaluate('el => el.click()')
+                        try:
+                            self.page.get_by_role('button', name='Eliminar Pedido').evaluate('el => el.click()')
+                        except Exception:
+                            pass
                         self.page.wait_for_timeout(3000)
                         continue
                 except Exception:
                     pass
 
-                # ── 5. Wait for product grid to confirm showcase is loaded ──
-                grid_visible = False
+                # 5) If product grid is visible, try direct navigation to /cart
                 try:
                     cards = self.page.locator('div[data-testid="cards-list"]')
-                    if cards.count() > 0 and cards.first.is_visible(timeout=5000):
-                        self._log_step(step, "Product grid is visible; showcase loaded ✓")
-                        grid_visible = True
-                    else:
-                        self._log_step(step, "Product grid not yet visible; waiting...", level="DEBUG")
-                        self.page.wait_for_timeout(3000)
+                    grid_visible = cards.count() > 0 and cards.first.is_visible(timeout=3000)
                 except Exception:
-                    pass
+                    grid_visible = False
 
-                # ── 6. Navigate directly to /cart URL ──
-                # No button click needed — /cart is a separate full page.
                 if grid_visible or attempt >= 3:
-                    self._log_step(step, "Navigating directly to /cart URL")
                     try:
                         from urllib.parse import urlparse
-                        current = self.page.url or ""
-                        if current:
-                            parsed = urlparse(current)
-                            cart_url = f"{parsed.scheme}://{parsed.netloc}/cart"
-                            self._log_step(step, f"goto({cart_url})")
-                            self.page.goto(cart_url, wait_until="domcontentloaded", timeout=30000)
-                            self.page.wait_for_timeout(5000)
-                            if self._is_at_cart():
-                                self._log_step(step, f"Arrived at /cart ✓ | URL: {self.page.url}")
-                                self._cleanup_cart(step)
-                                self._log_step(step, "Cart audit/cleanup completed; exiting adaptive loop ✓")
-                                return
-                            else:
-                                self._log_step(step, f"URL after goto: {self.page.url} — not /cart yet, will retry", level="WARNING")
+                        parsed = urlparse(self.page.url or "")
+                        cart_url = f"{parsed.scheme}://{parsed.netloc}/cart"
+                        self._log_step(step, f"Navigating to cart URL: {cart_url}")
+                        self.page.goto(cart_url, wait_until="domcontentloaded", timeout=30000)
+                        self.page.wait_for_timeout(4000)
+                        if self._is_at_cart():
+                            removed = self._cleanup_cart(step)
+                            self._log_step(step, f"Arrived at cart and cleaned: removed {removed} items")
+                            return removed
                     except Exception as e:
-                        self._log_step(step, f"Direct navigation to /cart failed: {e}", level="WARNING")
-                    continue
+                        self._log_step(step, f"Direct navigation failed: {e}", level="WARNING")
 
-                # ── 7. Recovery reload at midpoint ──
+                # 6) Midpoint recovery reload
                 if attempt == 6:
-                    self._log_step(step, "State unknown at midpoint; reloading page as recovery")
                     try:
                         self.page.reload()
-                        self.page.wait_for_load_state("domcontentloaded", timeout=30000)
-                        self.page.wait_for_timeout(5000)
-                    except Exception as e:
-                        self._log_step(step, f"Reload failed: {e}", level="WARNING")
-                    continue
+                        self.page.wait_for_load_state("domcontentloaded", timeout=20000)
+                        self.page.wait_for_timeout(3000)
+                    except Exception:
+                        pass
 
-            except Exception as e:
-                self._log_step(step, f"Adaptive loop error: {e}", level="WARNING")
+            except Exception as loop_ex:
+                self._log_step(step, f"Adaptive navigation loop error: {loop_ex}", level="WARNING")
 
-        # Take screenshot before giving up
+        # Give up after attempts: capture screenshot for diagnostics
         ss = self._take_screenshot("cart_navigation_failed")
-        final_url = self.page.url or "(blank)"
-        raise NavigationError(
-            f"Could not reach cart after {max_attempts} adaptive navigation attempts. Final URL: {final_url}",
-            step=step,
-            details=f"screenshot={ss}",
-        )
+        self._log_step(step, f"Could not reach cart after {max_attempts} attempts. screenshot={ss}", level="ERROR")
+        return 0
 
     def upload_order_file(self, file_path: str) -> None:
         step = "upload_order_file"
@@ -1377,14 +1389,15 @@ class GSPBot:
 
             # Step 5: Navigate to cart (handles popups, cycle selection, etc.)
             # _cleanup_cart is called internally by navigate_to_cart_adaptively
-            self.navigate_to_cart_adaptively()
+            removed_nav = self.navigate_to_cart_adaptively()
             result["current_step"] = "cart_open"
 
             # Step 6: Explicit clear of any remaining items
             # (navigate_to_cart_adaptively already calls _cleanup_cart,
             #  but we do a second pass with clear_cart for thoroughness)
-            removed = self.clear_cart()
-            result["items_removed"] = removed
+            removed_clear = self.clear_cart()
+            total_removed = (removed_nav or 0) + (removed_clear or 0)
+            result["items_removed"] = total_removed
             result["current_step"] = "cart_cleared"
 
             result["success"] = True
@@ -1453,8 +1466,22 @@ class GSPBot:
             result["current_step"] = "excel_generated"
 
             # Navigate adaptively to the cart page (handles popups, reloads, etc.)
-            self.navigate_to_cart_adaptively()
+            removed_nav = self.navigate_to_cart_adaptively()
             result["current_step"] = "cart_open"
+
+            # If the cart had pre-existing items, abort upload and mark as failed
+            try:
+                if getattr(self, 'cart_initial_count', 0) > 0:
+                    msg = f"Cart had pre-existing items ({self.cart_initial_count}) — aborting upload"
+                    self._log_step("cart_preexisting", msg, level="ERROR")
+                    result["error"] = msg
+                    result["error_step"] = "cart_preexisting"
+                    result["screenshot"] = self._take_screenshot("cart_preexisting")
+                    result["success"] = False
+                    return result
+            except Exception:
+                # Non-fatal: continue if attribute access fails
+                pass
 
             # Upload the generated Excel file
             self.upload_order_file(excel_path)
