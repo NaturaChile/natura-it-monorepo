@@ -688,16 +688,33 @@ class GSPBot:
             # ── Wait for cart content to fully render ──
             self._log_step(step, "Waiting for cart content to render...")
             has_items = False
+
+            # Primary selector used across versions
+            primary_sel = 'li.row-products__container'
             try:
-                self.page.wait_for_selector(
-                    'li.row-products__container',
-                    state='attached',
-                    timeout=10000,
-                )
+                self.page.wait_for_selector(primary_sel, state='attached', timeout=10000)
                 has_items = True
-                self._log_step(step, "Cart item rows detected in DOM")
+                self._log_step(step, "Cart item rows detected in DOM (primary selector)")
             except Exception:
-                self._log_step(step, "No cart item rows found after 10s wait")
+                # Try alternative selectors if primary not found
+                alt_selectors = [
+                    'ul.bag-items li.row-products__container',
+                    'div.row-products__container',
+                    'ul.bag-items li',
+                    'li[class*="row-products"]',
+                    'div.row-products__item',
+                ]
+                for sel in alt_selectors:
+                    try:
+                        if self.page.locator(sel).count() > 0:
+                            has_items = True
+                            self._log_step(step, f"Cart items detected via alternative selector: {sel}")
+                            break
+                    except Exception:
+                        continue
+
+                if not has_items:
+                    self._log_step(step, "No cart item rows found after 10s wait (all selectors)")
 
             # Double-check: if no items via selector, also look for "Vaciar carrito"
             # (button only appears when there are items)
@@ -719,6 +736,17 @@ class GSPBot:
 
             # ── Phase 1: Audit — log every item currently in the cart ──
             rows = self.page.locator('li.row-products__container')
+            # If rows are not found with primary selector, try alternatives for iteration
+            if rows.count() == 0:
+                for sel in ['ul.bag-items li.row-products__container', 'div.row-products__container', 'ul.bag-items li', 'li[class*="row-products"]']:
+                    try:
+                        loc = self.page.locator(sel)
+                        if loc.count() > 0:
+                            rows = loc
+                            self._log_step(step, f"Using alternative rows locator for audit: {sel}")
+                            break
+                    except Exception:
+                        continue
             count = rows.count()
             self._log_step(step, f"Auditing {count} item(s) in cart...")
 
@@ -752,17 +780,65 @@ class GSPBot:
             try:
                 vaciar_btn.first.wait_for(state='visible', timeout=5000)
                 self._log_step(step, "Clicking 'Vaciar carrito' button to clear all items")
-                vaciar_btn.first.click(timeout=5000)
+
+                # Try several click strategies to handle MUI overlays and JS handlers
+                clicked = False
+                try:
+                    vaciar_btn.first.click(timeout=5000)
+                    clicked = True
+                except Exception:
+                    try:
+                        # JS click via evaluate (bypass overlay issues)
+                        vaciar_btn.first.evaluate('el => el.click()')
+                        clicked = True
+                    except Exception:
+                        try:
+                            vaciar_btn.first.click(force=True, timeout=5000)
+                            clicked = True
+                        except Exception as e:
+                            self._log_step(step, f"Vaciar click fallback attempts failed: {e}", level="WARNING")
+
+                if not clicked:
+                    # Try a broader locator with potential class names
+                    alt_locators = [
+                        'button.MuiButtonBase-root:has-text("Vaciar carrito")',
+                        'button:has(span:has-text("Vaciar carrito"))',
+                        'button:has-text("Vaciar carrito")',
+                        'text=Vaciar carrito',
+                    ]
+                    for sel in alt_locators:
+                        try:
+                            loc = self.page.locator(sel)
+                            if loc.count() > 0:
+                                loc.first.evaluate('el => el.click()')
+                                clicked = True
+                                break
+                        except Exception:
+                            continue
 
                 # Handle confirmation dialog — GSP shows "Eliminar" button (natds style)
                 self.page.wait_for_timeout(1500)
                 confirmed = False
                 for confirm_text in ["Eliminar", "Confirmar", "Aceptar", "Sí", "Si", "OK"]:
                     try:
+                        # Try role-based first, then text locator
+                        try:
+                            cb = self.page.get_by_role('button', name=confirm_text)
+                            if cb.count() > 0 and cb.first.is_visible(timeout=2000):
+                                self._log_step(step, f"Confirmation dialog detected; clicking '{confirm_text}' via role")
+                                cb.first.evaluate('el => el.click()')
+                                confirmed = True
+                                break
+                        except Exception:
+                            pass
+
                         cb = self.page.locator('button:has-text("{}")'.format(confirm_text))
                         if cb.count() > 0 and cb.first.is_visible(timeout=3000):
                             self._log_step(step, "Confirmation dialog detected; clicking '{}'".format(confirm_text))
-                            cb.first.click(timeout=5000)
+                            try:
+                                cb.first.evaluate('el => el.click()')
+                            except Exception:
+                                cb.first.click(force=True, timeout=5000)
                             confirmed = True
                             break
                     except Exception:
@@ -779,11 +855,31 @@ class GSPBot:
                     )
                     self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
                 except Exception:
-                    remaining = self.page.locator('li.row-products__container').count()
+                    # Try alternative checks for remaining items
+                    remaining = 0
+                    for sel in ['li.row-products__container', 'ul.bag-items li', 'div.row-products__container', 'li[class*="row-products"]']:
+                        try:
+                            remaining = self.page.locator(sel).count()
+                            if remaining > 0:
+                                break
+                        except Exception:
+                            continue
+
                     if remaining == 0:
                         self._log_step(step, f"Cart emptied successfully ✓ ({count} item(s) removed)")
                     else:
-                        self._log_step(step, f"Cart still has {remaining} item(s) after Vaciar carrito", level="WARNING")
+                        # Capture HTML snapshot and screenshot for diagnosis
+                        try:
+                            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            html_content = self.page.content()
+                            html_path = self.settings.screenshot_dir / f"cart_discrepancy_{ts}_{self.order_id}.html"
+                            html_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(html_path, 'w', encoding='utf-8') as hf:
+                                hf.write(html_content)
+                            ss = self._take_screenshot(f"cart_discrepancy_{ts}")
+                            self._log_step(step, f"Cart still has {remaining} item(s) after Vaciar carrito; saved HTML: {html_path} screenshot: {ss}", level="WARNING")
+                        except Exception as snap_ex:
+                            self._log_step(step, f"Failed to capture discrepancy snapshot: {snap_ex}", level="WARNING")
 
             except Exception as vaciar_ex:
                 # Fallback: delete items one by one via trash icon
@@ -805,7 +901,14 @@ class GSPBot:
                     except Exception as del_ex:
                         self._log_step(step, f"Failed to delete item: {del_ex}", level="WARNING")
                         break
-                remaining = self.page.locator('li.row-products__container').count()
+                remaining = 0
+                for sel in ['li.row-products__container', 'ul.bag-items li', 'div.row-products__container', 'li[class*="row-products"]']:
+                    try:
+                        remaining = self.page.locator(sel).count()
+                        if remaining > 0:
+                            break
+                    except Exception:
+                        continue
                 self._log_step(step, f"Individual cleanup done: {removed} removed, {remaining} remaining")
 
         except Exception as audit_ex:
