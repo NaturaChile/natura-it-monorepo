@@ -45,10 +45,12 @@ COPY . .
 RUN mkdir -p /app/screenshots /app/logs
 
 # Run Celery worker
-# CELERY_CONCURRENCY is set via docker-compose environment (default 1)
+# Using --pool=solo avoids fork() which breaks Playwright's Node.js subprocess.
+# Scaling is handled at container level (docker compose --scale worker=N).
+# --max-tasks-per-child=10 recycles the worker process every 10 tasks to prevent leaks.
 CMD celery -A worker.celery_app:app worker \
     --loglevel=info \
     --queues=orders,default \
-    --concurrency=${CELERY_CONCURRENCY:-1} \
+    --pool=solo \
     --hostname=worker@%h \
     --max-tasks-per-child=10
