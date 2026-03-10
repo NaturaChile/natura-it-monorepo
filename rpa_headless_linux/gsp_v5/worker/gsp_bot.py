@@ -798,46 +798,117 @@ class GSPBot:
                 details={"cart_items": cart_items},
             )
 
-            # ── Phase 2: Click "Vaciar carrito" — wait for button to be visible ──
-            vaciar_btn = self.page.locator('button:has-text("Vaciar carrito")')
+            # ── Phase 2: Click "Vaciar carrito" — robust locator + diagnostics + fallbacks ──
+            # Prefer stable ARIA/role selectors over fragile class names
+            clicked = False
             try:
-                vaciar_btn.first.wait_for(state='visible', timeout=5000)
-                self._log_step(step, "Clicking 'Vaciar carrito' button to clear all items")
-
-                # Try several click strategies to handle MUI overlays and JS handlers
-                clicked = False
+                # Try role-based locator first (more stable than classes)
                 try:
-                    vaciar_btn.first.click(timeout=5000)
-                    clicked = True
+                    vaciar_btn = self.page.get_by_role('button', name='Vaciar carrito')
                 except Exception:
+                    vaciar_btn = None
+
+                # Fallback to text-based locator if role API didn't find it
+                if not vaciar_btn or vaciar_btn.count() == 0:
+                    vaciar_btn = self.page.locator('button:has-text("Vaciar carrito")')
+
+                # Diagnostics: record locator state before attempting click
+                try:
+                    btn_count = vaciar_btn.count() if vaciar_btn is not None else 0
+                except Exception:
+                    btn_count = 0
+
+                ss_diag = None
+                if btn_count == 0:
+                    self._log_step(step, "'Vaciar carrito' button not found via role/text locators", level="WARNING")
+                else:
+                    el = vaciar_btn.first
                     try:
-                        # JS click via evaluate (bypass overlay issues)
-                        vaciar_btn.first.evaluate('el => el.click()')
+                        visible = el.is_visible()
+                    except Exception:
+                        visible = False
+                    try:
+                        enabled = el.is_enabled()
+                    except Exception:
+                        enabled = True
+                    try:
+                        inner = el.inner_text(timeout=2000)
+                    except Exception:
+                        inner = None
+                    try:
+                        bbox = el.bounding_box()
+                    except Exception:
+                        bbox = None
+
+                    self._log_step(step, f"Vaciar diagnostics: count={btn_count} visible={visible} enabled={enabled} inner={inner} bbox={bbox}")
+
+                    # Ensure the element is in view
+                    try:
+                        el.evaluate('e => e.scrollIntoView({block: "center"})')
+                    except Exception:
+                        pass
+
+                    # Try clicking using a sequence of fallbacks
+                    try:
+                        el.click(timeout=5000)
                         clicked = True
                     except Exception:
                         try:
-                            vaciar_btn.first.click(force=True, timeout=5000)
+                            el.evaluate('e => { e.focus(); e.click(); }')
                             clicked = True
-                        except Exception as e:
-                            self._log_step(step, f"Vaciar click fallback attempts failed: {e}", level="WARNING")
-
-                if not clicked:
-                    # Try a broader locator with potential class names
-                    alt_locators = [
-                        'button.MuiButtonBase-root:has-text("Vaciar carrito")',
-                        'button:has(span:has-text("Vaciar carrito"))',
-                        'button:has-text("Vaciar carrito")',
-                        'text=Vaciar carrito',
-                    ]
-                    for sel in alt_locators:
-                        try:
-                            loc = self.page.locator(sel)
-                            if loc.count() > 0:
-                                loc.first.evaluate('el => el.click()')
-                                clicked = True
-                                break
                         except Exception:
-                            continue
+                            try:
+                                # Try clicking the inner span (MUI structure)
+                                span = el.locator('span:has-text("Vaciar carrito")')
+                                if span.count() > 0:
+                                    span.first.click(timeout=4000)
+                                    clicked = True
+                            except Exception:
+                                try:
+                                    # Force click as last resort
+                                    el.click(force=True, timeout=5000)
+                                    clicked = True
+                                except Exception:
+                                    # Mouse click on bounding box center as ultimate fallback
+                                    try:
+                                        if bbox:
+                                            cx = bbox['x'] + bbox['width'] / 2
+                                            cy = bbox['y'] + bbox['height'] / 2
+                                            self.page.mouse.click(cx, cy)
+                                            clicked = True
+                                    except Exception:
+                                        clicked = False
+
+                    # If clicked is still False, try broader locators
+                    if not clicked:
+                        alt_locators = [
+                            'button.MuiButtonBase-root:has-text("Vaciar carrito")',
+                            'button:has(span:has-text("Vaciar carrito"))',
+                            'button:has-text("Vaciar carrito")',
+                            'text=Vaciar carrito',
+                        ]
+                        for sel in alt_locators:
+                            try:
+                                loc = self.page.locator(sel)
+                                if loc.count() > 0:
+                                    loc.first.evaluate('el => el.click()')
+                                    clicked = True
+                                    break
+                            except Exception:
+                                continue
+
+                    # If after attempts not clicked, save diagnostic snapshot
+                    if not clicked:
+                        try:
+                            ts = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+                            html_path = self.settings.screenshot_dir / f"vaciar_diag_{ts}_{self.order_id}.html"
+                            html_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(html_path, 'w', encoding='utf-8') as hf:
+                                hf.write(self.page.content())
+                            ss_diag = self._take_screenshot(f"vaciar_diag_{ts}")
+                            self._log_step(step, f"Vaciar click failed after fallbacks; saved HTML: {html_path} screenshot: {ss_diag}", level="WARNING")
+                        except Exception as diag_ex:
+                            self._log_step(step, f"Failed to capture vaciar diagnostics: {diag_ex}", level="WARNING")
 
                 # Handle confirmation dialog — GSP shows "Eliminar" button (natds style)
                 self.page.wait_for_timeout(1500)
