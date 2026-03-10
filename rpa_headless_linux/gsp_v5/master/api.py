@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Query
+from fastapi import Body
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from shared.schemas import (
 )
 from master.orchestrator import Orchestrator
 from master.loader import load_from_csv, load_single_order
+from worker.gsp_bot import GSPBot
 
 # ── App Setup ─────────────────────────────────
 
@@ -361,6 +363,69 @@ async def get_order(order_id: int, db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(404, "Order not found")
     return order
+
+
+@app.post("/admin/check_showcase_badge")
+async def check_showcase_badge(consultora_code: str = Query(..., description="Código de la consultora a verificar")):
+    """Open the showcase, impersonate the consultora, and read the header cart badge.
+
+    Reads the element: div[aria-label="notifications"][data-testid="icon-badge"]
+    and returns its `value` or inner text as badge_count. Useful to detect if
+    the cart already has items before attempting uploads.
+    """
+    worker_id = f"api-check-{consultora_code}"
+    try:
+        with GSPBot(supervisor_code=settings.gsp_user_code, supervisor_password=settings.gsp_password, order_id=None, worker_id=worker_id) as bot:
+            # Login and impersonate the consultora
+            bot.login()
+            bot.select_otra_consultora()
+            bot.search_consultora(consultora_code)
+            bot.confirm_consultora()
+
+            # Wait for the showcase header badge to appear
+            step = "check_showcase_badge"
+            bot._log_step(step, "Waiting for header cart badge selector")
+            try:
+                sel = 'div[aria-label="notifications"][data-testid="icon-badge"]'
+                bot.page.wait_for_selector(sel, timeout=10000)
+                el = bot.page.locator(sel).first
+                # Try attribute 'value' then inner span text
+                badge_val = el.get_attribute('value')
+                if not badge_val:
+                    try:
+                        badge_val = el.locator('span').first.inner_text()
+                    except Exception:
+                        badge_val = el.inner_text()
+
+                try:
+                    badge_count = int(str(badge_val).strip())
+                except Exception:
+                    badge_count = None
+
+                ss = bot._take_screenshot('badge_check')
+                result = {
+                    'consultora_code': consultora_code,
+                    'badge_raw': badge_val,
+                    'badge_count': badge_count,
+                    'has_items': (badge_count is not None and badge_count > 0),
+                    'screenshot': ss,
+                    'step_log': bot.get_step_log(),
+                }
+                return JSONResponse(result)
+
+            except Exception as sel_err:
+                ss = bot._take_screenshot('badge_check_fail')
+                bot._log_step(step, f"Badge selector not found: {sel_err}", level="WARNING")
+                return JSONResponse({
+                    'consultora_code': consultora_code,
+                    'error': str(sel_err),
+                    'screenshot': ss,
+                    'step_log': bot.get_step_log(),
+                }, status_code=500)
+
+    except Exception as e:
+        logger.exception(f"check_showcase_badge_failed: {e}")
+        raise HTTPException(500, f"Failed to check badge: {e}")
 
 
 @app.post("/orders/{order_id}/retry")
@@ -809,3 +874,82 @@ async def admin_mark_order_complete(
         "updated_products": updated_products,
         "status": "completed",
     }
+
+
+
+@app.post("/admin/orders/{order_id}/mark-products-added")
+async def admin_mark_products_added(
+    order_id: int,
+    product_codes: list[str] | None = Body(None, description="Optional list of product_code values to mark as ADDED. If omitted, all products in the order will be marked."),
+    complete: bool = Query(False, description="If true, also mark the order as COMPLETED and update batch counters."),
+    db: Session = Depends(get_db),
+):
+    """Admin endpoint: mark products for an order as ADDED.
+
+    - If `product_codes` is provided (JSON array), only those product lines are updated.
+    - Otherwise all product lines for the order are set to ADDED.
+    - Use `complete=true` to also mark the order as COMPLETED and update batch counters.
+    """
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    # Determine target products
+    if product_codes:
+        targets = [p for p in order.products if (p.product_code and p.product_code in product_codes)]
+    else:
+        targets = list(order.products)
+
+    if not targets:
+        return {"action": "mark_products_added", "order_id": order_id, "updated": 0, "message": "No matching products found"}
+
+    updated_ids = []
+    for p in targets:
+        p.status = ProductStatus.ADDED
+        p.error_message = None
+        p.added_at = now
+        updated_ids.append(p.id)
+
+    # Optionally complete the order
+    if complete:
+        order.status = OrderStatus.COMPLETED
+        order.error_message = None
+        order.error_step = None
+        order.finished_at = now
+        # Try to increment batch counters safely
+        try:
+            if order.batch is not None:
+                order.batch.completed_orders = (order.batch.completed_orders or 0) + 1
+        except Exception:
+            pass
+
+    # Add an audit log entry
+    log = OrderLog(
+        order_id=order.id,
+        level="INFO",
+        step="admin_mark_products_added",
+        message=f"Marked products as ADDED: {len(updated_ids)}",
+        details={"updated_product_ids": updated_ids, "product_codes": product_codes},
+        timestamp=now,
+    )
+    db.add(log)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("admin_mark_products_commit_error", error=str(e))
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    # Recalculate batch counters if we changed order status
+    try:
+        if complete and order.batch is not None:
+            _update_batch_counters(db, order.batch.id)
+    except Exception:
+        pass
+
+    return {"action": "mark_products_added", "order_id": order_id, "updated": len(updated_ids), "updated_ids": updated_ids}
