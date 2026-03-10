@@ -153,6 +153,9 @@ def process_order(self, order_id: int) -> dict:
 
         _record_log(db, order_id, "starting", f"Processing {len(product_list)} products for consultora {order.consultora_code}")
 
+        # Log before browser launch (this is where hangs typically occur)
+        _record_log(db, order_id, "preflight", "Launching browser (Playwright/Chromium)...")
+
         # Execute browser automation
         with GSPBot(
             supervisor_code=settings.gsp_user_code,

@@ -134,6 +134,7 @@ class GSPBot:
             logger.info("add_init_script_failed", worker=self.worker_id)
         self._context.set_default_timeout(self.settings.playwright_timeout)
         self.page = self._context.new_page()
+        logger.info("browser_ready", worker=self.worker_id, order_id=self.order_id)
 
     def close(self) -> None:
         """Clean up browser resources."""

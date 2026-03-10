@@ -1164,8 +1164,8 @@ async def admin_reprocess_order(
     """Force-reprocess an order regardless of its current status (FAILED, COMPLETED, etc.).
 
     Unlike /orders/{order_id}/retry, this works on ANY status including COMPLETED.
-    Resets the order to RETRYING, clears errors, resets products to PENDING (optional),
-    and dispatches a new process_order Celery task.
+    Resets the order to RETRYING, clears errors, resets retry_count to 0 (fresh retries),
+    resets products to PENDING (optional), and dispatches a new process_order Celery task.
     """
     now = datetime.now(timezone.utc)
 
@@ -1188,9 +1188,9 @@ async def admin_reprocess_order(
         except Exception:
             pass
 
-    # Reset order
+    # Reset order — retry_count = 0 gives fresh retries inside process_order
     order.status = OrderStatus.RETRYING
-    order.retry_count = (order.retry_count or 0) + 1
+    order.retry_count = 0
     order.error_message = None
     order.error_step = None
     order.current_step = None
