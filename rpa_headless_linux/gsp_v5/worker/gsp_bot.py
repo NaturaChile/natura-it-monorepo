@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import time
 import urllib.request
 import ssl
@@ -77,7 +78,18 @@ class GSPBot:
     def start_browser(self) -> None:
         """Launch Chromium via Playwright."""
         logger.info("launching_browser", headless=self.settings.playwright_headless, worker=self.worker_id)
-        self._pw = sync_playwright().start()
+
+        # Guard: timeout if Playwright server subprocess hangs on start
+        def _alarm_handler(signum, frame):
+            raise TimeoutError("sync_playwright().start() did not respond within 30s")
+
+        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.alarm(30)
+        try:
+            self._pw = sync_playwright().start()
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
 
         # Build Chromium args dynamically
         chrome_args = [
@@ -109,6 +121,7 @@ class GSPBot:
             slow_mo=self.settings.playwright_slow_mo,
             args=chrome_args,
             proxy=pw_proxy,
+            timeout=60000,  # Hard 60s limit — raises if Chromium doesn't start
         )
         # Anti-detection headers used in troubleshooting runs
         extra_headers = {

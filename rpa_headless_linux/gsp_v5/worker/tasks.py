@@ -7,6 +7,8 @@ import socket
 import time
 from datetime import datetime, timezone
 
+from datetime import timedelta
+
 from celery import shared_task
 from celery.exceptions import Retry
 from celery.utils.log import get_task_logger
@@ -588,6 +590,59 @@ def empty_cart(self, consultora_code: str, attempt_number: int = 1, total_attemp
             raise Exception(
                 f"Empty cart for {consultora_code} failed after {elapsed}s: {exc}"
             )
+
+
+@shared_task(name="worker.tasks.cleanup_stuck_orders")
+def cleanup_stuck_orders() -> dict:
+    """Periodic janitor: mark orders stuck in IN_PROGRESS > 12 min as FAILED.
+
+    Runs via Celery Beat. Catches orders where the worker died without
+    updating the DB (e.g. Chromium hang killed by SIGKILL).
+    """
+    db = _get_db()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=12)
+        stuck = (
+            db.query(Order)
+            .filter(
+                Order.status == OrderStatus.IN_PROGRESS,
+                Order.started_at < cutoff,
+            )
+            .all()
+        )
+
+        cleaned = []
+        for order in stuck:
+            order.status = OrderStatus.FAILED
+            order.error_message = "Timeout: stuck in IN_PROGRESS > 12 min (janitor cleanup)"
+            order.error_step = "janitor_cleanup"
+            order.finished_at = datetime.now(timezone.utc)
+
+            log = OrderLog(
+                order_id=order.id,
+                level="ERROR",
+                step="janitor_cleanup",
+                message=f"Order stuck in IN_PROGRESS since {order.started_at.isoformat()}. Marked FAILED by janitor.",
+                details={"started_at": order.started_at.isoformat(), "worker_id": order.worker_id},
+            )
+            db.add(log)
+            cleaned.append(order.id)
+
+            if order.batch_id:
+                _update_batch_counters(db, order.batch_id)
+
+        if cleaned:
+            db.commit()
+            task_logger.warning(f"Janitor cleaned {len(cleaned)} stuck orders: {cleaned}")
+
+        return {"cleaned": len(cleaned), "order_ids": cleaned}
+
+    except Exception as exc:
+        task_logger.exception(f"Janitor error: {exc}")
+        db.rollback()
+        return {"error": str(exc)}
+    finally:
+        db.close()
 
 
 @shared_task(

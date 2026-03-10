@@ -57,6 +57,14 @@ app.conf.update(
     # Monitoring
     worker_send_task_events=True,
     task_send_sent_event=True,
+
+    # Periodic tasks (Celery Beat)
+    beat_schedule={
+        "cleanup-stuck-orders-every-5m": {
+            "task": "worker.tasks.cleanup_stuck_orders",
+            "schedule": 300.0,  # Every 5 minutes
+        },
+    },
 )
 
 
