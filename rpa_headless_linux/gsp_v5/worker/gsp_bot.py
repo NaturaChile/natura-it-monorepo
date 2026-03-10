@@ -1007,29 +1007,76 @@ class GSPBot:
     def _try_vaciar_carrito(self, step: str, attempt: int) -> bool:
         """Click 'Vaciar carrito' then wait for and click 'Eliminar' confirmation.
 
+        The button has dynamic jss classes (jss2635, jss2850, jss2939, etc.) that
+        change per session.  Stable traits:
+          - It's a <button> with class MuiButton-text (NOT MuiButton-contained)
+          - Lives inside div.cart-container__actions
+          - Contains a <span> whose text is 'Vaciar carrito'
+          - Its sibling is the 'continuar' button with id='cart-step-bag'
+
         Returns True if the click sequence completed without error.
         """
         self._log_step(step, f"Vaciar carrito attempt {attempt}/3")
 
-        # ── Find the Vaciar carrito button ──
+        # ── Find the Vaciar carrito button using stable selectors ──
         vaciar_btn = None
         strategies = [
+            # 1. Best: MuiButton-text inside the actions container (ignores jss classes)
+            lambda: self.page.locator('div.cart-container__actions button.MuiButton-text'),
+            # 2. Sibling of #cart-step-bag that is MuiButton-text
+            lambda: self.page.locator('button#cart-step-bag ~ button.MuiButton-text, button.MuiButton-text:left-of(button#cart-step-bag)'),
+            # 3. Any MuiButtonBase with span containing the text
+            lambda: self.page.locator('button.MuiButtonBase-root:has(span.MuiButton-label:has-text("Vaciar carrito"))'),
+            # 4. Role-based
             lambda: self.page.get_by_role('button', name='Vaciar carrito'),
+            # 5. Broad text match
             lambda: self.page.locator('button:has-text("Vaciar carrito")'),
-            lambda: self.page.locator('button.MuiButtonBase-root:has-text("Vaciar carrito")'),
-            lambda: self.page.locator('button:has(span:has-text("Vaciar carrito"))'),
         ]
         for strategy_fn in strategies:
             try:
                 loc = strategy_fn()
                 if loc.count() > 0 and loc.first.is_visible(timeout=3000):
                     vaciar_btn = loc.first
+                    self._log_step(step, f"Found Vaciar button via strategy")
                     break
             except Exception:
                 continue
 
+        # 6. Ultimate fallback: JavaScript DOM search (immune to class changes)
         if not vaciar_btn:
-            self._log_step(step, "Vaciar carrito button not found", level="WARNING")
+            self._log_step(step, "CSS strategies failed; trying JS DOM search...", level="WARNING")
+            try:
+                found_via_js = self.page.evaluate('''
+                    () => {
+                        // Search all visible buttons for one whose text includes "Vaciar"
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                            if (text.includes('vaciar') && btn.offsetParent !== null) {
+                                btn.scrollIntoView({block: 'center'});
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                ''')
+                if found_via_js:
+                    # Re-locate after JS scroll
+                    for sel in ['button:has-text("Vaciar")', 'button.MuiButton-text']:
+                        try:
+                            loc = self.page.locator(sel)
+                            if loc.count() > 0 and loc.first.is_visible(timeout=2000):
+                                vaciar_btn = loc.first
+                                self._log_step(step, f"Found Vaciar button via JS + '{sel}'")
+                                break
+                        except Exception:
+                            continue
+            except Exception as js_err:
+                self._log_step(step, f"JS DOM search failed: {js_err}", level="WARNING")
+
+        if not vaciar_btn:
+            self._log_step(step, "Vaciar carrito button not found by any strategy", level="WARNING")
+            self._save_cart_snapshot(step, f"vaciar_not_found_attempt{attempt}")
             return False
 
         # Scroll into view
@@ -1038,14 +1085,32 @@ class GSPBot:
         except Exception:
             pass
 
+        # Log diagnostics about the found button
+        try:
+            btn_classes = vaciar_btn.get_attribute('class') or ''
+            btn_text = vaciar_btn.inner_text(timeout=2000)
+            btn_enabled = vaciar_btn.is_enabled()
+            self._log_step(step, f"Vaciar btn: text='{btn_text}' enabled={btn_enabled} classes='{btn_classes[:80]}'")
+        except Exception:
+            pass
+
         # ── Click the button with fallbacks ──
         clicked = False
-        for click_fn in [
+        click_strategies = [
+            # 1. Normal click
             lambda: vaciar_btn.click(timeout=5000),
+            # 2. JS click (bypasses overlays and event handlers)
             lambda: vaciar_btn.evaluate('e => { e.focus(); e.click(); }'),
-            lambda: vaciar_btn.locator('span:has-text("Vaciar carrito")').first.click(timeout=4000),
+            # 3. Click the inner MuiButton-label span directly
+            lambda: vaciar_btn.locator('span.MuiButton-label').first.click(timeout=4000),
+            # 4. Force click
             lambda: vaciar_btn.click(force=True, timeout=5000),
-        ]:
+            # 5. dispatchEvent (most aggressive JS approach)
+            lambda: vaciar_btn.evaluate('''e => {
+                e.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+            }'''),
+        ]
+        for click_fn in click_strategies:
             try:
                 click_fn()
                 clicked = True
@@ -1053,17 +1118,22 @@ class GSPBot:
             except Exception:
                 continue
 
+        # 6. Mouse click on bounding box center
         if not clicked:
             try:
                 bbox = vaciar_btn.bounding_box()
                 if bbox:
-                    self.page.mouse.click(bbox['x'] + bbox['width'] / 2, bbox['y'] + bbox['height'] / 2)
+                    cx = bbox['x'] + bbox['width'] / 2
+                    cy = bbox['y'] + bbox['height'] / 2
+                    self.page.mouse.click(cx, cy)
                     clicked = True
+                    self._log_step(step, f"Clicked Vaciar via mouse at ({cx:.0f}, {cy:.0f})")
             except Exception:
                 pass
 
         if not clicked:
             self._log_step(step, "Failed to click Vaciar carrito button", level="WARNING")
+            self._save_cart_snapshot(step, f"vaciar_click_failed_attempt{attempt}")
             return False
 
         self._log_step(step, "Clicked Vaciar carrito, waiting for Eliminar confirmation...")
@@ -1071,10 +1141,12 @@ class GSPBot:
         # ── Wait for and click the "Eliminar" confirmation button ──
         self.page.wait_for_timeout(1500)
         eliminar_clicked = False
-        for sel in [
+        confirm_selectors = [
+            'button:has(span.MuiButton-label:has-text("Eliminar"))',
             'button:has(span:has-text("Eliminar"))',
             'button:has-text("Eliminar")',
-        ]:
+        ]
+        for sel in confirm_selectors:
             try:
                 loc = self.page.locator(sel)
                 loc.first.wait_for(state='visible', timeout=8000)
@@ -1088,6 +1160,28 @@ class GSPBot:
                     break
             except Exception:
                 continue
+
+        if not eliminar_clicked:
+            # Try JS approach for confirmation dialog
+            try:
+                js_confirm = self.page.evaluate('''
+                    () => {
+                        const btns = document.querySelectorAll('button');
+                        for (const btn of btns) {
+                            const text = (btn.innerText || '').trim().toLowerCase();
+                            if ((text === 'eliminar' || text === 'confirmar') && btn.offsetParent !== null) {
+                                btn.click();
+                                return text;
+                            }
+                        }
+                        return null;
+                    }
+                ''')
+                if js_confirm:
+                    eliminar_clicked = True
+                    self._log_step(step, f"Clicked confirmation '{js_confirm}' via JS")
+            except Exception:
+                pass
 
         if not eliminar_clicked:
             # Try generic confirmation buttons
@@ -1365,10 +1459,40 @@ class GSPBot:
 
         return result
 
+    def _wait_for_cart_ready(self, step: str, timeout_ms: int = 30000) -> bool:
+        """Wait until #cart-step-bag ('continuar') button is present and enabled.
+
+        When 'continuar' is clickable, the cart is fully loaded and interactive,
+        which means the 'Vaciar carrito' button is also ready.
+        """
+        self._log_step(step, "Waiting for cart to be fully interactive (#cart-step-bag enabled)...")
+        try:
+            continuar = self.page.locator('button#cart-step-bag')
+            continuar.wait_for(state='visible', timeout=timeout_ms)
+            # Wait until the button is not disabled
+            self.page.wait_for_function(
+                "() => { const b = document.querySelector('button#cart-step-bag'); return b && !b.disabled; }",
+                timeout=timeout_ms,
+            )
+            self._log_step(step, "Cart ready: #cart-step-bag is enabled ✓")
+            return True
+        except Exception as e:
+            self._log_step(step, f"Timeout waiting for #cart-step-bag: {e}", level="WARNING")
+            # Fallback: check if div.cart-container__actions exists at all
+            try:
+                actions_div = self.page.locator('div.cart-container__actions')
+                if actions_div.count() > 0:
+                    self._log_step(step, "cart-container__actions found, proceeding despite timeout")
+                    return True
+            except Exception:
+                pass
+            return False
+
     def _cleanup_cart(self, step: str) -> int:
         """Audit and remove all existing products from the cart.
 
         Strategy:
+          0. Wait for #cart-step-bag ('continuar') to be enabled — signals cart is interactive
           1. Count and audit current items
           2. Try 'Vaciar carrito' → 'Eliminar' confirmation (up to 3 attempts)
           3. Verify items actually removed; double-check after brief wait
@@ -1376,15 +1500,16 @@ class GSPBot:
 
         Returns number of items removed.
         """
-        self._log_step(step, "Waiting for cart content to render...")
-        self.page.wait_for_timeout(2000)
+        # ── Phase 0: Wait for cart to be fully interactive ──
+        self._wait_for_cart_ready(step)
+        self.page.wait_for_timeout(1000)
 
         initial_count = self._count_cart_items()
 
         # Double-check: Vaciar button may be visible even if rows aren't rendered yet
         if initial_count == 0:
             try:
-                vaciar_check = self.page.locator('button:has-text("Vaciar carrito")')
+                vaciar_check = self.page.locator('div.cart-container__actions button.MuiButton-text')
                 if vaciar_check.count() > 0 and vaciar_check.first.is_visible(timeout=3000):
                     self._log_step(step, "'Vaciar carrito' visible but no item rows — waiting longer")
                     self.page.wait_for_timeout(3000)
