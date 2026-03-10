@@ -992,3 +992,255 @@ async def admin_mark_products_added(
         pass
 
     return {"action": "mark_products_added", "order_id": order_id, "updated": len(updated_ids), "updated_ids": updated_ids}
+
+
+# ── Admin: Bulk Mark Orders Completed ─────────
+
+@app.post("/admin/orders/mark-completed/bulk")
+async def admin_mark_orders_completed_bulk(
+    order_ids: list[int] = Body(..., description="List of order IDs to mark as COMPLETED with all products ADDED"),
+    db: Session = Depends(get_db),
+):
+    """Admin endpoint: mark multiple orders as COMPLETED and all their products as ADDED.
+
+    Resets error fields, sets timestamps, increments batch counters.
+    Already-completed orders are skipped.
+    """
+    now = datetime.now(timezone.utc)
+
+    completed = []
+    skipped = []
+    not_found = []
+
+    for oid in order_ids:
+        order = db.query(Order).filter(Order.id == oid).first()
+        if not order:
+            not_found.append(oid)
+            continue
+
+        if order.status == OrderStatus.COMPLETED:
+            skipped.append(oid)
+            continue
+
+        order.status = OrderStatus.COMPLETED
+        order.error_message = None
+        order.error_step = None
+        order.finished_at = now
+
+        for p in order.products:
+            p.status = ProductStatus.ADDED
+            p.error_message = None
+            p.added_at = now
+
+        try:
+            if order.batch is not None:
+                order.batch.completed_orders = (order.batch.completed_orders or 0) + 1
+        except Exception:
+            pass
+
+        log = OrderLog(
+            order_id=order.id,
+            level="INFO",
+            step="admin_mark_completed_bulk",
+            message="Marked complete via bulk admin endpoint",
+            details={"products_updated": [p.id for p in order.products]},
+            timestamp=now,
+        )
+        db.add(log)
+        completed.append(oid)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("admin_bulk_mark_completed_error", error=str(e))
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    return {
+        "action": "mark_orders_completed_bulk",
+        "completed": completed,
+        "skipped_already_completed": skipped,
+        "not_found": not_found,
+        "total_completed": len(completed),
+    }
+
+
+# ── Admin: Mass Cart Clear (JSON) ────────────
+
+@app.post("/cart/clear/batch")
+async def cart_clear_batch(
+    consultora_codes: list[str] = Body(..., description="List of consultora codes to clear carts for"),
+    max_retries: int = Body(3, description="Max retries per consultora (uses robust Vaciar→Eliminar→Item-by-item flow)"),
+    sync: bool = Body(False, description="If true, execute synchronously. If false, dispatch Celery tasks."),
+):
+    """Mass cart clearing with all robust modalities and retries.
+
+    Accepts a JSON body with consultora codes (no CSV upload required).
+    Uses the enhanced _cleanup_cart flow: Vaciar Carrito → Eliminar items → Item-by-item fallback.
+
+    Modes:
+    - sync=false (default): Dispatches one Celery task per consultora (async, distributed).
+    - sync=true: Executes cart clearing sequentially in this request (blocking, admin use).
+
+    Each cart clear attempt uses up to `max_retries` iterations of the robust clearing flow.
+    """
+    codes = [str(c).strip() for c in consultora_codes if c and str(c).strip() and str(c).strip() != "nan"]
+
+    if not codes:
+        raise HTTPException(400, "No valid consultora codes provided")
+
+    if sync:
+        results = []
+        for i, code in enumerate(codes, 1):
+            worker_id = f"api-batch-clear-{code}-{i}"
+            attempt_results = []
+            success = False
+            try:
+                with GSPBot(
+                    supervisor_code=settings.gsp_user_code,
+                    supervisor_password=settings.gsp_password,
+                    worker_id=worker_id,
+                ) as bot:
+                    for attempt in range(1, max_retries + 1):
+                        try:
+                            res = bot.execute_empty_cart(code)
+                            attempt_results.append({"attempt": attempt, "result": res})
+                            if res.get("total_removed", 0) >= 0 and not res.get("error"):
+                                success = True
+                                break
+                        except Exception as e:
+                            attempt_results.append({"attempt": attempt, "error": str(e)})
+            except Exception as e:
+                attempt_results.append({"attempt": 0, "error": f"Bot init failed: {e}"})
+
+            results.append({
+                "consultora_code": code,
+                "success": success,
+                "attempts": len(attempt_results),
+                "details": attempt_results,
+            })
+
+        succeeded = sum(1 for r in results if r["success"])
+        logger.info("cart_clear_batch_sync_completed", total=len(codes), succeeded=succeeded)
+        return {
+            "action": "cart_clear_batch_sync",
+            "total_consultoras": len(codes),
+            "succeeded": succeeded,
+            "failed": len(codes) - succeeded,
+            "max_retries": max_retries,
+            "results": results,
+        }
+
+    # Async mode: dispatch Celery tasks
+    from worker.tasks import empty_cart
+
+    total = len(codes)
+    task_ids = []
+    for i, code in enumerate(codes, 1):
+        task = empty_cart.apply_async(
+            args=[code, i, total],
+            queue="orders",
+        )
+        task_ids.append({"consultora_code": code, "task_id": task.id})
+
+    logger.info("cart_clear_batch_dispatched", total=total, max_retries=max_retries)
+    return {
+        "action": "cart_clear_batch",
+        "total_consultoras": total,
+        "max_retries": max_retries,
+        "tasks": task_ids,
+        "message": f"Dispatched {total} cart-clear tasks. Use /cart/clear/results to check progress.",
+    }
+
+
+# ── Admin: Force Reprocess Order ──────────────
+
+@app.post("/admin/orders/{order_id}/reprocess")
+async def admin_reprocess_order(
+    order_id: int,
+    reset_products: bool = Query(True, description="Reset all product statuses to PENDING before reprocessing"),
+    db: Session = Depends(get_db),
+):
+    """Force-reprocess an order regardless of its current status (FAILED, COMPLETED, etc.).
+
+    Unlike /orders/{order_id}/retry, this works on ANY status including COMPLETED.
+    Resets the order to RETRYING, clears errors, resets products to PENDING (optional),
+    and dispatches a new process_order Celery task.
+    """
+    now = datetime.now(timezone.utc)
+
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    previous_status = order.status.value
+
+    # If it was COMPLETED, decrement batch completed counter
+    if order.status == OrderStatus.COMPLETED and order.batch is not None:
+        try:
+            order.batch.completed_orders = max((order.batch.completed_orders or 0) - 1, 0)
+        except Exception:
+            pass
+    # If it was FAILED, decrement batch failed counter
+    if order.status == OrderStatus.FAILED and order.batch is not None:
+        try:
+            order.batch.failed_orders = max((order.batch.failed_orders or 0) - 1, 0)
+        except Exception:
+            pass
+
+    # Reset order
+    order.status = OrderStatus.RETRYING
+    order.retry_count = (order.retry_count or 0) + 1
+    order.error_message = None
+    order.error_step = None
+    order.current_step = None
+    order.finished_at = None
+
+    # Optionally reset products
+    reset_count = 0
+    if reset_products:
+        for p in order.products:
+            p.status = ProductStatus.PENDING
+            p.error_message = None
+            p.added_at = None
+            reset_count += 1
+
+    # Audit log
+    log = OrderLog(
+        order_id=order.id,
+        level="INFO",
+        step="admin_force_reprocess",
+        message=f"Force reprocess from {previous_status}",
+        details={"previous_status": previous_status, "reset_products": reset_products, "products_reset": reset_count},
+        timestamp=now,
+    )
+    db.add(log)
+
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error("admin_reprocess_commit_error", error=str(e))
+        raise HTTPException(500, f"Failed committing changes: {e}")
+
+    # Dispatch Celery task
+    from worker.tasks import process_order
+
+    task = process_order.apply_async(args=[order_id], queue="orders")
+
+    # Save task ID
+    order.celery_task_id = task.id
+    try:
+        db.commit()
+    except Exception:
+        pass
+
+    logger.info("admin_force_reprocess", order_id=order_id, previous_status=previous_status, task_id=task.id)
+    return {
+        "action": "force_reprocess",
+        "order_id": order_id,
+        "previous_status": previous_status,
+        "new_status": "retrying",
+        "products_reset": reset_count,
+        "task_id": task.id,
+    }
