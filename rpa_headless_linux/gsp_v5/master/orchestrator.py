@@ -169,36 +169,45 @@ class Orchestrator:
         """
         db = self._db()
         try:
-            orders = (
-                db.query(Order)
-                .join(Order.products)
-                .filter(
-                    Order.batch_id == batch_id,
-                    OrderProduct.status.in_([ProductStatus.OUT_OF_STOCK, ProductStatus.NOT_FOUND]),
+            try:
+                orders = (
+                    db.query(Order)
+                    .join(Order.products)
+                    .filter(
+                        Order.batch_id == batch_id,
+                        OrderProduct.status.in_([ProductStatus.OUT_OF_STOCK, ProductStatus.NOT_FOUND]),
+                    )
+                    .distinct()
+                    .all()
                 )
-                .distinct()
-                .all()
-            )
 
-            requeued = 0
-            for order in orders:
-                # Prevent requeuing orders currently in progress
-                if order.status == OrderStatus.IN_PROGRESS:
-                    continue
+                requeued = 0
+                for order in orders:
+                    # Prevent requeuing orders currently in progress
+                    if order.status == OrderStatus.IN_PROGRESS:
+                        continue
 
-                order.status = OrderStatus.RETRYING
-                order.retry_count = (order.retry_count or 0) + 1
-                order.error_message = None
-                order.error_step = None
-                db.commit()
+                    order.status = OrderStatus.RETRYING
+                    order.retry_count = (order.retry_count or 0) + 1
+                    order.error_message = None
+                    order.error_step = None
+                    db.commit()
 
-                task = process_order.apply_async(args=[order.id], queue="orders")
-                order.celery_task_id = task.id
-                db.commit()
-                requeued += 1
+                    task = process_order.apply_async(args=[order.id], queue="orders")
+                    order.celery_task_id = task.id
+                    db.commit()
+                    requeued += 1
 
-            logger.info("reprocess_missing_requested", batch_id=batch_id, requeued=requeued)
-            return {"success": True, "batch_id": batch_id, "requeued": requeued}
+                logger.info("reprocess_missing_requested", batch_id=batch_id, requeued=requeued)
+                return {"success": True, "batch_id": batch_id, "requeued": requeued}
+            except Exception as e:
+                # Log exception and return structured error instead of raising
+                logger.exception("reprocess_missing_failed", batch_id=batch_id, error=str(e))
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                return {"success": False, "error": str(e)}
         finally:
             db.close()
 
