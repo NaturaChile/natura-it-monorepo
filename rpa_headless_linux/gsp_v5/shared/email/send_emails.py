@@ -260,15 +260,22 @@ def send_batch_notifications(
 
         ok_products = []
         failed_products = []
+        not_found_count = 0
         for p in products_db:
-            if p.status.name == "ADDED":
+            status_name = p.status.name if p.status is not None else ""
+            if status_name == "ADDED":
                 ok_products.append({
                     "product_code": p.product_code,
                     "product_name": p.product_name or "",
                     "status": "ok",
                     "error_message": "",
                 })
+            elif status_name == "NOT_FOUND":
+                # Excluir NOT_FOUND de la lista enviada por correo, pero contarlos
+                not_found_count += 1
+                continue
             else:
+                # Otros fallos (ej. OUT_OF_STOCK) sí se muestran
                 failed_products.append({
                     "product_code": p.product_code,
                     "product_name": p.product_name or "",
@@ -276,7 +283,20 @@ def send_batch_notifications(
                     "error_message": p.error_message or "Sin stock",
                 })
 
-        is_partial = len(failed_products) > 0 and len(ok_products) > 0
+        # Determinar parcialidad siguiendo la regla solicitada:
+        # - Si hay productos con fallo mostrable (ej. OUT_OF_STOCK), el pedido
+        #   se considera parcial si hay mezcla o todos fallaron.
+        # - Si solo hay NOT_FOUND + ADDED, considerarlo como completado (no parcial).
+        # - Si solo hay NOT_FOUND (sin ADDED ni fallos mostrables), marcar parcial.
+        if len(failed_products) > 0:
+            is_partial = True
+        elif not_found_count > 0:
+            # Hay NOT_FOUND pero ningún fallo mostrable.
+            # Si hay ADDED, tratar como completo; si no hay ADDED, marcar parcial.
+            is_partial = False if len(ok_products) > 0 else True
+        else:
+            is_partial = False
+
         all_products = ok_products + failed_products
 
         consultora_nombre = csv_row["nombre"] or order.consultora_name or cb

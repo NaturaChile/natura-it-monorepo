@@ -546,6 +546,7 @@ async def login_stress_results(
 async def upload_cart_clear(
     file: UploadFile = File(...),
     name: str = Query("", description="Nombre descriptivo del lote"),
+    sync: bool = Query(False, description="If true, perform cart clearing synchronously in this request (admin use)."),
 ):
     """Upload a CSV/Excel with consultora codes to empty their carts.
 
@@ -596,7 +597,30 @@ async def upload_cart_clear(
         logger.error("cart_clear_upload_failed", error=str(e))
         raise HTTPException(500, f"Failed to parse file: {e}")
 
-    # Dispatch tasks
+    # If sync requested, perform clearing inline and return aggregated results
+    if sync:
+        results = []
+        from worker.gsp_bot import GSPBot
+
+        for i, code in enumerate(codes, 1):
+            worker_id = f"api-sync-clear-{code}-{i}"
+            try:
+                with GSPBot(supervisor_code=settings.gsp_user_code, supervisor_password=settings.gsp_password, worker_id=worker_id) as bot:
+                    res = bot.execute_empty_cart(code)
+                    results.append({"consultora_code": code, "result": res})
+            except Exception as e:
+                results.append({"consultora_code": code, "error": str(e)})
+
+        logger.info("cart_clear_sync_completed", total=len(codes), source=file.filename)
+        return {
+            "action": "cart_clear_sync",
+            "total_consultoras": len(codes),
+            "source_file": file.filename,
+            "results": results,
+            "message": f"Executed synchronous cart clear for {len(codes)} consultoras",
+        }
+
+    # Dispatch tasks (default async behavior)
     from worker.tasks import empty_cart
 
     total = len(codes)
@@ -899,13 +923,28 @@ async def admin_mark_products_added(
         raise HTTPException(404, "Order not found")
 
     # Determine target products
+    # Normalize provided product_codes to strings (accept ints or strings)
     if product_codes:
-        targets = [p for p in order.products if (p.product_code and p.product_code in product_codes)]
+        try:
+            provided_codes = {str(x).strip() for x in product_codes if x is not None}
+        except Exception:
+            provided_codes = set()
+        # Build available codes for diagnostics
+        available_codes = {str(p.product_code).strip(): p for p in order.products if p.product_code is not None}
+        targets = [available_codes[c] for c in provided_codes if c in available_codes]
     else:
         targets = list(order.products)
 
     if not targets:
-        return {"action": "mark_products_added", "order_id": order_id, "updated": 0, "message": "No matching products found"}
+        # Provide diagnostic info to the caller: which product codes exist on the order
+        existing = [str(p.product_code).strip() for p in order.products if p.product_code is not None]
+        return {
+            "action": "mark_products_added",
+            "order_id": order_id,
+            "updated": 0,
+            "message": "No matching products found",
+            "available_product_codes": existing,
+        }
 
     updated_ids = []
     for p in targets:
